@@ -49,6 +49,7 @@ function App() {
 
   const joinMatch = routeHash.match(/^#\/join\/([0-9a-f]{64})$/i)
   const playMatch = routeHash.match(/^#\/play\/([0-9a-f-]{36})$/i)
+  const manageMatch = routeHash.match(/^#\/manage\/([0-9a-f-]{36})$/i)
 
   if ((joinMatch || playMatch) && (!authReady || authError)) return <main className="participant-shell"><section className="participant-message"><h1>{authError ? 'Reconnect to your game' : 'Restoring your saved session'}</h1><p role={authError ? 'alert' : 'status'}>{authError || 'Checking your existing identity before opening the game…'}</p>{authError && <button className="outline-button" onClick={() => window.location.reload()}>Retry connection</button>}</section></main>
   if (joinMatch) return <JoinGame token={joinMatch[1]} session={session} />
@@ -87,6 +88,7 @@ function App() {
     window.location.hash = `/join/${token}`
   }
 
+  if (manageMatch && session && !session.user.is_anonymous) return <OrganizerWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} initialHuntId={manageMatch[1]} />
   if (session) return <OrganizerWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} />
 
   return <main className="home-scene">

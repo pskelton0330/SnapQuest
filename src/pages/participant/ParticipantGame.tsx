@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Camera, Check, CircleHelp, Clock3, LoaderCircle, MapPin, ShieldCheck, Trophy, Users, RefreshCw, Image as ImageIcon } from 'lucide-react'
+import { Camera, Check, CircleHelp, Clock3, LoaderCircle, MapPin, ShieldCheck, Trophy, Users, RefreshCw, Image as ImageIcon, Settings2 } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase'
 import { optimizePhoto } from '../../lib/photo'
@@ -30,6 +30,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [serverNow, setServerNow] = useState(0)
+  const [canManage, setCanManage] = useState(false)
 
   const loadContext = useCallback(async () => {
     if (!supabase) return
@@ -37,6 +38,8 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     if (contextError) { setError(contextError.message); setLoading(false); return }
     const next = data as HuntContext
     setContext(next)
+    const { data: organizerAccess } = await supabase.rpc('is_hunt_organizer', { p_hunt_id: huntId })
+    setCanManage(organizerAccess === true)
     setServerNow(new Date(next.server_now).getTime())
     setError('')
     setLoading(false)
@@ -179,7 +182,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   }
 
   return <main className="participant-shell game-shell">
-    <header className="participant-topbar"><a className="brand" href="#"><span className="brand-icon"><Camera size={19}/></span> SnapQuest</a><span className="nav-note"><ShieldCheck size={15}/> {context ? context.team.name : 'Participant space'}</span></header>
+    <header className="participant-topbar"><a className="brand" href="#"><span className="brand-icon"><Camera size={19}/></span> SnapQuest</a><span className="nav-note"><ShieldCheck size={15}/> {context ? context.team.name : 'Participant space'} {canManage && <button className="outline-button participant-manage-button" onClick={() => { window.location.hash = `/manage/${huntId}` }}><Settings2 size={14}/> Manage Game</button>}</span></header>
     {loading ? <div className="participant-loading"><LoaderCircle className="spin" size={24}/> Loading your hunt…</div> : error && !context ? <section className="participant-message"><CircleHelp size={24}/><h1>We couldn’t open this hunt</h1><p>{error}</p><button className="outline-button" onClick={() => { setLoading(true); setError(''); void loadContext() }}>Try again</button></section> : context ? <>
       <section className="participant-game-heading"><div><div className="eyebrow"><MapPin size={14}/> {context.venue}</div><h1>{context.title}</h1><p>You’re playing as <b>{context.participant.display_name}</b> on <span className="team-name-pill" style={{color:context.team.display_color}}>{context.team.name}</span></p></div>{runtimeState === 'active' && <div className="game-clock"><Clock3 size={19}/><span>{clockLabel(remainingSeconds)}</span><small>TIME LEFT</small></div>}</section>
       {error && <div className="participant-error game-error"><CircleHelp size={15}/>{error}</div>}
