@@ -41,7 +41,7 @@ After saving, Create Game enters a separate setup draft. Setup supports schedule
 1. Install Node.js 20.19+ or 22.12+.
 2. Copy `.env.example` to `.env.local`.
 3. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`. Never put the database password or a secret/service-role key in a `VITE_` variable.
-4. In Supabase Auth URL settings, allow the local callback URL (for example `http://127.0.0.1:5173/**`). Enable anonymous sign-ins for participant sessions. Configure the email link template/site URL for organizer sign-in.
+4. In Supabase Auth URL settings, set the production Site URL to `https://pskelton0330.github.io/SnapQuest/` and allow `https://pskelton0330.github.io/SnapQuest/**`. For local testing, also allow `http://127.0.0.1:5173/**`. Enable anonymous sign-ins for participant sessions. Configure the email link template/site URL for organizer sign-in. If the Site URL remains localhost, phone magic links will return to a server that the phone cannot reach.
 5. Apply the migrations in `supabase/migrations/` in filename order in Supabase SQL Editor or through the Supabase CLI.
 6. Run `npm install`, then `npm run dev`.
 
