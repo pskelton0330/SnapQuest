@@ -7,7 +7,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration
+let migration, managementMigration, auditMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -29,6 +29,7 @@ before(async () => {
     const sql=await readFile(new URL(file,migrationUrl),'utf8')
     if(file.includes('0007')) { migration=sql; continue }
     if(file.includes('0008')) { managementMigration=sql; continue }
+    if(file.includes('0010')) { auditMigration=sql; continue }
     await db.exec(sql)
   }
   await db.query('insert into auth.users(id) values ($1),($2)',[owner,other])
@@ -42,6 +43,7 @@ before(async () => {
   legacyBefore=await snapshot()
   await db.exec(migration)
   await db.exec(managementMigration)
+  await db.exec(auditMigration)
 })
 after(async()=> { await db?.close() })
 async function snapshot() {
@@ -65,6 +67,21 @@ test('participants receive aggregate team progress without submission details',a
   ])
   await assert.rejects(as('authenticated',other,'select public.get_hunt_progress($1)', ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']))
   await assert.rejects(as('anon',null,'select public.get_hunt_progress($1)', ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']))
+})
+test('organizer audit events record timing operations and stay owner-scoped',async()=>{
+  assert.equal((await db.query("select to_regclass('public.audit_events') name")).rows[0].name,'audit_events')
+  const legacy=(await db.query("select id from public.hunt_templates where legacy_game_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'")).rows[0].id
+  const id=(await as('authenticated',owner,'select public.create_game_from_template($1) id',[legacy])).rows[0].id
+  const definition=(await db.query("select pg_get_functiondef('public.start_game_now(uuid)'::regprocedure) definition")).rows[0].definition
+  assert.match(definition,/audit_events/)
+  await as('authenticated',owner,"select * from public.configure_game($1,'Audit game',60,array['Red','Blue'],'organizer',clock_timestamp()+interval '1 hour')",[id])
+  await as('authenticated',owner,'select public.start_game_now($1)',[id])
+  const raw=(await db.query('select event_type,outcome,details from public.audit_events where hunt_id=$1',[id])).rows
+  assert.equal(raw.length,1)
+  const events=(await as('authenticated',owner,'select public.list_hunt_audit_events($1) data',[id])).rows[0].data
+  assert.equal(events[0].event_type,'game_start_now'); assert.equal(events[0].outcome,'success')
+  assert.equal(events[0].details.duration_minutes,60)
+  await assert.rejects(as('authenticated',other,"select public.record_audit_event('probe',$1,'notice','{}'::jsonb)",[id]))
 })
 test('organizer creates a public reusable hunt with safe creator attribution',async()=>{
   templateId=(await as('authenticated',owner,"select public.save_hunt_template('Public hunt','Park','Description',array['Be safe'],$1::jsonb) id",[JSON.stringify([{title:'A red item',points:2}])])).rows[0].id

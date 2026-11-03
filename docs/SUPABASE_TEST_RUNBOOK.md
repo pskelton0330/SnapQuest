@@ -45,7 +45,7 @@ select to_regclass('public.hunt_templates') as templates_table,
 
 If `hunt_templates` is missing, run migration [202610290007_reusable_hunt_templates.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610290007_reusable_hunt_templates.sql) first.
 
-Then run migration [202610290008_game_management.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610290008_game_management.sql), followed by [202610300009_team_progress.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610300009_team_progress.sql).
+Then run migration [202610290008_game_management.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610290008_game_management.sql), followed by [202610300009_team_progress.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610300009_team_progress.sql) and [202610300010_audit_logging.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610300010_audit_logging.sql).
 
 Use the [Supabase SQL Editor](https://supabase.com/dashboard/project/ykfkwczcomkhxaraqpuq/sql/new), paste each complete file, and click **Run**. Run them in filename order. Do not apply migrations to production without a backup and a schema/data audit.
 
@@ -53,10 +53,23 @@ Verify afterward:
 
 ```sql
 select to_regprocedure('public.start_game_now(uuid)') is not null as start_now_available,
-       to_regprocedure('public.get_hunt_progress(uuid)') is not null as progress_available;
+       to_regprocedure('public.get_hunt_progress(uuid)') is not null as progress_available,
+       to_regprocedure('public.list_hunt_audit_events(uuid,integer)') is not null as audit_available;
 ```
 
-Both values must be `true`.
+All three values must be `true`.
+
+To inspect a hunt’s troubleshooting history as its organizer:
+
+```sql
+select created_at, actor_user_id, event_type, outcome, details
+from public.audit_events
+where hunt_id = 'PASTE-TEST-HUNT-ID-HERE'
+order by created_at desc
+limit 100;
+```
+
+The audit trail records timing and client failure events without invitation tokens, photo paths, or credentials. It is owner-readable and not participant-readable.
 
 ## 4. Organizer login
 

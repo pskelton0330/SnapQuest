@@ -273,7 +273,15 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     setManageSaving(true); setManageMessage('')
     try {
       const { error } = await supabase.rpc('start_game_now', { p_game_id: managedHunt.id })
-      if (error) { setManageMessage(error.message); return }
+      if (error) {
+        await supabase.rpc('record_audit_event', {
+          p_event_type: 'game_start_now',
+          p_hunt_id: managedHunt.id,
+          p_outcome: 'failure',
+          p_details: { message: error.message.slice(0, 500), route: window.location.hash },
+        })
+        setManageMessage(error.message); return
+      }
       const refreshed = await supabase.from('hunts').select('id,title,venue,status,created_at,start_at,duration_minutes,team_assignment_mode,voting_enabled,voting_bonus_points').eq('id', managedHunt.id).single()
       if (refreshed.error) { setManageMessage(refreshed.error.message); return }
       setManagedHunt(refreshed.data as Hunt)
