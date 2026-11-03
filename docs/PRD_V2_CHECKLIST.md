@@ -17,7 +17,7 @@ The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. T
 | JOIN-01 | partial | Individual QR/copy/print and team-specific host Join this team action are implemented. Focused QR paging and live multi-device verification remain. |
 | JOIN-02 | verified | Existing redemption RPC and local tests preserve identity/game uniqueness, assigned/balanced teams and existing-member resume. Verification is local, not phones or live Auth. |
 | JOIN-03 | verified | Existing redemption RPC and local tests preserve identity/game uniqueness, assigned/balanced teams and existing-member resume. Verification is local, not phones or live Auth. |
-| TEAM-01 | missing | No team selfie model or scoped all-team aggregate endpoint/UI. Selfie cutoff/opt-out remains D-07. |
+| TEAM-01 | partial | Teams can choose a unique pre-start name and any teammate can submit/replace one private pre-start selfie; storage authorization and context synchronization are implemented. Physical-device synchronization, cutoff/opt-out wording and montage use remain. |
 | SESSION-01 | partial | This batch restores Auth before join, handles permanent rejoin, retains identity on errors, and fetches context on foreground/online/focus. Phone tests, root/last-game recovery, reconnect UI, full subscription/race recovery remain. |
 | SESSION-02 | partial | This batch restores Auth before join, handles permanent rejoin, retains identity on errors, and fetches context on foreground/online/focus. Phone tests, root/last-game recovery, reconnect UI, full subscription/race recovery remain. |
 | SESSION-03 | partial | This batch restores Auth before join, handles permanent rejoin, retains identity on errors, and fetches context on foreground/online/focus. Phone tests, root/last-game recovery, reconnect UI, full subscription/race recovery remain. |
@@ -25,7 +25,7 @@ The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. T
 | TIME-01 | verified | Local Create Game remains setup with no timer; domain and database snapshot/setup tests pass. Remote UI integration unverified. |
 | TIME-02 | partial | Start Now now passes a live controlled hunt; rescheduling, duplicate-start behavior and connected-device timing reconciliation remain unverified. |
 | TIME-03 | partial | Reschedule/extend/end local and live SQL tests pass, and timing transitions now write server-side audit records. Connected-device delivery and full timing acceptance scenarios remain. |
-| PLAY-01 | partial | Existing challenge list/timer/camera controls. All-team progress and displayed submitter names incomplete. |
+| PLAY-01 | partial | Challenge list, camera controls, server-clock timer, top time-progress bar and all-team accepted-photo progress are implemented. Physical-device timing/reconnect verification and displayed submitter names remain. |
 | PROGRESS-01 | partial | Scoped all-team accepted-slot aggregate endpoint/UI is implemented and live migrations are deployed; team selfie model and selfie cutoff/opt-out remain D-07. |
 | PHOTO-01 | implemented-unverified | OptimizePhoto re-encodes/resizes images; supported physical phone orientation and HEIC behavior not verified. |
 | PHOTO-02 | partial | Private unique upload, server acceptance/cutoff and one active slot exist. Client reconciliation now checks persisted submissions and retries idempotently after uncertain RPC responses; upload stages, expected-version protection and server-side durable cleanup remain. |

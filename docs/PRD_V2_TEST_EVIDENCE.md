@@ -17,6 +17,8 @@ This confirms the core live path—organizer setup, immediate start, participant
 
 The current reliability batch adds client-side persisted cleanup retries for replaced photos and submission reconciliation after an uncertain RPC response. Automated coverage now totals 52 passing tests; this behavior still requires physical-device interruption and multi-device acceptance testing.
 
+The team identity batch adds a unique pre-start team-name update, one private current team selfie, authorized replacement, and top-of-screen time/all-team accepted-photo progress bars. Automated coverage now totals 53 passing tests; the new migration and UI still require physical-device synchronization testing.
+
 ## Automated evidence for session batch
 
 - npm.cmd test: 47 tests passed (39 retained plus seven session-helper tests and one membership/ownership database regression).

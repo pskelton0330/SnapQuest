@@ -7,7 +7,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, timingAuditMigration
+let migration, managementMigration, auditMigration, timingAuditMigration, teamIdentityMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -31,6 +31,7 @@ before(async () => {
     if(file.includes('0008')) { managementMigration=sql; continue }
     if(file.includes('0010')) { auditMigration=sql; continue }
     if(file.includes('0011')) { timingAuditMigration=sql; continue }
+    if(file.includes('0012')) { teamIdentityMigration=sql; continue }
     await db.exec(sql)
   }
   await db.query('insert into auth.users(id) values ($1),($2)',[owner,other])
@@ -46,6 +47,7 @@ before(async () => {
   await db.exec(managementMigration)
   await db.exec(auditMigration)
   await db.exec(timingAuditMigration)
+  await db.exec(teamIdentityMigration)
 })
 after(async()=> { await db?.close() })
 async function snapshot() {
@@ -102,6 +104,32 @@ test('timing transitions create owner-scoped audit events with authoritative det
   assert.equal(rows[2].details.minutes_added,10)
   assert.equal(rows[3].details.previous_status,'active')
   await assert.rejects(as('authenticated',other,'select public.reschedule_game($1,clock_timestamp()+interval \'1 hour\')',[id]))
+})
+test('teams can choose a unique pre-start name and replace one private selfie',async()=>{
+  const localTemplate=(await as('authenticated',owner,"select public.save_hunt_template('Identity source','Shop','',array[]::text[],$1::jsonb,60,'personal') id",[JSON.stringify([{title:'Identity item'}])])).rows[0].id
+  const id=(await as('authenticated',owner,'select public.create_game_from_template($1) id',[localTemplate])).rows[0].id
+  const invites=(await as('authenticated',owner,"select * from public.configure_game($1,'Identity game',60,array['Red','Blue'],'organizer',clock_timestamp()+interval '1 hour')",[id])).rows
+  await as('authenticated',other,"select public.redeem_invitation($1,'Player')",[invites[0].invite_token])
+  const participant=(await db.query('select * from public.participants where hunt_id=$1',[id])).rows[0]
+  const teamId=participant.team_id
+  const before=(await as('authenticated',other,'select public.get_participant_context($1) data',[id])).rows[0].data
+  assert.equal(before.team.name,'Red'); assert.equal(before.team.selfie,null)
+  await as('authenticated',other,"select public.set_team_name($1,$2,'Fireflies')",[id,teamId])
+  const renamed=(await as('authenticated',other,'select public.get_participant_context($1) data',[id])).rows[0].data
+  assert.equal(renamed.team.name,'Fireflies')
+  await assert.rejects(as('authenticated',owner,"select public.set_team_name($1,$2,'Fireflies')",[id,invites[1].team_id]))
+  const path1=`${id}/${teamId}/selfie/11111111-1111-4111-8111-111111111111.jpg`
+  const path2=`${id}/${teamId}/selfie/22222222-2222-4222-8222-222222222222.jpg`
+  await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1),('hunt-photos',$2)",[path1,path2])
+  await as('authenticated',other,'select public.submit_team_selfie($1,$2,$3)',[id,teamId,path1])
+  const replaced=(await as('authenticated',other,'select public.submit_team_selfie($1,$2,$3) data',[id,teamId,path2])).rows[0].data
+  assert.equal(replaced.previous_storage_path,path1)
+  assert.equal((await db.query('select count(*)::int n from public.team_selfies where hunt_id=$1 and team_id=$2',[id,teamId])).rows[0].n,1)
+  const withSelfie=(await as('authenticated',other,'select public.get_participant_context($1) data',[id])).rows[0].data
+  assert.equal(withSelfie.team.selfie.storage_path,path2); assert.equal(withSelfie.team.selfie.submitted_by,participant.id)
+  await as('authenticated',owner,'select public.start_game_now($1)',[id])
+  await assert.rejects(as('authenticated',other,"select public.set_team_name($1,$2,'Late name')",[id,teamId]))
+  await assert.rejects(as('authenticated',other,'select public.submit_team_selfie($1,$2,$3)',[id,teamId,path1]))
 })
 test('organizer creates a public reusable hunt with safe creator attribution',async()=>{
   templateId=(await as('authenticated',owner,"select public.save_hunt_template('Public hunt','Park','Description',array['Be safe'],$1::jsonb) id",[JSON.stringify([{title:'A red item',points:2}])])).rows[0].id
