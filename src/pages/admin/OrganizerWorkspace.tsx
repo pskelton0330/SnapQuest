@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { Archive, ArrowDownUp, Camera, Check, CircleHelp, Clock3, House, Library, LogOut, Plus, Search, ShieldCheck, Sparkles, Users, X, MapPin, ClipboardList, Trash2, ArrowLeft, QrCode, Copy, RefreshCw, CalendarDays, Settings2, UserRound } from 'lucide-react'
+import { Archive, ArrowDownUp, Camera, Check, CircleHelp, Clock3, House, Library, LogOut, Plus, Search, ShieldCheck, Sparkles, Users, X, MapPin, ClipboardList, Trash2, ArrowLeft, QrCode, Copy, RefreshCw, CalendarDays, Settings2, UserRound, Play } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase'
@@ -268,6 +268,23 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     setPage('review-hunt')
   }
 
+  async function startHuntNow() {
+    if (!supabase || !managedHunt || managedHunt.status !== 'scheduled' || !window.confirm('Start this hunt now? Players will enter gameplay immediately.')) return
+    setManageSaving(true); setManageMessage('')
+    try {
+      const { error } = await supabase.rpc('start_game_now', { p_game_id: managedHunt.id })
+      if (error) { setManageMessage(error.message); return }
+      const refreshed = await supabase.from('hunts').select('id,title,venue,status,created_at,start_at,duration_minutes,team_assignment_mode,voting_enabled,voting_bonus_points').eq('id', managedHunt.id).single()
+      if (refreshed.error) { setManageMessage(refreshed.error.message); return }
+      setManagedHunt(refreshed.data as Hunt)
+      await loadWorkspace()
+    } catch (error) {
+      setManageMessage(error instanceof Error ? error.message : 'Could not start the hunt now.')
+    } finally {
+      setManageSaving(false)
+    }
+  }
+
   function inviteUrl(token: string) { return `${window.location.origin}${window.location.pathname}#/join/${token}` }
 
   async function copyInvite(token: string) {
@@ -336,6 +353,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
         <button className="back-link" onClick={() => setPage('hunts')}><ArrowLeft size={15}/> Back to your hunts</button>
         <div className="new-hunt-heading"><div className="eyebrow"><Settings2 size={14}/> HUNT SETUP</div><h1>{managedHunt.title}</h1><p><MapPin size={14}/> {managedHunt.venue} <span className="manage-divider">·</span> {managedHunt.duration_minutes} minute time limit</p></div>
         {manageMessage && <div className="form-error" role="alert">{manageMessage}</div>}
+        {managedHunt.status === 'scheduled' && <section className="builder-section"><div className="builder-step"><Play size={15}/></div><div className="builder-main"><h2>Ready to start?</h2><p>Start immediately if your players are ready. This uses the server clock and preserves the roster and invitation links.</p><button type="button" className="primary-button" disabled={manageSaving} onClick={() => void startHuntNow()}><Play size={15}/> Start hunt now</button></div></section>}
         {managedHunt.status === 'draft' ? <form className="hunt-builder" onSubmit={publishHunt}>
           <section className="builder-section"><div className="builder-step"><CalendarDays size={15}/></div><div className="builder-main"><h2>Choose when and how to play</h2><p>Your QR invitations become active as soon as you publish this hunt.</p><label className="builder-field">Scheduled start time<input type="datetime-local" required value={startAtLocal} onChange={event => setStartAtLocal(event.target.value)}/><span className="optional">Shown in your local time zone; saved as UTC.</span></label><label className="builder-field">Team assignment method<select value={assignmentMode} onChange={event => setAssignmentMode(event.target.value as 'organizer' | 'balanced')}><option value="organizer">Participants scan their assigned team's code</option><option value="balanced">One shared code assigns balanced teams</option></select></label><label className="builder-field">Team names <span className="optional">One name per line · 2–12 teams</span><textarea rows={Math.min(8, Math.max(3, teamNamesText.split('\n').length))} maxLength={600} value={teamNamesText} onChange={event => setTeamNamesText(event.target.value)} placeholder={'Team Red\nTeam Blue'} /></label><label className="voting-config"><input type="checkbox" checked={votingEnabled} onChange={event => setVotingEnabled(event.target.checked)}/><span><b>Enable photo voting during review</b><small>Teams can vote for another team's approved photos.</small></span></label>{votingEnabled && <label className="builder-field duration-field">Voting bonus points<input type="number" min={0} max={1000} value={votingBonusPoints} onChange={event => setVotingBonusPoints(Math.max(0, Number(event.target.value)))}/></label>}</div></section>
           <div className="builder-actions"><button type="button" className="outline-button" onClick={() => setPage('hunts')}>Cancel</button><button type="submit" className="primary-button save-hunt-button" disabled={manageSaving}>{manageSaving ? 'Publishing…' : <><QrCode size={16}/> Publish & create QR codes</>}</button></div>
