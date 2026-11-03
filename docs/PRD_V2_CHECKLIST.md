@@ -24,7 +24,7 @@ The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. T
 | UX-01 | partial | New preview navigation, lifecycle guidance and editor implemented; older authenticated organizer still separate. |
 | TIME-01 | verified | Local Create Game remains setup with no timer; domain and database snapshot/setup tests pass. Remote UI integration unverified. |
 | TIME-02 | partial | Start Now now passes a live controlled hunt; rescheduling, duplicate-start behavior and connected-device timing reconciliation remain unverified. |
-| TIME-03 | partial | Reschedule/extend/end local and staged SQL tests pass. No timing-change audit records or live delivery verification. |
+| TIME-03 | partial | Reschedule/extend/end local and live SQL tests pass, and timing transitions now write server-side audit records. Connected-device delivery and full timing acceptance scenarios remain. |
 | PLAY-01 | partial | Existing challenge list/timer/camera controls. All-team progress and displayed submitter names incomplete. |
 | PROGRESS-01 | partial | Scoped all-team accepted-slot aggregate endpoint/UI is implemented and live migrations are deployed; team selfie model and selfie cutoff/opt-out remain D-07. |
 | PHOTO-01 | implemented-unverified | OptimizePhoto re-encodes/resizes images; supported physical phone orientation and HEIC behavior not verified. |

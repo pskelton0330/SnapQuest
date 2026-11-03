@@ -4,13 +4,14 @@ Date: November 3, 2026. Environment: managed Windows workstation with the produc
 
 ## Live production smoke evidence
 
-The production migration set `202610280001` through `202610300010` was applied to project `ykfkwczcomkhxaraqpuq` and verified in the remote migration history. A controlled hunt was then completed through the public app:
+The production migration set `202610280001` through `202611030011` was applied to project `ykfkwczcomkhxaraqpuq` and verified in the remote migration history. A controlled hunt was then completed through the public app:
 
 - `start_game_now(uuid)` was recorded as a successful backend audit event.
 - The hunt reached `completed` with an `ended_at` timestamp.
 - Five challenge items existed; two photo submissions were recorded and both were approved.
 - Final scores were stored server-side: Team Red ranked first with 2 points and Team Blue ranked second with 0 points.
 - The PostgREST schema cache was refreshed after migration deployment.
+- Reschedules, added time, early ending, and transition into review now write privacy-safe server-side audit events; their live function definitions were verified after deployment.
 
 This confirms the core live path—organizer setup, immediate start, participant capture, organizer review, and server-calculated final scoring—for this controlled scenario. It does not replace the adversarial, reconnect, multi-device, media-retention, or montage acceptance scenarios below.
 
