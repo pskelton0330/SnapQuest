@@ -22,6 +22,18 @@ test('permanent and guest identities are restored before joining without replace
   }
 })
 
+test('organizer team join sends the selected QR token and preserves the permanent identity',async()=>{
+  const f=fixture({user:{id:'organizer',is_anonymous:false}})
+  const selectedTeamToken='team-blue-token'
+  const result=await joinInvitation(f.client,selectedTeamToken,'Organizer')
+  assert.deepEqual(result,f.result)
+  assert.deepEqual(f.calls,[
+    'restore',
+    {name:'redeem_invitation',args:{p_token:selectedTeamToken,p_display_name:'Organizer'}},
+  ])
+  assert.equal(f.calls.includes('anonymous'),false)
+})
+
 test('automatic rejoin probes existing membership for permanent identities without a name',async()=>{
   const f=fixture({user:{id:'host',is_anonymous:false}})
   assert.deepEqual(await resumeInvitation(f.client,'invite'),f.result)

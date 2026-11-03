@@ -55,6 +55,7 @@ function App() {
   if (joinMatch) return <JoinGame token={joinMatch[1]} session={session} />
   if (playMatch && !session) return <main className="participant-shell"><section className="participant-message"><h1>Your saved game session is unavailable</h1><p>Return in the same browser and website address you used to join. Clearing site data, private browsing, signing out, or using a different device can lose guest access. Ask your organizer for help; your name alone cannot recover your identity.</p><a className="outline-button" href="#">Return home</a></section></main>
   if (playMatch && session) return <ParticipantGame huntId={playMatch[1]} session={session} />
+  if (manageMatch && session && !session.user.is_anonymous) return <OrganizerWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} initialHuntId={manageMatch[1]} />
   const demoPlayerMatch = routeHash.match(/^#\/dev\/player\/([a-zA-Z0-9-]+)\/([a-zA-Z0-9-]+)$/)
   if (import.meta.env.DEV && demoPlayerMatch) return <LocalPlayerPreview key={`${demoPlayerMatch[1]}-${demoPlayerMatch[2]}`} gameId={demoPlayerMatch[1]} token={demoPlayerMatch[2]}/>
   if (import.meta.env.DEV && routeHash.startsWith('#/dev/')) return <LocalDemoWorkspace routeHash={routeHash} />
@@ -88,7 +89,6 @@ function App() {
     window.location.hash = `/join/${token}`
   }
 
-  if (manageMatch && session && !session.user.is_anonymous) return <OrganizerWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} initialHuntId={manageMatch[1]} />
   if (session) return <OrganizerWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} />
 
   return <main className="home-scene">

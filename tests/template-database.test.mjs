@@ -57,6 +57,15 @@ test('additive backfill is private, repeatable, and preserves historical games a
   assert.equal((await db.query('select count(*)::int n from public.hunt_templates')).rows[0].n,1)
   assert.equal((await as('anon',null,'select public.list_hunt_templates(false) data')).rows[0].data.length,0)
 })
+test('participants receive aggregate team progress without submission details',async()=>{
+  const progress=(await as('authenticated',owner,'select public.get_hunt_progress($1) data',['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'])).rows[0].data
+  assert.deepEqual(progress,[
+    {team_id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',team_name:'Red',display_color:'#ff0000',accepted_count:1,total_items:1},
+    {team_id:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',team_name:'Blue',display_color:'#0000ff',accepted_count:0,total_items:1},
+  ])
+  await assert.rejects(as('authenticated',other,'select public.get_hunt_progress($1)', ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']))
+  await assert.rejects(as('anon',null,'select public.get_hunt_progress($1)', ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']))
+})
 test('organizer creates a public reusable hunt with safe creator attribution',async()=>{
   templateId=(await as('authenticated',owner,"select public.save_hunt_template('Public hunt','Park','Description',array['Be safe'],$1::jsonb) id",[JSON.stringify([{title:'A red item',points:2}])])).rows[0].id
   const docs=(await as('anon',null,'select public.list_hunt_templates(false) data')).rows[0].data

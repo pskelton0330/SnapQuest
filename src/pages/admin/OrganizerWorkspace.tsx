@@ -3,6 +3,7 @@ import { Archive, ArrowDownUp, Camera, Check, CircleHelp, Clock3, House, Library
 import { QRCodeSVG } from 'qrcode.react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase'
+import { joinInvitation } from '../../lib/participantSession'
 import HuntReview from './HuntReview'
 
 type OrganizerWorkspaceProps = { session: Session; onSignOut: () => void; initialHuntId?: string }
@@ -59,8 +60,6 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const [manageSaving, setManageSaving] = useState(false)
   const [manageMessage, setManageMessage] = useState('')
   const [copiedInvite, setCopiedInvite] = useState('')
-  const [playerName, setPlayerName] = useState('')
-  const [joiningAsPlayer, setJoiningAsPlayer] = useState('')
 
   const loadWorkspace = useCallback(async () => {
     if (!supabase) return
@@ -100,6 +99,12 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   // Loading the organizer's remote data when the authenticated session changes is intentional.
   // eslint-disable-next-line react/set-state-in-effect
   useEffect(() => { void loadWorkspace() }, [loadWorkspace])
+
+  useEffect(() => {
+    if (!initialHuntId || managedHunt || loading) return
+    const hunt = hunts.find(row => row.id === initialHuntId)
+    if (hunt) void openManageHunt(hunt)
+  }, [hunts, initialHuntId, loading, managedHunt])
 
   async function addItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -193,34 +198,6 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     }
   }
 
-  useEffect(() => {
-    if (!initialHuntId || managedHunt) return
-    const hunt = hunts.find(row => row.id === initialHuntId)
-    if (hunt) void openManageHunt(hunt)
-    // The requested hunt comes from the organizer's authorized hunt list.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialHuntId, hunts, managedHunt])
-
-  async function joinAsPlayer(invite: InviteCode) {
-    if (!supabase || !managedHunt) return
-    const name = playerName.trim()
-    if (!name || name.length > 40) {
-      setManageMessage('Enter your player name, up to 40 characters.')
-      return
-    }
-    setJoiningAsPlayer(invite.invite_token)
-    setManageMessage('')
-    try {
-      const { error } = await supabase.rpc('redeem_invitation', { p_token: invite.invite_token, p_display_name: name })
-      if (error) throw error
-      window.location.hash = `/play/${managedHunt.id}`
-    } catch (error) {
-      setManageMessage(error instanceof Error ? error.message : 'Could not join this team yet.')
-    } finally {
-      setJoiningAsPlayer('')
-    }
-  }
-
   async function publishHunt(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!supabase || !managedHunt) return
@@ -298,6 +275,19 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     catch { setManageMessage('Copy was blocked by the browser. Select the invitation link and copy it manually.') }
   }
 
+  async function joinTeam(token: string) {
+    if (!supabase || !managedHunt) return
+    setManageSaving(true); setManageMessage('')
+    try {
+      const result = await joinInvitation(supabase, token, displayName.trim().slice(0, 40) || 'Organizer')
+      window.location.hash = `/play/${result.hunt_id}`
+    } catch (error) {
+      setManageMessage(error instanceof Error ? error.message : 'Could not join this team.')
+    } finally {
+      setManageSaving(false)
+    }
+  }
+
   const visibleItems = items.filter(item => item.archived === showArchived && `${item.title} ${item.description ?? ''} ${item.category ?? ''}`.toLowerCase().includes(search.toLowerCase()))
   const selectableLibraryItems = items.filter(item => !item.archived && !draftItems.some(draft => draft.libraryItemId === item.id))
   const activeCount = items.filter(item => !item.archived).length
@@ -350,7 +340,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
           <section className="builder-section"><div className="builder-step"><CalendarDays size={15}/></div><div className="builder-main"><h2>Choose when and how to play</h2><p>Your QR invitations become active as soon as you publish this hunt.</p><label className="builder-field">Scheduled start time<input type="datetime-local" required value={startAtLocal} onChange={event => setStartAtLocal(event.target.value)}/><span className="optional">Shown in your local time zone; saved as UTC.</span></label><label className="builder-field">Team assignment method<select value={assignmentMode} onChange={event => setAssignmentMode(event.target.value as 'organizer' | 'balanced')}><option value="organizer">Participants scan their assigned team's code</option><option value="balanced">One shared code assigns balanced teams</option></select></label><label className="builder-field">Team names <span className="optional">One name per line · 2–12 teams</span><textarea rows={Math.min(8, Math.max(3, teamNamesText.split('\n').length))} maxLength={600} value={teamNamesText} onChange={event => setTeamNamesText(event.target.value)} placeholder={'Team Red\nTeam Blue'} /></label><label className="voting-config"><input type="checkbox" checked={votingEnabled} onChange={event => setVotingEnabled(event.target.checked)}/><span><b>Enable photo voting during review</b><small>Teams can vote for another team's approved photos.</small></span></label>{votingEnabled && <label className="builder-field duration-field">Voting bonus points<input type="number" min={0} max={1000} value={votingBonusPoints} onChange={event => setVotingBonusPoints(Math.max(0, Number(event.target.value)))}/></label>}</div></section>
           <div className="builder-actions"><button type="button" className="outline-button" onClick={() => setPage('hunts')}>Cancel</button><button type="submit" className="primary-button save-hunt-button" disabled={manageSaving}>{manageSaving ? 'Publishing…' : <><QrCode size={16}/> Publish & create QR codes</>}</button></div>
         </form> : <>
-          <section className="builder-section"><div className="builder-step"><QrCode size={15}/></div><div className="builder-main invite-builder-main"><div className="builder-items-heading"><div><h2>Team invitations</h2><p>{managedHunt.team_assignment_mode === 'balanced' ? 'Share this one code with everyone. The app will place each person on a smaller team.' : 'Show each code only to the participants assigned to that team.'}</p></div><button className="outline-button" disabled={manageSaving} onClick={() => void regenerateInvites()}><RefreshCw size={14}/> {inviteCodes.length ? 'Replace codes' : 'Create codes'}</button></div>{inviteCodes.length ? <><label className="invite-url-label">Your player name<input value={playerName} maxLength={40} onChange={event => setPlayerName(event.target.value)} placeholder="Name shown to your team"/></label><div className="invite-grid">{inviteCodes.map(invite => <article className="invite-card" key={invite.invite_token}><div className="invite-card-top"><span className="team-swatch" style={{backgroundColor: managedTeams.find(team => team.id === invite.team_id)?.display_color ?? '#b88bbf'}}/><b>{invite.team_name}</b></div><QRCodeSVG value={inviteUrl(invite.invite_token)} size={148} level="M" includeMargin/><label className="invite-url-label">Invitation link<input readOnly value={inviteUrl(invite.invite_token)}/></label><button className="outline-button" onClick={() => void copyInvite(invite.invite_token)}><Copy size={14}/>{copiedInvite === invite.invite_token ? 'Copied!' : 'Copy invite link'}</button><button className="outline-button" disabled={!!joiningAsPlayer} onClick={() => void joinAsPlayer(invite)}><UserRound size={14}/>{joiningAsPlayer === invite.invite_token ? 'Joining…' : 'Join this team'}</button></article>)}</div></> : <div className="locked-note"><ShieldCheck size={15}/> Invite tokens are stored as secure hashes. Create or replace the codes to display them; replacing links revokes older QR codes.</div>}{inviteCodes.length > 0 && <button className="outline-button print-invites" onClick={() => window.print()}><QrCode size={14}/> Print team codes</button>}</div></section>
+      <section className="builder-section"><div className="builder-step"><QrCode size={15}/></div><div className="builder-main invite-builder-main"><div className="builder-items-heading"><div><h2>Team invitations</h2><p>{managedHunt.team_assignment_mode === 'balanced' ? 'Share this one code with everyone. The app will place each person on a smaller team.' : 'Show each code only to the participants assigned to that team.'}</p></div><button className="outline-button" disabled={manageSaving} onClick={() => void regenerateInvites()}><RefreshCw size={14}/> {inviteCodes.length ? 'Replace codes' : 'Create codes'}</button></div>{inviteCodes.length ? <div className="invite-grid">{inviteCodes.map(invite => <article className="invite-card" key={invite.invite_token}><div className="invite-card-top"><span className="team-swatch" style={{backgroundColor: managedTeams.find(team => team.id === invite.team_id)?.display_color ?? '#b88bbf'}}/><b>{invite.team_name}</b></div><QRCodeSVG value={inviteUrl(invite.invite_token)} size={148} level="M" includeMargin/><label className="invite-url-label">Invitation link<input readOnly value={inviteUrl(invite.invite_token)}/></label><button className="outline-button" onClick={() => void copyInvite(invite.invite_token)}><Copy size={14}/>{copiedInvite === invite.invite_token ? 'Copied!' : 'Copy invite link'}</button><button className="outline-button" disabled={manageSaving} onClick={() => void joinTeam(invite.invite_token)}><Users size={14}/> Join this team</button></article>)}</div> : <div className="locked-note"><ShieldCheck size={15}/> Invite tokens are stored as secure hashes. Create or replace the codes to display them; replacing links revokes older QR codes.</div>}{inviteCodes.length > 0 && <button className="outline-button print-invites" onClick={() => window.print()}><QrCode size={14}/> Print team codes</button>}</div></section>
           <section className="builder-section"><div className="builder-step"><Users size={15}/></div><div className="builder-main"><h2>Participants</h2><p>{managedParticipants.length} {managedParticipants.length === 1 ? 'person has' : 'people have'} joined this hunt. You can move participants before the scheduled start.</p>{managedParticipants.length ? <div className="participant-roster">{managedParticipants.map(participant => <div className="participant-roster-row" key={participant.id}><span className="participant-avatar"><UserRound size={15}/></span><b>{participant.display_name}</b><select aria-label={`Team for ${participant.display_name}`} value={participant.team_id} onChange={event => void moveParticipant(participant, event.target.value)} disabled={managedHunt.status !== 'scheduled'}>{managedTeams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select></div>)}</div> : <div className="locked-note"><Users size={15}/> The roster fills in as participants join from their invitation links.</div>}{['scheduled','active'].includes(managedHunt.status) && <button className="reject-button end-hunt-button" disabled={manageSaving} onClick={() => void endHuntNow()}><Clock3 size={14}/> End hunt now and review</button>}</div></section>
         </>}
       </section> : page === 'review-hunt' && managedHunt ? <HuntReview huntId={managedHunt.id} title={managedHunt.title} status={managedHunt.status} onBack={() => setPage('hunts')} onChanged={() => void loadWorkspace()} /> : null}
