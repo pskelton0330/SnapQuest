@@ -33,7 +33,32 @@ select to_regprocedure('public.get_hunt_progress(uuid)') is not null as progress
 
 The result must be `true` before testing progress bars.
 
-## 3. Organizer login
+## 3. Apply the game-management migrations
+
+The organizer Start Now control requires the game-management RPC from migration 008. In an existing test project, first confirm whether the template tables already exist:
+
+```sql
+select to_regclass('public.hunt_templates') as templates_table,
+       to_regprocedure('public.start_game_now(uuid)') as start_now_rpc,
+       to_regprocedure('public.get_hunt_progress(uuid)') as progress_rpc;
+```
+
+If `hunt_templates` is missing, run migration [202610290007_reusable_hunt_templates.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610290007_reusable_hunt_templates.sql) first.
+
+Then run migration [202610290008_game_management.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610290008_game_management.sql), followed by [202610300009_team_progress.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610300009_team_progress.sql).
+
+Use the [Supabase SQL Editor](https://supabase.com/dashboard/project/ykfkwczcomkhxaraqpuq/sql/new), paste each complete file, and click **Run**. Run them in filename order. Do not apply migrations to production without a backup and a schema/data audit.
+
+Verify afterward:
+
+```sql
+select to_regprocedure('public.start_game_now(uuid)') is not null as start_now_available,
+       to_regprocedure('public.get_hunt_progress(uuid)') is not null as progress_available;
+```
+
+Both values must be `true`.
+
+## 4. Organizer login
 
 1. Open the public URL on the phone.
 2. Select Organizer Login.
@@ -49,7 +74,7 @@ Expected:
 
 If the link is wrong, copy only its destination host/path—not the full token—and correct Supabase URL Configuration before requesting another link.
 
-## 4. Create and join a test game
+## 5. Create and join a test game
 
 1. Create a test hunt with at least two challenges.
 2. Publish it with two teams and individual QR codes.
@@ -64,7 +89,7 @@ Expected:
 - A participant cannot be silently moved by scanning another team’s QR code.
 - The organizer can use `Join this team`, enter Play mode, and return with `Manage game`.
 
-## 5. Active-play and progress test
+## 6. Active-play and progress test
 
 Start the test game, then submit one photo from Team A.
 
@@ -84,7 +109,7 @@ Expected:
 - The accepted photo remains present.
 - No duplicate participant or duplicate submission is created.
 
-## 6. Authorization checks
+## 7. Authorization checks
 
 - A signed-out visitor can view the public landing page but cannot organize a game.
 - An anonymous participant cannot open organizer tables or manage another game.
