@@ -13,8 +13,8 @@ The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. T
 | HUNT-05 | verified | Public-template versus private-game distinction covered by local PGlite access tests; public challenge wording is not secret. |
 | AUTH-01 | partial | Existing organizer-profile/owner checks; PGlite denial tests pass. Controlled self-onboarding and permanent-account release path incomplete; preview bypass is development-only. |
 | AUTH-02 | verified | Existing redemption RPC and local tests preserve identity/game uniqueness, assigned/balanced teams and existing-member resume. Verification is local, not phones or live Auth. |
-| AUTH-03 | partial | Permanent identities can now resume/join without anonymous replacement; SQL owner isolation tested. Join this team and Play/Manage UI still missing. |
-| JOIN-01 | partial | Individual QR/copy/print in retained organizer screen. Team-specific host join action and focused QR paging remain. |
+| AUTH-03 | partial | Permanent identities can resume/join without anonymous replacement; owner-checked Join this team and Play/Manage switching are implemented. Root/last-game recovery and live multi-device verification remain. |
+| JOIN-01 | partial | Individual QR/copy/print and team-specific host Join this team action are implemented. Focused QR paging and live multi-device verification remain. |
 | JOIN-02 | verified | Existing redemption RPC and local tests preserve identity/game uniqueness, assigned/balanced teams and existing-member resume. Verification is local, not phones or live Auth. |
 | JOIN-03 | verified | Existing redemption RPC and local tests preserve identity/game uniqueness, assigned/balanced teams and existing-member resume. Verification is local, not phones or live Auth. |
 | TEAM-01 | missing | No team selfie model or scoped all-team aggregate endpoint/UI. Selfie cutoff/opt-out remains D-07. |
