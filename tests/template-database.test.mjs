@@ -7,7 +7,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration
+let migration, managementMigration, auditMigration, timingAuditMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -30,6 +30,7 @@ before(async () => {
     if(file.includes('0007')) { migration=sql; continue }
     if(file.includes('0008')) { managementMigration=sql; continue }
     if(file.includes('0010')) { auditMigration=sql; continue }
+    if(file.includes('0011')) { timingAuditMigration=sql; continue }
     await db.exec(sql)
   }
   await db.query('insert into auth.users(id) values ($1),($2)',[owner,other])
@@ -44,6 +45,7 @@ before(async () => {
   await db.exec(migration)
   await db.exec(managementMigration)
   await db.exec(auditMigration)
+  await db.exec(timingAuditMigration)
 })
 after(async()=> { await db?.close() })
 async function snapshot() {
@@ -82,6 +84,24 @@ test('organizer audit events record timing operations and stay owner-scoped',asy
   assert.equal(events[0].event_type,'game_start_now'); assert.equal(events[0].outcome,'success')
   assert.equal(events[0].details.duration_minutes,60)
   await assert.rejects(as('authenticated',other,"select public.record_audit_event('probe',$1,'notice','{}'::jsonb)",[id]))
+})
+test('timing transitions create owner-scoped audit events with authoritative details',async()=>{
+  const localTemplate=(await as('authenticated',owner,"select public.save_hunt_template('Timing source','Shop','',array[]::text[],$1::jsonb,60,'personal') id",[JSON.stringify([{title:'Timing item'}])])).rows[0].id
+  const id=(await as('authenticated',owner,'select public.create_game_from_template($1) id',[localTemplate])).rows[0].id
+  await as('authenticated',owner,"select * from public.configure_game($1,'Timing audit',60,array['Red','Blue'],'organizer',clock_timestamp()+interval '1 hour')",[id])
+  const original=(await db.query('select start_at from public.hunts where id=$1',[id])).rows[0].start_at
+  const nextStart="clock_timestamp()+interval '2 hours'"
+  await as('authenticated',owner,`select public.reschedule_game($1,${nextStart})`,[id])
+  await as('authenticated',owner,'select public.start_game_now($1)',[id])
+  await as('authenticated',owner,'select public.add_game_time($1,10)',[id])
+  await as('authenticated',owner,'select public.end_hunt_early($1)',[id])
+  const rows=(await db.query("select event_type,outcome,details from public.audit_events where hunt_id=$1 order by created_at",[id])).rows
+  assert.deepEqual(rows.map(row=>row.event_type),['game_reschedule','game_start_now','game_time_added','game_end_early'])
+  assert.ok(rows.every(row=>row.outcome==='success'))
+  assert.equal(new Date(rows[0].details.previous_start_at).getTime(),new Date(original).getTime())
+  assert.equal(rows[2].details.minutes_added,10)
+  assert.equal(rows[3].details.previous_status,'active')
+  await assert.rejects(as('authenticated',other,'select public.reschedule_game($1,clock_timestamp()+interval \'1 hour\')',[id]))
 })
 test('organizer creates a public reusable hunt with safe creator attribution',async()=>{
   templateId=(await as('authenticated',owner,"select public.save_hunt_template('Public hunt','Park','Description',array['Be safe'],$1::jsonb) id",[JSON.stringify([{title:'A red item',points:2}])])).rows[0].id
