@@ -15,6 +15,8 @@ Each batch stops for review. Montage, guest access and deletion remain required 
 
 ## Decision log
 
+2026-11-03: Applied and remotely verified migrations 001–010. A controlled production hunt completed the live path through Start Now, photo capture, organizer review and server-calculated scoring. Continue with the remaining Phase 2 reliability/security work before beginning montage feasibility.
+
 2026-11-02: Adopt v2.0 over conflicting older decisions. Preserve React/TypeScript/Vite/Supabase and migrations 001–008. Keep local-only UI refinement separate from authenticated gameplay. Implement session restoration first because it requires neither new schema nor open decisions. Do not claim full Phase 1 complete: host switching, last-game navigation, reconnect status, onboarding and real-phone continuity remain.
 
 Confirmed changes awaiting later implementation: quick review is the default for new games; legacy manual review remains intact. All players see all-team accepted-slot counts only. Hosts participate under their permanent identity. Finalization triggers one branded music-backed game montage; timer expiry does not. Joined guests retain authorized read-only results and video access. No retention numbers have been approved.
@@ -22,6 +24,8 @@ Confirmed changes awaiting later implementation: quick review is the default for
 Open gates retained from PRD: D-01 retention durations/start events; D-02 guest results after expiry and organizer history; D-03 render runtime/cost/closed-browser behavior; D-04 video profile/selection; D-05 exact tracks and rights; D-06 optional best-photo points; D-07 lost-credential recovery/selfie cutoff/opt-out; D-08 public onboarding/email/moderation; D-09 popularity attribution for tests/copies; D-10 organizer release approval before guest video download; D-11 final branding/production URL/commercial hosting. None blocks the session batch.
 
 ## Migration and configuration boundaries
+
+Current live state: migrations 001–010 are applied to the linked production project and were verified through the Supabase CLI. The earlier batch note below is historical; future schema proposals must remain additive and be audited against the live migration history before application.
 
 This batch adds no SQL migration, auth provider change, policy relaxation, account or media cleanup. Migrations 007–008 remain staged locally. The v1.1 document historically reports 001–006 applied, but no remote schema inspection has been performed in this batch. Audit actual live versions before any future application.
 

@@ -1,6 +1,6 @@
 # PRD v2 requirement and gap checklist
 
-Updated November 2, 2026 after the first session-continuity batch. These labels describe the whole requirement, not just code existence. Verified means the named local behavior passed checks; it does not imply live Supabase or physical-device acceptance. No remote system was inspected.
+Updated November 3, 2026 after live Supabase migration deployment and a controlled end-to-end hunt. These labels describe the whole requirement, not just code existence. Verified means the named behavior passed its stated checks; live smoke evidence is recorded separately below, and does not replace the full acceptance scenarios.
 
 The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. This checklist supersedes the older implementation review where requirements conflict; that review remains historical evidence.
 
@@ -23,10 +23,10 @@ The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. T
 | SESSION-03 | partial | This batch restores Auth before join, handles permanent rejoin, retains identity on errors, and fetches context on foreground/online/focus. Phone tests, root/last-game recovery, reconnect UI, full subscription/race recovery remain. |
 | UX-01 | partial | New preview navigation, lifecycle guidance and editor implemented; older authenticated organizer still separate. |
 | TIME-01 | verified | Local Create Game remains setup with no timer; domain and database snapshot/setup tests pass. Remote UI integration unverified. |
-| TIME-02 | partial | Local Start Now and staged 008 RPC tested locally; actual connected-device updates unverified. |
+| TIME-02 | partial | Start Now now passes a live controlled hunt; rescheduling, duplicate-start behavior and connected-device timing reconciliation remain unverified. |
 | TIME-03 | partial | Reschedule/extend/end local and staged SQL tests pass. No timing-change audit records or live delivery verification. |
 | PLAY-01 | partial | Existing challenge list/timer/camera controls. All-team progress and displayed submitter names incomplete. |
-| PROGRESS-01 | missing | No team selfie model or scoped all-team aggregate endpoint/UI. Selfie cutoff/opt-out remains D-07. |
+| PROGRESS-01 | partial | Scoped all-team accepted-slot aggregate endpoint/UI is implemented and live migrations are deployed; team selfie model and selfie cutoff/opt-out remain D-07. |
 | PHOTO-01 | implemented-unverified | OptimizePhoto re-encodes/resizes images; supported physical phone orientation and HEIC behavior not verified. |
 | PHOTO-02 | partial | Private unique upload, server acceptance/cutoff and one active slot exist. Separate stages, retained retry, expected-version protection, uncertain-response reconciliation and durable cleanup retry remain. |
 | PHOTO-03 | partial | Private unique upload, server acceptance/cutoff and one active slot exist. Separate stages, retained retry, expected-version protection, uncertain-response reconciliation and durable cleanup retry remain. |
@@ -59,7 +59,7 @@ The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. T
 | PRIV-01 | partial | Minimal guest name/identity design, venue rules, semantic forms and private media exist. Legal/privacy, physical device and assistive-technology review outstanding. |
 | A11Y-01 | partial | Minimal guest name/identity design, venue rules, semantic forms and private media exist. Legal/privacy, physical device and assistive-technology review outstanding. |
 | MIG-01 | verified | Entire v2.0 read; repository/migrations/tests inspected; this batch assessment and local evidence recorded. |
-| MIG-02 | partial | Existing additive migrations and local tests retained; no schema/live auth change or deployment this batch. Future migrations still require legacy mapping, repair steps and approval; release gates unresolved. |
+| MIG-02 | partial | Migrations 001–010 are applied and remotely verified; future migrations still require legacy mapping, repair steps and approval, and release gates remain unresolved. |
 | MIG-03 | partial | Existing additive migrations and local tests retained; no schema/live auth change or deployment this batch. Future migrations still require legacy mapping, repair steps and approval; release gates unresolved. |
 | MIG-04 | partial | Existing additive migrations and local tests retained; no schema/live auth change or deployment this batch. Future migrations still require legacy mapping, repair steps and approval; release gates unresolved. |
 | MIG-05 | partial | Existing additive migrations and local tests retained; no schema/live auth change or deployment this batch. Future migrations still require legacy mapping, repair steps and approval; release gates unresolved. |
