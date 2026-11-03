@@ -28,8 +28,8 @@ The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. T
 | PLAY-01 | partial | Existing challenge list/timer/camera controls. All-team progress and displayed submitter names incomplete. |
 | PROGRESS-01 | partial | Scoped all-team accepted-slot aggregate endpoint/UI is implemented and live migrations are deployed; team selfie model and selfie cutoff/opt-out remain D-07. |
 | PHOTO-01 | implemented-unverified | OptimizePhoto re-encodes/resizes images; supported physical phone orientation and HEIC behavior not verified. |
-| PHOTO-02 | partial | Private unique upload, server acceptance/cutoff and one active slot exist. Separate stages, retained retry, expected-version protection, uncertain-response reconciliation and durable cleanup retry remain. |
-| PHOTO-03 | partial | Private unique upload, server acceptance/cutoff and one active slot exist. Separate stages, retained retry, expected-version protection, uncertain-response reconciliation and durable cleanup retry remain. |
+| PHOTO-02 | partial | Private unique upload, server acceptance/cutoff and one active slot exist. Client reconciliation now checks persisted submissions and retries idempotently after uncertain RPC responses; upload stages, expected-version protection and server-side durable cleanup remain. |
+| PHOTO-03 | partial | Replacement keeps one active slot; failed old-photo deletion now enters a capped local retry queue processed on focus/connection return. Expected-version protection, server-side durable cleanup and multi-device races remain. |
 | PHOTO-04 | partial | Private unique upload, server acceptance/cutoff and one active slot exist. Separate stages, retained retry, expected-version protection, uncertain-response reconciliation and durable cleanup retry remain. |
 | SCORE-01 | conflicting | Configurable approved-item points exist. SQL dense ranks versus display competition ranks still disagree; quick policy absent. |
 | REVIEW-01 | conflicting | Current SQL finalization requires every pending entry decided. Must add per-game quick policy and preserve legacy manual behavior. |

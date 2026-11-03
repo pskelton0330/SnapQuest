@@ -1,0 +1,28 @@
+export type PhotoCleanupStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+
+function key(huntId: string, teamId: string) {
+  return `snapquest:photo-cleanup:${huntId}:${teamId}`
+}
+
+export function pendingPhotoCleanup(storage: PhotoCleanupStorage, huntId: string, teamId: string): string[] {
+  try {
+    const raw = storage.getItem(key(huntId, teamId))
+    const paths = raw ? JSON.parse(raw) : []
+    return Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string' && path.length > 0) : []
+  } catch { return [] }
+}
+
+export function queuePhotoCleanup(storage: PhotoCleanupStorage, huntId: string, teamId: string, path: string) {
+  const paths = pendingPhotoCleanup(storage, huntId, teamId)
+  if (!paths.includes(path)) {
+    try { storage.setItem(key(huntId, teamId), JSON.stringify([...paths, path].slice(-20))) } catch { /* Best-effort local retry queue. */ }
+  }
+}
+
+export function completePhotoCleanup(storage: PhotoCleanupStorage, huntId: string, teamId: string, path: string) {
+  const remaining = pendingPhotoCleanup(storage, huntId, teamId).filter(item => item !== path)
+  try {
+    if (remaining.length) storage.setItem(key(huntId, teamId), JSON.stringify(remaining))
+    else storage.removeItem(key(huntId, teamId))
+  } catch { /* Best-effort local retry queue. */ }
+}

@@ -15,6 +15,8 @@ The production migration set `202610280001` through `202611030011` was applied t
 
 This confirms the core live path—organizer setup, immediate start, participant capture, organizer review, and server-calculated final scoring—for this controlled scenario. It does not replace the adversarial, reconnect, multi-device, media-retention, or montage acceptance scenarios below.
 
+The current reliability batch adds client-side persisted cleanup retries for replaced photos and submission reconciliation after an uncertain RPC response. Automated coverage now totals 52 passing tests; this behavior still requires physical-device interruption and multi-device acceptance testing.
+
 ## Automated evidence for session batch
 
 - npm.cmd test: 47 tests passed (39 retained plus seven session-helper tests and one membership/ownership database regression).

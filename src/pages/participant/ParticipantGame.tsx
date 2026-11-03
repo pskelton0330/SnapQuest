@@ -3,6 +3,7 @@ import { Camera, Check, CircleHelp, Clock3, LoaderCircle, MapPin, ShieldCheck, T
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase'
 import { optimizePhoto } from '../../lib/photo'
+import { completePhotoCleanup, pendingPhotoCleanup, queuePhotoCleanup } from '../../lib/photoCleanup'
 
 type ParticipantGameProps = { huntId: string; session: Session }
 type TeamMate = { id: string; display_name: string }
@@ -33,6 +34,15 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   const [serverNow, setServerNow] = useState(0)
   const [teamProgress, setTeamProgress] = useState<TeamProgress[]>([])
 
+  const flushPhotoCleanup = useCallback(async () => {
+    if (!supabase || !context || typeof window === 'undefined') return
+    const storage = window.localStorage
+    for (const path of pendingPhotoCleanup(storage, huntId, context.team.id)) {
+      const { error: cleanupError } = await supabase.storage.from('hunt-photos').remove([path])
+      if (!cleanupError) completePhotoCleanup(storage, huntId, context.team.id, path)
+    }
+  }, [context, huntId])
+
   const loadContext = useCallback(async () => {
     if (!supabase) return
     const { data, error: contextError } = await supabase.rpc('get_participant_context', { p_hunt_id: huntId })
@@ -60,6 +70,14 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       window.removeEventListener('focus', reconcile)
     }
   }, [loadContext])
+  useEffect(() => {
+    if (!context) return
+    const retry = () => { if (document.visibilityState === 'visible') void flushPhotoCleanup() }
+    void flushPhotoCleanup()
+    window.addEventListener('online', retry)
+    window.addEventListener('focus', retry)
+    return () => { window.removeEventListener('online', retry); window.removeEventListener('focus', retry) }
+  }, [context, flushPhotoCleanup])
   useEffect(() => {
     const tick = window.setInterval(() => setServerNow(value => value ? value + 1000 : 0), 1000)
     const refresh = window.setInterval(() => void loadContext(), 15_000)
@@ -133,6 +151,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     setUploadErrors(current => ({ ...current, [item.id]: '' }))
     let storagePath = ''
     let accepted = false
+    let uncertain = false
     try {
       const compressed = await optimizePhoto(file)
       storagePath = `${huntId}/${context.team.id}/${item.id}/${crypto.randomUUID()}.jpg`
@@ -140,25 +159,49 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
         cacheControl: '3600', contentType: 'image/jpeg', upsert: false,
       })
       if (uploadError) throw uploadError
-      const { data, error: submitError } = await supabase.rpc('submit_hunt_photo', {
+      const firstAttempt = await supabase.rpc('submit_hunt_photo', {
         p_hunt_item_id: item.id, p_storage_path: storagePath,
       })
-      if (submitError) throw submitError
-      const result = data as { accepted: boolean; submitted_at: string; previous_storage_path: string | null }
+      let result = firstAttempt.data as { accepted: boolean; submitted_at: string; previous_storage_path: string | null } | null
+      let displayPath = storagePath
+      let reconciledRow: Omit<PhotoSubmission, 'photoUrl'> | null = null
+      if (firstAttempt.error) {
+        const reconciliation = await supabase.from('submissions')
+          .select('id,hunt_item_id,team_id,participant_id,storage_path,submitted_at,approval_status')
+          .eq('hunt_id', huntId).eq('hunt_item_id', item.id).eq('team_id', context.team.id).maybeSingle()
+        if (!reconciliation.error && reconciliation.data) {
+          reconciledRow = reconciliation.data as Omit<PhotoSubmission, 'photoUrl'>
+          displayPath = reconciledRow.storage_path
+          result = { accepted: true, submitted_at: reconciledRow.submitted_at, previous_storage_path: null }
+          if (displayPath !== storagePath) {
+            const { error: orphanError } = await supabase.storage.from('hunt-photos').remove([storagePath])
+            if (orphanError && typeof window !== 'undefined') queuePhotoCleanup(window.localStorage, huntId, context.team.id, storagePath)
+          }
+        } else {
+          const retry = await supabase.rpc('submit_hunt_photo', { p_hunt_item_id: item.id, p_storage_path: storagePath })
+          if (retry.error) {
+            uncertain = Boolean(reconciliation.error)
+            throw new Error(uncertain ? 'The photo upload completed, but its status could not be confirmed. Check your connection and try again.' : firstAttempt.error.message)
+          }
+          result = retry.data as { accepted: boolean; submitted_at: string; previous_storage_path: string | null }
+        }
+      }
+      if (!result) throw new Error('The photo submission could not be confirmed.')
       accepted = true
       if (result.previous_storage_path) {
         const { error: cleanupError } = await supabase.storage.from('hunt-photos').remove([result.previous_storage_path])
-        if (cleanupError) console.warn('The previous photo could not be removed yet.', cleanupError.message)
+        if (cleanupError && typeof window !== 'undefined') queuePhotoCleanup(window.localStorage, huntId, context.team.id, result.previous_storage_path)
+        else if (typeof window !== 'undefined') completePhotoCleanup(window.localStorage, huntId, context.team.id, result.previous_storage_path)
       }
-      const { data: signed, error: signedError } = await supabase.storage.from('hunt-photos').createSignedUrl(storagePath, 300)
+      const { data: signed, error: signedError } = await supabase.storage.from('hunt-photos').createSignedUrl(displayPath, 300)
       setSubmissions(current => ({ ...current, [item.id]: {
-        id: current[item.id]?.id ?? crypto.randomUUID(), hunt_item_id: item.id, team_id: context.team.id,
-        participant_id: context.participant.id, storage_path: storagePath, submitted_at: result.submitted_at,
+        id: reconciledRow?.id ?? current[item.id]?.id ?? crypto.randomUUID(), hunt_item_id: item.id, team_id: context.team.id,
+        participant_id: reconciledRow?.participant_id ?? context.participant.id, storage_path: displayPath, submitted_at: result.submitted_at,
         approval_status: 'pending', photoUrl: signed?.signedUrl ?? '',
       } }))
       if (signedError) setUploadErrors(current => ({ ...current, [item.id]: 'Submitted successfully, but the preview could not load yet.' }))
     } catch (uploadError) {
-      if (storagePath && !accepted) await supabase.storage.from('hunt-photos').remove([storagePath])
+      if (storagePath && !accepted && !uncertain) await supabase.storage.from('hunt-photos').remove([storagePath])
       const detail = uploadError instanceof Error ? uploadError.message : 'The photo could not be submitted.'
       setUploadErrors(current => ({ ...current, [item.id]: detail }))
     } finally { setUploading(current => ({ ...current, [item.id]: false })) }
