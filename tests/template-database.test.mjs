@@ -7,7 +7,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, timingAuditMigration, teamIdentityMigration
+let migration, managementMigration, auditMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -32,6 +32,7 @@ before(async () => {
     if(file.includes('0010')) { auditMigration=sql; continue }
     if(file.includes('0011')) { timingAuditMigration=sql; continue }
     if(file.includes('0012')) { teamIdentityMigration=sql; continue }
+    if(file.includes('0013')) { manualStartMigration=sql; continue }
     await db.exec(sql)
   }
   await db.query('insert into auth.users(id) values ($1),($2)',[owner,other])
@@ -48,6 +49,7 @@ before(async () => {
   await db.exec(auditMigration)
   await db.exec(timingAuditMigration)
   await db.exec(teamIdentityMigration)
+  await db.exec(manualStartMigration)
 })
 after(async()=> { await db?.close() })
 async function snapshot() {
@@ -104,6 +106,19 @@ test('timing transitions create owner-scoped audit events with authoritative det
   assert.equal(rows[2].details.minutes_added,10)
   assert.equal(rows[3].details.previous_status,'active')
   await assert.rejects(as('authenticated',other,'select public.reschedule_game($1,clock_timestamp()+interval \'1 hour\')',[id]))
+})
+test('manual-start hunts hold a lobby until the organizer starts the timer',async()=>{
+  const localTemplate=(await as('authenticated',owner,"select public.save_hunt_template('Manual source','Shop','',array[]::text[],$1::jsonb,60,'personal') id",[JSON.stringify([{title:'Manual item'}])])).rows[0].id
+  const id=(await as('authenticated',owner,'select public.create_game_from_template($1) id',[localTemplate])).rows[0].id
+  const invites=(await as('authenticated',owner,"select * from public.configure_game($1,'Manual game',60,array['Red','Blue'],'organizer',null)",[id])).rows
+  const lobby=(await db.query('select status,start_at from public.hunts where id=$1',[id])).rows[0]
+  assert.equal(lobby.status,'scheduled'); assert.equal(lobby.start_at,null)
+  await as('authenticated',other,"select public.redeem_invitation($1,'Manual player')",[invites[0].invite_token])
+  const before=(await as('authenticated',other,'select public.get_participant_context($1) data',[id])).rows[0].data
+  assert.equal(before.runtime_state,'waiting'); assert.equal(before.start_at,null); assert.equal(before.ends_at,null)
+  await as('authenticated',owner,'select public.start_game_now($1)',[id])
+  const active=(await db.query('select status,start_at from public.hunts where id=$1',[id])).rows[0]
+  assert.equal(active.status,'active'); assert.ok(active.start_at)
 })
 test('teams can choose a unique pre-start name and replace one private selfie',async()=>{
   const localTemplate=(await as('authenticated',owner,"select public.save_hunt_template('Identity source','Shop','',array[]::text[],$1::jsonb,60,'personal') id",[JSON.stringify([{title:'Identity item'}])])).rows[0].id

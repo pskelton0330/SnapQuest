@@ -10,7 +10,7 @@ type TeamMate = { id: string; display_name: string }
 type TeamSelfie = { storage_path: string; submitted_by: string; submitted_at: string }
 type HuntContext = {
   participant_id: string; hunt_id: string; title: string; venue: string; rules: string[]; status: string
-  runtime_state: 'waiting' | 'active' | 'ended' | 'review' | 'completed'; start_at: string; ends_at: string; duration_minutes: number
+  runtime_state: 'waiting' | 'active' | 'ended' | 'review' | 'completed'; start_at: string | null; ends_at: string | null; duration_minutes: number
   server_now: string; team: { id: string; name: string; display_color: string; selfie: TeamSelfie | null }; participant: TeamMate; teammates: TeamMate[]
 }
 type HuntItem = { id: string; title_snapshot: string; description_snapshot: string | null; point_value: number; display_order: number }
@@ -19,6 +19,7 @@ type PhotoSubmission = { id: string; hunt_item_id: string; team_id: string; part
 type ReviewGallery = { voting_enabled: boolean; voting_bonus_points: number; status: string; final_scores: {team_id:string;team_name:string;base_points:number;voting_bonus:number;total:number;rank:number}[]; teams: {id:string;name:string;display_color:string}[]; items: {id:string;title:string;points:number;display_order:number}[]; submissions: {id:string;item_id:string;team_id:string;storage_path:string;status:string;photo_url?:string}[]; votes: {item_id:string;voting_team_id:string;selected_team_id:string}[] }
 
 function clockLabel(seconds: number) {
+  if (seconds < 0) return 'WAITING'
   const safe = Math.max(0, seconds)
   return `${Math.floor(safe / 60).toString().padStart(2, '0')}:${(safe % 60).toString().padStart(2, '0')}`
 }
@@ -116,7 +117,8 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     if (!context) return 'waiting'
     if (context.status === 'completed') return 'completed'
     if (context.status === 'review') return 'review'
-    if (serverNow >= new Date(context.ends_at).getTime()) return 'ended'
+    if (!context.start_at) return 'waiting'
+    if (context.ends_at && serverNow >= new Date(context.ends_at).getTime()) return 'ended'
     if (serverNow < new Date(context.start_at).getTime()) return 'waiting'
     return 'active'
   }, [serverNow, context])
@@ -161,8 +163,8 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     return () => { cancelled = true }
   }, [huntId, runtimeState])
 
-  const remainingSeconds = context ? Math.ceil((new Date(context.ends_at).getTime() - serverNow) / 1000) : 0
-  const untilStart = context ? Math.ceil((new Date(context.start_at).getTime() - serverNow) / 1000) : 0
+  const remainingSeconds = context?.ends_at ? Math.ceil((new Date(context.ends_at).getTime() - serverNow) / 1000) : 0
+  const untilStart = context?.start_at ? Math.ceil((new Date(context.start_at).getTime() - serverNow) / 1000) : -1
 
   async function saveTeamName(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -285,7 +287,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     }
   }
 
-  return <main className="participant-shell game-shell">
+  return <main className={`participant-shell game-shell ${!context?.start_at && runtimeState === 'waiting' ? 'manual-start-lobby' : ''}`}>
     <header className="participant-topbar"><a className="brand" href="#"><span className="brand-icon"><Camera size={19}/></span> SnapQuest</a><span className="nav-note"><ShieldCheck size={15}/> {context ? context.team.name : 'Participant space'} {!session.user.is_anonymous && <a className="outline-button" href={`#/manage/${huntId}`}><Settings2 size={14}/> Manage game</a>}</span></header>
     {loading ? <div className="participant-loading"><LoaderCircle className="spin" size={24}/> Loading your hunt…</div> : error && !context ? <section className="participant-message"><CircleHelp size={24}/><h1>We couldn’t open this hunt</h1><p>{error}</p><button className="outline-button" onClick={() => { setLoading(true); setError(''); void loadContext() }}>Try again</button></section> : context ? <>
       <section className="participant-game-heading"><div><div className="eyebrow"><MapPin size={14}/> {context.venue}</div><h1>{context.title}</h1><p>You’re playing as <b>{context.participant.display_name}</b> on <span className="team-name-pill" style={{color:context.team.display_color}}>{context.team.name}</span></p></div>{runtimeState === 'active' && <div className="game-clock"><Clock3 size={19}/><span>{clockLabel(remainingSeconds)}</span><small>TIME LEFT</small></div>}</section>

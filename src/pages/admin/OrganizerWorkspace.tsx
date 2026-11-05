@@ -51,6 +51,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const [managedHunt, setManagedHunt] = useState<Hunt | null>(null)
   const [teamNamesText, setTeamNamesText] = useState('Team Red\nTeam Blue')
   const [assignmentMode, setAssignmentMode] = useState<'organizer' | 'balanced'>('organizer')
+  const [startMode, setStartMode] = useState<'manual' | 'scheduled'>('manual')
   const [startAtLocal, setStartAtLocal] = useState(localDateTimeValue())
   const [votingEnabled, setVotingEnabled] = useState(false)
   const [votingBonusPoints, setVotingBonusPoints] = useState(0)
@@ -178,6 +179,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     setManagedHunt(hunt)
     setTeamNamesText('Team Red\nTeam Blue')
     setAssignmentMode(hunt.team_assignment_mode || 'organizer')
+    setStartMode(hunt.start_at ? 'scheduled' : 'manual')
     setStartAtLocal(localDateTimeValue(hunt.start_at))
     setVotingEnabled(hunt.voting_enabled)
     setVotingBonusPoints(hunt.voting_bonus_points)
@@ -207,9 +209,9 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       setManageMessage('Team names must be unique.')
       return
     }
-    const startTime = new Date(startAtLocal)
-    if (!Number.isFinite(startTime.getTime()) || startTime.getTime() <= Date.now()) {
-      setManageMessage('Choose a start time in the future.')
+    const startTime = startMode === 'scheduled' ? new Date(startAtLocal) : null
+    if (startMode === 'scheduled' && (!startTime || !Number.isFinite(startTime.getTime()) || startTime.getTime() <= Date.now())) {
+      setManageMessage('Choose a start time in the future, or select Start manually.')
       return
     }
     setManageSaving(true)
@@ -218,14 +220,14 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
         p_hunt_id: managedHunt.id,
         p_team_names: teamNames,
         p_assignment_mode: assignmentMode,
-        p_start_at: startTime.toISOString(),
+        p_start_at: startTime?.toISOString() ?? null,
         p_voting_enabled: votingEnabled,
         p_voting_bonus_points: votingEnabled ? votingBonusPoints : 0,
       })
       if (error) { setManageMessage(error.message); return }
       const codes = (data ?? []) as InviteCode[]
       setInviteCodes(codes)
-      setManagedHunt({ ...managedHunt, status: 'scheduled', start_at: startTime.toISOString(), team_assignment_mode: assignmentMode, voting_enabled: votingEnabled, voting_bonus_points: votingBonusPoints })
+      setManagedHunt({ ...managedHunt, status: 'scheduled', start_at: startTime?.toISOString() ?? null, team_assignment_mode: assignmentMode, voting_enabled: votingEnabled, voting_bonus_points: votingBonusPoints })
       await loadWorkspace()
       const [teamResult, participantResult] = await Promise.all([
         supabase.from('teams').select('id,hunt_id,name,display_color,display_order').eq('hunt_id', managedHunt.id).order('display_order'),
@@ -363,7 +365,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
         {manageMessage && <div className="form-error" role="alert">{manageMessage}</div>}
         {managedHunt.status === 'scheduled' && <section className="builder-section"><div className="builder-step"><Play size={15}/></div><div className="builder-main"><h2>Ready to start?</h2><p>Start immediately if your players are ready. This uses the server clock and preserves the roster and invitation links.</p><button type="button" className="primary-button" disabled={manageSaving} onClick={() => void startHuntNow()}><Play size={15}/> Start hunt now</button></div></section>}
         {managedHunt.status === 'draft' ? <form className="hunt-builder" onSubmit={publishHunt}>
-          <section className="builder-section"><div className="builder-step"><CalendarDays size={15}/></div><div className="builder-main"><h2>Choose when and how to play</h2><p>Your QR invitations become active as soon as you publish this hunt.</p><label className="builder-field">Scheduled start time<input type="datetime-local" required value={startAtLocal} onChange={event => setStartAtLocal(event.target.value)}/><span className="optional">Shown in your local time zone; saved as UTC.</span></label><label className="builder-field">Team assignment method<select value={assignmentMode} onChange={event => setAssignmentMode(event.target.value as 'organizer' | 'balanced')}><option value="organizer">Participants scan their assigned team's code</option><option value="balanced">One shared code assigns balanced teams</option></select></label><label className="builder-field">Team names <span className="optional">One name per line · 2–12 teams</span><textarea rows={Math.min(8, Math.max(3, teamNamesText.split('\n').length))} maxLength={600} value={teamNamesText} onChange={event => setTeamNamesText(event.target.value)} placeholder={'Team Red\nTeam Blue'} /></label><label className="voting-config"><input type="checkbox" checked={votingEnabled} onChange={event => setVotingEnabled(event.target.checked)}/><span><b>Enable photo voting during review</b><small>Teams can vote for another team's approved photos.</small></span></label>{votingEnabled && <label className="builder-field duration-field">Voting bonus points<input type="number" min={0} max={1000} value={votingBonusPoints} onChange={event => setVotingBonusPoints(Math.max(0, Number(event.target.value)))}/></label>}</div></section>
+          <section className="builder-section"><div className="builder-step"><CalendarDays size={15}/></div><div className="builder-main"><h2>Choose when and how to play</h2><p>Set up the lobby now, then start the timer when your teams are ready.</p><div className="start-mode-options" role="group" aria-label="Hunt start mode"><label className={`start-mode-option ${startMode === 'manual' ? 'selected' : ''}`}><input type="radio" name="start-mode" checked={startMode === 'manual'} onChange={() => setStartMode('manual')}/><span><b>Start manually</b><small>Teams join a waiting lobby. You start the hunt when everyone is ready.</small></span></label><label className={`start-mode-option ${startMode === 'scheduled' ? 'selected' : ''}`}><input type="radio" name="start-mode" checked={startMode === 'scheduled'} onChange={() => setStartMode('scheduled')}/><span><b>Schedule a start</b><small>The server starts the hunt automatically at the selected time.</small></span></label></div>{startMode === 'scheduled' && <label className="builder-field">Scheduled start time<input type="datetime-local" required value={startAtLocal} onChange={event => setStartAtLocal(event.target.value)}/><span className="optional">Shown in your local time zone; saved as UTC. You can still start early.</span></label>}<label className="builder-field">Team assignment method<select value={assignmentMode} onChange={event => setAssignmentMode(event.target.value as 'organizer' | 'balanced')}><option value="organizer">Participants scan their assigned team's code</option><option value="balanced">One shared code assigns balanced teams</option></select></label><label className="builder-field">Team names <span className="optional">One name per line · 2–12 teams</span><textarea rows={Math.min(8, Math.max(3, teamNamesText.split('\n').length))} maxLength={600} value={teamNamesText} onChange={event => setTeamNamesText(event.target.value)} placeholder={'Team Red\nTeam Blue'} /></label><label className="voting-config"><input type="checkbox" checked={votingEnabled} onChange={event => setVotingEnabled(event.target.checked)}/><span><b>Enable photo voting during review</b><small>Teams can vote for another team's approved photos.</small></span></label>{votingEnabled && <label className="builder-field duration-field">Voting bonus points<input type="number" min={0} max={1000} value={votingBonusPoints} onChange={event => setVotingBonusPoints(Math.max(0, Number(event.target.value)))}/></label>}</div></section>
           <div className="builder-actions"><button type="button" className="outline-button" onClick={() => setPage('hunts')}>Cancel</button><button type="submit" className="primary-button save-hunt-button" disabled={manageSaving}>{manageSaving ? 'Publishing…' : <><QrCode size={16}/> Publish & create QR codes</>}</button></div>
         </form> : <>
       <section className="builder-section"><div className="builder-step"><QrCode size={15}/></div><div className="builder-main invite-builder-main"><div className="builder-items-heading"><div><h2>Team invitations</h2><p>{managedHunt.team_assignment_mode === 'balanced' ? 'Share this one code with everyone. The app will place each person on a smaller team.' : 'Show each code only to the participants assigned to that team.'}</p></div><button className="outline-button" disabled={manageSaving} onClick={() => void regenerateInvites()}><RefreshCw size={14}/> {inviteCodes.length ? 'Replace codes' : 'Create codes'}</button></div>{inviteCodes.length ? <div className="invite-grid">{inviteCodes.map(invite => <article className="invite-card" key={invite.invite_token}><div className="invite-card-top"><span className="team-swatch" style={{backgroundColor: managedTeams.find(team => team.id === invite.team_id)?.display_color ?? '#b88bbf'}}/><b>{invite.team_name}</b></div><QRCodeSVG value={inviteUrl(invite.invite_token)} size={148} level="M" includeMargin/><label className="invite-url-label">Invitation link<input readOnly value={inviteUrl(invite.invite_token)}/></label><button className="outline-button" onClick={() => void copyInvite(invite.invite_token)}><Copy size={14}/>{copiedInvite === invite.invite_token ? 'Copied!' : 'Copy invite link'}</button><button className="outline-button" disabled={manageSaving} onClick={() => void joinTeam(invite.invite_token)}><Users size={14}/> Join this team</button></article>)}</div> : <div className="locked-note"><ShieldCheck size={15}/> Invite tokens are stored as secure hashes. Create or replace the codes to display them; replacing links revokes older QR codes.</div>}{inviteCodes.length > 0 && <button className="outline-button print-invites" onClick={() => window.print()}><QrCode size={14}/> Print team codes</button>}</div></section>
