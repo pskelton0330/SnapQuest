@@ -260,6 +260,25 @@ test('review writes stop at completion and finalization retries return the store
   assert.equal((await db.query('select approval_status from public.submissions where id=$1', [submissionId])).rows[0].approval_status, original)
 })
 
+test('organizers can correct review decisions until finalization, then decisions lock', async () => {
+  const startsLater = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  const { huntId, participant } = await createReliabilityHunt('Correctable review', startsLater)
+  const itemId = (await db.query('select id from public.hunt_items where hunt_id=$1', [huntId])).rows[0].id
+  const photoPath = `${huntId}/${participant.team_id}/${itemId}/66666666-6666-4666-8666-666666666666.jpg`
+  await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1)", [photoPath])
+  await as('authenticated', owner, 'select public.start_game_now($1)', [huntId])
+  await as('authenticated', other, 'select public.submit_hunt_photo($1,$2,null)', [itemId, photoPath])
+  const rowId = (await db.query('select id from public.submissions where hunt_id=$1', [huntId])).rows[0].id
+  await as('authenticated', owner, 'select public.end_hunt_early($1)', [huntId])
+  await as('authenticated', owner, "select public.review_submission($1,'approved')", [rowId])
+  await as('authenticated', owner, "select public.review_submission($1,'rejected')", [rowId])
+  assert.equal((await db.query('select approval_status from public.submissions where id=$1', [rowId])).rows[0].approval_status, 'rejected')
+  await as('authenticated', owner, "select public.review_submission($1,'approved')", [rowId])
+  await as('authenticated', owner, 'select public.finalize_hunt($1)', [huntId])
+  await assert.rejects(as('authenticated', owner, "select public.review_submission($1,'rejected')", [rowId]), /Photo review is not open/)
+  assert.equal((await db.query('select approval_status from public.submissions where id=$1', [rowId])).rows[0].approval_status, 'approved')
+})
+
 test('ordinary Storage cleanup is denied for referenced photos and selfies', async () => {
   const startsLater = new Date(Date.now() + 60 * 60 * 1000).toISOString()
   const { huntId, teams, participant } = await createReliabilityHunt('Protected media', startsLater)
