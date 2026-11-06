@@ -21,6 +21,8 @@ let chatSendFailures = 0
 let signedPreviewMode = false
 let signedPreviewRequests = 0
 let participantReviewPhotoStatus: 'pending' | 'approved' | 'rejected' | null = null
+let participantReviewVotingMode = false
+let participantReviewVotes: { item_id: string; voting_team_id: string; selected_team_id: string }[] = []
 
 test.beforeEach(async ({ page }) => {
   participantRuntimeState = 'waiting'
@@ -42,6 +44,8 @@ test.beforeEach(async ({ page }) => {
   signedPreviewMode = false
   signedPreviewRequests = 0
   participantReviewPhotoStatus = null
+  participantReviewVotingMode = false
+  participantReviewVotes = []
   await page.route('https://test-project.supabase.co/**', async route => {
     const request = route.request()
     if (request.url().includes('/storage/v1/object/sign/hunt-photos/')) {
@@ -169,7 +173,11 @@ test.beforeEach(async ({ page }) => {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: organizerReviewStatus, can_begin_review: false, final_scores: finalScores, teams, items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 0 }], submissions: [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: 'test/photo.jpg', status: organizerReviewDecision, submitted_at: '2026-11-01T17:10:00Z' }], votes: [], team_selfies: [] }) })
       } else {
         const reviewPhotoStatus = participantReviewPhotoStatus ?? (signedPreviewMode ? 'approved' : null)
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: participantRuntimeState, final_scores: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }], teams: [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }], items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions: reviewPhotoStatus ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', storage_path: 'test/photo.jpg', status: reviewPhotoStatus }] : [], votes: [] }) })
+        const submissions = participantReviewVotingMode
+          ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '55555555-5555-4555-8555-555555555555', storage_path: 'test/maple.jpg', status: 'approved' }]
+          : reviewPhotoStatus ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', storage_path: 'test/photo.jpg', status: reviewPhotoStatus }] : []
+        const teams = [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }, ...(participantReviewVotingMode ? [{ id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : [])]
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: participantReviewVotingMode, voting_bonus_points: 3, status: participantRuntimeState, final_scores: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }], teams, items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions, votes: participantReviewVotes }) })
       }
       return
     }
@@ -487,6 +495,22 @@ test('participant gallery picks up an organizer approval through its refresh fal
   signedPreviewMode = true
   await page.clock.fastForward(20_000)
   await expect(page.getByRole('img', { name: 'Team Cedar photo for A red leaf' })).toBeVisible()
+})
+
+test('participant gallery picks up a teammate vote through its refresh fallback', async ({ page }) => {
+  participantRuntimeState = 'review'
+  participantReviewVotingMode = true
+  signedPreviewMode = true
+  await page.clock.install()
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  const voteButton = page.getByRole('button', { name: 'Vote for this photo' })
+  await expect(voteButton).toBeVisible()
+
+  participantReviewVotes = [{ item_id: '77777777-7777-4777-8777-777777777777', voting_team_id: '44444444-4444-4444-8444-444444444444', selected_team_id: '55555555-5555-4555-8555-555555555555' }]
+  await page.clock.fastForward(20_000)
+  await expect(page.getByRole('button', { name: 'Your vote' })).toBeVisible()
 })
 
 test('participant sees final standings and winner celebration after results publish', async ({ page }) => {
