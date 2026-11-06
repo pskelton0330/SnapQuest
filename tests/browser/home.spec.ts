@@ -23,6 +23,8 @@ let signedPreviewRequests = 0
 let participantReviewPhotoStatus: 'pending' | 'approved' | 'rejected' | null = null
 let participantReviewVotingMode = false
 let participantReviewVotes: { item_id: string; voting_team_id: string; selected_team_id: string }[] = []
+let participantTieMode = false
+let participantZeroScoreMode = false
 
 test.beforeEach(async ({ page }) => {
   participantRuntimeState = 'waiting'
@@ -46,6 +48,8 @@ test.beforeEach(async ({ page }) => {
   participantReviewPhotoStatus = null
   participantReviewVotingMode = false
   participantReviewVotes = []
+  participantTieMode = false
+  participantZeroScoreMode = false
   await page.route('https://test-project.supabase.co/**', async route => {
     const request = route.request()
     if (request.url().includes('/storage/v1/object/sign/hunt-photos/')) {
@@ -177,7 +181,8 @@ test.beforeEach(async ({ page }) => {
           ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '55555555-5555-4555-8555-555555555555', storage_path: 'test/maple.jpg', status: 'approved' }]
           : reviewPhotoStatus ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', storage_path: 'test/photo.jpg', status: reviewPhotoStatus }] : []
         const teams = [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }, ...(participantReviewVotingMode ? [{ id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : [])]
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: participantReviewVotingMode, voting_bonus_points: 3, status: participantRuntimeState, final_scores: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }], teams, items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions, votes: participantReviewVotes }) })
+        const finalScores = [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: participantZeroScoreMode ? 0 : 10, voting_bonus: 0, total: participantZeroScoreMode ? 0 : 10, rank: 1 }, ...(participantTieMode ? [{ team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }] : [])]
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: participantReviewVotingMode, voting_bonus_points: 3, status: participantRuntimeState, final_scores: finalScores, teams: participantTieMode ? [...teams, { id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : teams, items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions, votes: participantReviewVotes }) })
       }
       return
     }
@@ -547,6 +552,22 @@ test('participant sees final standings and winner celebration after results publ
   }
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, targets }) => ({ id, impact, help, targets })), null, 2)).toEqual([])
+})
+
+test('participant celebration identifies tied winners and suppresses a zero-score winner card', async ({ page }) => {
+  participantRuntimeState = 'completed'
+  participantTieMode = true
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText('TIED WINNER')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Share team card' })).toBeVisible()
+
+  participantTieMode = false
+  participantZeroScoreMode = true
+  await page.reload()
+  await expect(page.getByText('No team scored points this hunt.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Share team card' })).toHaveCount(0)
 })
 
 test('participant renews signed review-photo previews before their URLs expire', async ({ page }) => {
