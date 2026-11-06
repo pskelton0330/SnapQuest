@@ -7,7 +7,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration
+let migration, managementMigration, auditMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -18,7 +18,11 @@ async function as(role, uid, sql, params=[]) {
 before(async () => {
   db=new PGlite({extensions:{pgcrypto}})
   await db.exec(`create role anon; create role authenticated;
-    create schema auth; create schema storage; create schema extensions;
+    create schema auth; create schema storage; create schema extensions; create schema vault;
+    create table vault.test_secrets(name text primary key,decrypted_secret text not null);
+    create view vault.decrypted_secrets as select name,decrypted_secret from vault.test_secrets;
+    create function vault.create_secret(new_secret text,new_name text default null,new_description text default '') returns uuid language plpgsql security definer set search_path='' as $$
+      declare secret_id uuid:=gen_random_uuid(); begin insert into vault.test_secrets(name,decrypted_secret) values(new_name,new_secret); return secret_id; end $$;
     create table auth.users(id uuid primary key);
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     grant usage on schema auth to anon,authenticated; grant execute on function auth.uid() to anon,authenticated;
@@ -36,6 +40,8 @@ before(async () => {
     if(file.includes('0014')) { messageMigration=sql; continue }
     if(file.includes('0015')) { manualLobbySelfieMigration=sql; continue }
     if(file.includes('0016')) { reliabilityMigration=sql; continue }
+    if(file.includes('0017')) { photoVersionMigration=sql; continue }
+    if(file.includes('0018')) { inviteRecoveryMigration=sql; continue }
     await db.exec(sql)
   }
   await db.query('insert into auth.users(id) values ($1),($2)',[owner,other])
@@ -56,6 +62,8 @@ before(async () => {
   await db.exec(messageMigration)
   await db.exec(manualLobbySelfieMigration)
   await db.exec(reliabilityMigration)
+  await db.exec(photoVersionMigration)
+  await db.exec(inviteRecoveryMigration)
 })
 after(async()=> { await db?.close() })
 async function snapshot() {
@@ -243,12 +251,38 @@ test('ordinary Storage cleanup is denied for referenced photos and selfies', asy
   await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1),('hunt-photos',$2)", [selfiePath, photoPath])
   await as('authenticated', other, 'select public.submit_team_selfie($1,$2,$3)', [huntId, teamId, selfiePath])
   await as('authenticated', owner, 'select public.start_game_now($1)', [huntId])
-  await as('authenticated', other, 'select public.submit_hunt_photo($1,$2)', [itemId, photoPath])
+  await as('authenticated', other, 'select public.submit_hunt_photo($1,$2,null)', [itemId, photoPath])
   assert.equal((await as('authenticated', other, 'select public.can_delete_hunt_photo($1) allowed', [photoPath])).rows[0].allowed, false)
   assert.equal((await as('authenticated', other, 'select public.can_delete_team_selfie($1) allowed', [selfiePath])).rows[0].allowed, false)
   const unreferencedPath = `${huntId}/${teamId}/${itemId}/66666666-6666-4666-8666-666666666666.jpg`
   assert.equal((await as('authenticated', other, 'select public.can_delete_hunt_photo($1) allowed', [unreferencedPath])).rows[0].allowed, true)
   assert.equal(teams.length, 2)
+})
+
+test('invitation recovery returns encrypted owner-only links and never rotates legacy links implicitly', async () => {
+  const startsLater = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  const { huntId, teams } = await createReliabilityHunt('Recoverable invitations', startsLater)
+  const recovered = (await as('authenticated', owner, 'select public.get_hunt_invites($1) data', [huntId])).rows[0].data
+  assert.equal(recovered.has_active_invites, true)
+  assert.equal(recovered.recoverable, true)
+  assert.deepEqual(recovered.invite_codes.map(code => code.team_id), teams.map(team => team.team_id))
+  assert.deepEqual(recovered.invite_codes.map(code => code.invite_token), teams.map(team => team.invite_token))
+  await assert.rejects(as('authenticated', other, 'select public.get_hunt_invites($1)', [huntId]), /Organizer access required/)
+
+  const oldToken = recovered.invite_codes[0].invite_token
+  await db.query("delete from private.invitation_token_secrets where invitation_id=(select id from public.invitations where token_hash=encode(extensions.digest($1,'sha256'),'hex'))", [oldToken])
+  const incomplete = (await as('authenticated', owner, 'select public.get_hunt_invites($1) data', [huntId])).rows[0].data
+  assert.equal(incomplete.has_active_invites, true)
+  assert.equal(incomplete.recoverable, false)
+  assert.deepEqual(incomplete.invite_codes, [])
+  assert.ok((await as('anon', null, 'select public.preview_invitation($1) data', [oldToken])).rows[0].data)
+
+  const replaced = await as('authenticated', owner, 'select * from public.regenerate_hunt_invites($1)', [huntId])
+  assert.equal(replaced.rows.length, 2)
+  assert.equal((await as('anon', null, 'select public.preview_invitation($1) data', [oldToken])).rows[0].data, null)
+  const refreshed = (await as('authenticated', owner, 'select public.get_hunt_invites($1) data', [huntId])).rows[0].data
+  assert.equal(refreshed.recoverable, true)
+  assert.deepEqual(refreshed.invite_codes.map(code => code.invite_token), replaced.rows.map(row => row.invite_token))
 })
 test('organizer creates a public reusable hunt with safe creator attribution',async()=>{
   templateId=(await as('authenticated',owner,"select public.save_hunt_template('Public hunt','Park','Description',array['Be safe'],$1::jsonb) id",[JSON.stringify([{title:'A red item',points:2}])])).rows[0].id
@@ -385,15 +419,19 @@ test('timing changes preserve photo acceptance, replacement, attribution and clo
   const path1=`${id}/${participant.team_id}/${item}/11111111-1111-4111-8111-111111111111.jpg`
   const path2=`${id}/${participant.team_id}/${item}/22222222-2222-4222-8222-222222222222.jpg`
   await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1),('hunt-photos',$2)",[path1,path2])
-  await assert.rejects(as('authenticated',other,'select public.submit_hunt_photo($1,$2)',[item,path1]))
+  await assert.rejects(as('authenticated',other,'select public.submit_hunt_photo($1,$2,null)',[item,path1]))
   await as('authenticated',owner,'select public.start_game_now($1)',[id])
-  await as('authenticated',other,'select public.submit_hunt_photo($1,$2)',[item,path1])
-  const replaced=(await as('authenticated',other,'select public.submit_hunt_photo($1,$2) data',[item,path2])).rows[0].data
+  await as('authenticated',other,'select public.submit_hunt_photo($1,$2,null)',[item,path1])
+  const replaced=(await as('authenticated',other,'select public.submit_hunt_photo($1,$2,$3) data',[item,path2,path1])).rows[0].data
   assert.equal(replaced.previous_storage_path,path1)
+  const stalePath=`${id}/${participant.team_id}/${item}/33333333-3333-4333-8333-333333333333.jpg`
+  await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1)",[stalePath])
+  await assert.rejects(as('authenticated',other,'select public.submit_hunt_photo($1,$2,$3)',[item,stalePath,path1]),/teammate changed this photo slot/)
+  assert.equal((await db.query('select storage_path from public.submissions where hunt_id=$1',[id])).rows[0].storage_path,path2)
   const rows=(await db.query('select * from public.submissions where hunt_id=$1',[id])).rows
   assert.equal(rows.length,1);assert.equal(rows[0].participant_id,participant.id)
   await as('authenticated',owner,'select public.end_hunt_early($1)',[id])
-  await assert.rejects(as('authenticated',other,'select public.submit_hunt_photo($1,$2)',[item,path1]))
+  await assert.rejects(as('authenticated',other,'select public.submit_hunt_photo($1,$2,null)',[item,path1]))
 })
 
 

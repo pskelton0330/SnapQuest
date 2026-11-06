@@ -48,7 +48,7 @@ try {
   await as(owner, 'select public.start_game_now($1)', [hunt])
   const photoPath = `${hunt}/${member.team_id}/${item}/44444444-4444-4444-8444-444444444444.jpg`
   await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1)", [photoPath])
-  await as(guest, 'select public.submit_hunt_photo($1,$2)', [item, photoPath])
+  await as(guest, 'select public.submit_hunt_photo($1,$2,null)', [item, photoPath])
   const submission = (await db.query('select id from public.submissions where hunt_id=$1', [hunt])).rows[0].id
   // Model the passage of time in the isolated fixture, not in production.
   await db.query("update public.hunts set created_at=clock_timestamp()-interval '2 hours',start_at=clock_timestamp()-interval '61 minutes' where id=$1", [hunt])

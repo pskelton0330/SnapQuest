@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Archive, ArrowDownUp, ArrowRight, Camera, Check, CircleHelp, Clock3, House, Library, LogOut, Plus, Search, ShieldCheck, Sparkles, Users, X, MapPin, ClipboardList, Trash2, ArrowLeft, QrCode, Copy, RefreshCw, CalendarDays, Settings2, UserRound, Play } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import type { Session } from '@supabase/supabase-js'
@@ -14,7 +14,7 @@ type Organizer = { id: string }
 type LibraryItem = { id: string; title: string; description: string | null; category: string | null; archived: boolean; created_at: string }
 type Hunt = { id: string; title: string; venue: string; status: string; created_at: string; start_at: string | null; duration_minutes: number; team_assignment_mode: 'organizer' | 'balanced'; voting_enabled: boolean; voting_bonus_points: number }
 type DraftItem = { key: string; title: string; description: string; pointValue: number; libraryItemId?: string }
-type Team = { id: string; hunt_id: string; name: string; display_color: string; display_order: number; selfieUrl?: string; selfieSubmittedAt?: string }
+type Team = { id: string; hunt_id: string; name: string; display_color: string; display_order: number; selfieUrl?: string; selfieSubmittedAt?: string; selfiePreviewUnavailable?: boolean }
 type Participant = { id: string; hunt_id: string; team_id: string; display_name: string; joined_at: string }
 type PlayerGame = { hunt_id: string; team_id: string; team_name: string; hunt_title: string }
 type InviteCode = { team_id: string | null; team_name: string; invite_token: string }
@@ -35,16 +35,8 @@ function huntActionLabel(status: string) {
 
 function inviteStorageKey(huntId: string) { return `snapquest-invites-${huntId}` }
 
-function readSavedInvites(huntId: string): InviteCode[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(inviteStorageKey(huntId)) ?? '[]')
-    return Array.isArray(parsed) && parsed.every(row => row && typeof row.invite_token === 'string' && typeof row.team_name === 'string') ? parsed as InviteCode[] : []
-  } catch { return [] }
-}
-
-function saveInvites(huntId: string, invites: InviteCode[]) {
-  if (typeof window !== 'undefined') window.localStorage.setItem(inviteStorageKey(huntId), JSON.stringify(invites))
+function clearSavedInvites(huntId: string) {
+  try { window.localStorage.removeItem(inviteStorageKey(huntId)) } catch { /* The server is the invitation source of truth. */ }
 }
 
 const SUGGESTED_RULES = [
@@ -82,6 +74,10 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const [votingEnabled, setVotingEnabled] = useState(false)
   const [votingBonusPoints, setVotingBonusPoints] = useState(0)
   const [inviteCodes, setInviteCodes] = useState<InviteCode[]>([])
+  const [hasActiveInvites, setHasActiveInvites] = useState(false)
+  const [inviteRecoveryIncomplete, setInviteRecoveryIncomplete] = useState(false)
+  const [inviteRecoveryLoading, setInviteRecoveryLoading] = useState(false)
+  const [inviteRecoveryError, setInviteRecoveryError] = useState('')
   const [managedTeams, setManagedTeams] = useState<Team[]>([])
   const [managedParticipants, setManagedParticipants] = useState<Participant[]>([])
   const [playerGames, setPlayerGames] = useState<PlayerGame[]>([])
@@ -91,6 +87,8 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const [manageSaving, setManageSaving] = useState(false)
   const [manageMessage, setManageMessage] = useState('')
   const [copiedInvite, setCopiedInvite] = useState('')
+  const lobbyRequestId = useRef(0)
+  const lobbyRefreshTimer = useRef<number | undefined>(undefined)
 
   const loadWorkspace = useCallback(async () => {
     if (!supabase) return
@@ -241,18 +239,37 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     setStartAtLocal(localDateTimeValue(hunt.start_at))
     setVotingEnabled(hunt.voting_enabled)
     setVotingBonusPoints(hunt.voting_bonus_points)
-    setInviteCodes(readSavedInvites(hunt.id))
+    setInviteCodes([])
+    setHasActiveInvites(false)
+    setInviteRecoveryIncomplete(false)
+    setInviteRecoveryError('')
+    clearSavedInvites(hunt.id)
     setManagedTeams([])
     setManagedParticipants([])
     setManageMessage('')
     setPage('manage-hunt')
     if (hunt.status !== 'draft' && supabase) {
+      setInviteRecoveryLoading(true)
+      try {
+        const { data, error } = await supabase.rpc('get_hunt_invites', { p_hunt_id: hunt.id })
+        if (error) setInviteRecoveryError('Could not load the team invitation links. Try refreshing the page.')
+        else {
+          const result = data as { has_active_invites: boolean; recoverable: boolean; invite_codes: InviteCode[] }
+          const codes = Array.isArray(result?.invite_codes) ? result.invite_codes : []
+          setInviteCodes(codes)
+          setHasActiveInvites(result?.has_active_invites === true)
+          setInviteRecoveryIncomplete(result?.has_active_invites === true && result?.recoverable !== true)
+        }
+      } catch {
+        setInviteRecoveryError('Could not load the team invitation links. Try refreshing the page.')
+      } finally { setInviteRecoveryLoading(false) }
       await loadManagedLobby(hunt.id)
     }
   }
 
-  async function loadManagedLobby(huntId: string) {
+  const loadManagedLobby = useCallback(async (huntId: string) => {
     if (!supabase) return
+    const requestId = ++lobbyRequestId.current
     const [teamResult, participantResult, selfieResult] = await Promise.all([
       supabase.from('teams').select('id,hunt_id,name,display_color,display_order').eq('hunt_id', huntId).order('display_order'),
       supabase.from('participants').select('id,hunt_id,team_id,display_name,joined_at').eq('hunt_id', huntId).order('joined_at'),
@@ -261,17 +278,45 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     if (teamResult.error) setManageMessage(teamResult.error.message)
     if (participantResult.error) setManageMessage(participantResult.error.message)
     if (selfieResult.error) setManageMessage(selfieResult.error.message)
-    if (teamResult.error || participantResult.error || selfieResult.error) return
+    if (teamResult.error || participantResult.error || selfieResult.error || requestId !== lobbyRequestId.current) return
     const selfieRows = selfieResult.data ?? []
     const teams = await Promise.all((teamResult.data ?? []).map(async team => {
       const selfie = selfieRows.find(row => row.team_id === team.id)
       if (!selfie) return team
-      const { data } = await supabase!.storage.from('hunt-photos').createSignedUrl(selfie.storage_path, 300)
-      return { ...team, selfieUrl: data?.signedUrl ?? '', selfieSubmittedAt: selfie.submitted_at }
+      const { data, error } = await supabase!.storage.from('hunt-photos').createSignedUrl(selfie.storage_path, 300)
+      return { ...team, selfieUrl: data?.signedUrl ?? '', selfieSubmittedAt: selfie.submitted_at, selfiePreviewUnavailable: !!error || !data?.signedUrl }
     }))
+    if (requestId !== lobbyRequestId.current) return
     setManagedTeams(teams)
     setManagedParticipants(participantResult.data ?? [])
-  }
+  }, [])
+
+  const requestLobbyRefresh = useCallback((huntId: string) => {
+    if (lobbyRefreshTimer.current !== undefined) window.clearTimeout(lobbyRefreshTimer.current)
+    lobbyRefreshTimer.current = window.setTimeout(() => {
+      lobbyRefreshTimer.current = undefined
+      void loadManagedLobby(huntId)
+    }, 250)
+  }, [loadManagedLobby])
+
+  const activeLobbyHuntId = page === 'manage-hunt' && managedHunt?.status !== 'draft' ? managedHunt?.id : undefined
+  useEffect(() => {
+    if (!supabase || !activeLobbyHuntId) return
+    const huntId = activeLobbyHuntId
+    const refreshTimer = lobbyRefreshTimer
+    const channel = supabase.channel(`organizer-lobby-${huntId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams', filter: `hunt_id=eq.${huntId}` }, () => requestLobbyRefresh(huntId))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'participants', filter: `hunt_id=eq.${huntId}` }, () => requestLobbyRefresh(huntId))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_selfies', filter: `hunt_id=eq.${huntId}` }, () => requestLobbyRefresh(huntId))
+      .subscribe()
+    const fallback = window.setInterval(() => void loadManagedLobby(huntId), 15_000)
+    return () => {
+      ++lobbyRequestId.current
+      if (refreshTimer.current !== undefined) window.clearTimeout(refreshTimer.current)
+      window.clearInterval(fallback)
+      void supabase?.removeChannel(channel)
+    }
+  }, [activeLobbyHuntId, requestLobbyRefresh])
 
   async function publishHunt(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -300,7 +345,9 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       if (error) { setManageMessage(error.message); return }
       const codes = (data ?? []) as InviteCode[]
       setInviteCodes(codes)
-      saveInvites(managedHunt.id, codes)
+      setHasActiveInvites(codes.length > 0)
+      setInviteRecoveryIncomplete(false)
+      setInviteRecoveryError('')
       setManagedHunt({ ...managedHunt, status: 'scheduled', start_at: startTime?.toISOString() ?? null, team_assignment_mode: assignmentMode, voting_enabled: votingEnabled, voting_bonus_points: votingBonusPoints })
       await loadWorkspace()
       await loadManagedLobby(managedHunt.id)
@@ -313,16 +360,19 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
 
   async function regenerateInvites() {
     if (!supabase || !managedHunt) return
+    if (hasActiveInvites && !window.confirm('Replace these team invitation links? All older QR codes and links will stop working.')) return
     setManageSaving(true); setManageMessage('')
-    const { data, error } = await supabase.rpc('regenerate_hunt_invites', { p_hunt_id: managedHunt.id })
-    if (error) setManageMessage(error.message)
-    else {
+    try {
+      const { data, error } = await supabase.rpc('regenerate_hunt_invites', { p_hunt_id: managedHunt.id })
+      if (error) { setManageMessage(error.message); return }
       const codes = (data ?? []) as InviteCode[]
       setInviteCodes(codes)
-      saveInvites(managedHunt.id, codes)
+      setHasActiveInvites(codes.length > 0)
+      setInviteRecoveryIncomplete(false)
+      setInviteRecoveryError('')
       setCopiedInvite('')
-    }
-    setManageSaving(false)
+    } catch (error) { setManageMessage(error instanceof Error ? error.message : 'Could not create invitation links.') }
+    finally { setManageSaving(false) }
   }
 
   async function moveParticipant(participant: Participant, teamId: string) {
@@ -451,7 +501,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
           <section className="builder-section"><div className="builder-step"><CalendarDays size={15}/></div><div className="builder-main"><h2>Choose when and how to play</h2><p>Set up the lobby now, then start the timer when your teams are ready.</p><div className="start-mode-options" role="group" aria-label="Hunt start mode"><label className={`start-mode-option ${startMode === 'manual' ? 'selected' : ''}`}><input type="radio" name="start-mode" checked={startMode === 'manual'} onChange={() => setStartMode('manual')}/><span><b>Start manually</b><small>Teams join a waiting lobby. You start the hunt when everyone is ready.</small></span></label><label className={`start-mode-option ${startMode === 'scheduled' ? 'selected' : ''}`}><input type="radio" name="start-mode" checked={startMode === 'scheduled'} onChange={() => setStartMode('scheduled')}/><span><b>Schedule a start</b><small>The server starts the hunt automatically at the selected time.</small></span></label></div>{startMode === 'scheduled' && <label className="builder-field">Scheduled start time<input type="datetime-local" required value={startAtLocal} onChange={event => setStartAtLocal(event.target.value)}/><span className="optional">Shown in your local time zone; saved as UTC. You can still start early.</span></label>}<label className="builder-field">Team assignment method<select value={assignmentMode} onChange={event => setAssignmentMode(event.target.value as 'organizer' | 'balanced')}><option value="organizer">Participants scan their assigned team's code</option><option value="balanced">One shared code assigns balanced teams</option></select></label><label className="builder-field">Team names <span className="optional">One name per line · 2–12 teams</span><textarea rows={Math.min(8, Math.max(3, teamNamesText.split('\n').length))} maxLength={600} value={teamNamesText} onChange={event => setTeamNamesText(event.target.value)} placeholder={'Team Red\nTeam Blue'} /></label><label className="voting-config"><input type="checkbox" checked={votingEnabled} onChange={event => setVotingEnabled(event.target.checked)}/><span><b>Enable photo voting during review</b><small>Teams can vote for another team's approved photos.</small></span></label>{votingEnabled && <label className="builder-field duration-field">Voting bonus points<input type="number" min={0} max={1000} value={votingBonusPoints} onChange={event => setVotingBonusPoints(Math.max(0, Number(event.target.value)))}/></label>}</div></section>
           <div className="builder-actions"><button type="button" className="outline-button" onClick={() => setPage('hunts')}>Cancel</button><button type="submit" className="primary-button save-hunt-button" disabled={manageSaving}>{manageSaving ? 'Publishing…' : <><QrCode size={16}/> Publish & create QR codes</>}</button></div>
         </form> : <>
-      <section className="builder-section"><div className="builder-step"><QrCode size={15}/></div><div className="builder-main invite-builder-main"><div className="builder-items-heading"><div><h2>Team invitations</h2><p>{managedHunt.team_assignment_mode === 'balanced' ? 'Share this one code with everyone. The app will place each person on a smaller team.' : 'Show each code only to the participants assigned to that team.'}</p></div><button className="outline-button" disabled={manageSaving} onClick={() => void regenerateInvites()}><RefreshCw size={14}/> {inviteCodes.length ? 'Replace codes' : 'Create codes'}</button></div>{inviteCodes.length ? <div className="invite-grid">{inviteCodes.map(invite => <article className="invite-card" key={invite.invite_token}><div className="invite-card-top"><span className="team-swatch" style={{backgroundColor: managedTeams.find(team => team.id === invite.team_id)?.display_color ?? '#b88bbf'}}/><b>{invite.team_name}</b></div><QRCodeSVG value={inviteUrl(invite.invite_token)} size={148} level="M" includeMargin/><label className="invite-url-label">Invitation link<input readOnly value={inviteUrl(invite.invite_token)}/></label><button className="outline-button" onClick={() => void copyInvite(invite.invite_token)}><Copy size={14}/>{copiedInvite === invite.invite_token ? 'Copied!' : 'Copy invite link'}</button><button className="outline-button" disabled={manageSaving} onClick={() => void joinTeam(invite.invite_token)}><Users size={14}/> Join this team</button></article>)}</div> : <div className="locked-note"><ShieldCheck size={15}/> Invite tokens are stored as secure hashes. Create or replace the codes to display them; replacing links revokes older QR codes.</div>}{inviteCodes.length > 0 && <button className="outline-button print-invites" onClick={() => window.print()}><QrCode size={14}/> Print team codes</button>}</div></section>
+      <section className="builder-section"><div className="builder-step"><QrCode size={15}/></div><div className="builder-main invite-builder-main"><div className="builder-items-heading"><div><h2>Team invitations</h2><p>{managedHunt.team_assignment_mode === 'balanced' ? 'Share this one code with everyone. The app will place each person on a smaller team.' : 'Show each code only to the participants assigned to that team.'}</p></div><button className="outline-button" disabled={manageSaving || inviteRecoveryLoading || !!inviteRecoveryError} onClick={() => void regenerateInvites()}><RefreshCw size={14}/> {hasActiveInvites ? 'Replace codes' : 'Create codes'}</button></div>{inviteRecoveryError && <p className="form-error" role="alert">{inviteRecoveryError}</p>}{inviteCodes.length ? <div className="invite-grid">{inviteCodes.map(invite => <article className="invite-card" key={invite.invite_token}><div className="invite-card-top"><span className="team-swatch" style={{backgroundColor: managedTeams.find(team => team.id === invite.team_id)?.display_color ?? '#b88bbf'}}/><b>{invite.team_name}</b></div><QRCodeSVG value={inviteUrl(invite.invite_token)} size={148} level="M" includeMargin/><label className="invite-url-label">Invitation link<input readOnly value={inviteUrl(invite.invite_token)}/></label><button className="outline-button" onClick={() => void copyInvite(invite.invite_token)}><Copy size={14}/>{copiedInvite === invite.invite_token ? 'Copied!' : 'Copy invite link'}</button><button className="outline-button" disabled={manageSaving} onClick={() => void joinTeam(invite.invite_token)}><Users size={14}/> Join this team</button></article>)}</div> : <div className="locked-note"><ShieldCheck size={15}/>{inviteRecoveryLoading ? 'Loading saved team invitation links…' : inviteRecoveryIncomplete ? 'Existing invitation links are still active, but were created before secure recovery was available. Replace codes only when you are ready to invalidate every older QR code and link.' : hasActiveInvites ? 'Invitation links are active, but their recovery details are unavailable. Refresh to try again.' : 'Invite tokens are stored as secure hashes. Create codes to display them; replacement revokes any older links.'}</div>}{inviteCodes.length > 0 && <button className="outline-button print-invites" onClick={() => window.print()}><QrCode size={14}/> Print team codes</button>}</div></section>
           <section className="builder-section"><div className="builder-step"><Users size={15}/></div><div className="builder-main"><h2>Participants</h2><p>{managedParticipants.length} {managedParticipants.length === 1 ? 'person has' : 'people have'} joined this hunt. You can move participants before the scheduled start.</p>{managedParticipants.length ? <div className="participant-roster">{managedParticipants.map(participant => <div className="participant-roster-row" key={participant.id}><span className="participant-avatar"><UserRound size={15}/></span><b>{participant.display_name}</b><select aria-label={`Team for ${participant.display_name}`} value={participant.team_id} onChange={event => void moveParticipant(participant, event.target.value)} disabled={managedHunt.status !== 'scheduled'}>{managedTeams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select></div>)}</div> : <div className="locked-note"><Users size={15}/> The roster fills in as participants join from their invitation links.</div>}{['scheduled','active'].includes(managedHunt.status) && <button className="reject-button end-hunt-button" disabled={manageSaving} onClick={() => void endHuntNow()}><Clock3 size={14}/> End hunt now and review</button>}</div></section>
         <InviteLinksPanel invites={inviteCodes} inviteUrl={inviteUrl} copiedInvite={copiedInvite} onCopy={token => void copyInvite(token)} onTest={testInvite} /></>}
       </section> : page === 'review-hunt' && managedHunt ? <HuntReview huntId={managedHunt.id} title={managedHunt.title} status={managedHunt.status} onBack={() => setPage('hunts')} onChanged={() => void loadWorkspace()} /> : null}
