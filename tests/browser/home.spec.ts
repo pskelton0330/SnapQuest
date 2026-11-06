@@ -9,6 +9,8 @@ let photoSubmissionRpcCalls = 0
 let organizerReviewMode = false
 let organizerReviewStatus: 'review' | 'completed' = 'review'
 let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
+let signedPreviewMode = false
+let signedPreviewRequests = 0
 
 test.beforeEach(async ({ page }) => {
   participantRuntimeState = 'waiting'
@@ -18,10 +20,22 @@ test.beforeEach(async ({ page }) => {
   organizerReviewMode = false
   organizerReviewStatus = 'review'
   organizerReviewDecision = 'pending'
+  signedPreviewMode = false
+  signedPreviewRequests = 0
   await page.route('https://test-project.supabase.co/**', async route => {
     const request = route.request()
     if (request.url().includes('/storage/v1/object/sign/hunt-photos/')) {
+      if (signedPreviewMode) {
+        signedPreviewRequests++
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ signedURL: `/storage/v1/object/sign/hunt-photos/test/photo.jpg?token=preview-${signedPreviewRequests}` }) })
+        return
+      }
       await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'simulated signed-preview failure' }) })
+      return
+    }
+    if (request.url().includes('/storage/v1/object/sign/hunt-photos/test/photo.jpg')) {
+      const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
+      await route.fulfill({ status: 200, contentType: 'image/png', body: png })
       return
     }
     if (request.url().includes('/storage/v1/object/hunt-photos/') && request.method() === 'POST') {
@@ -96,7 +110,7 @@ test.beforeEach(async ({ page }) => {
         const final = organizerReviewStatus === 'completed'
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: organizerReviewStatus, can_begin_review: false, final_scores: final ? [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }] : null, teams: [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }], items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 0 }], submissions: [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: 'test/photo.jpg', status: organizerReviewDecision, submitted_at: '2026-11-01T17:10:00Z' }], votes: [], team_selfies: [] }) })
       } else {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: participantRuntimeState, final_scores: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }], teams: [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }], items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions: [], votes: [] }) })
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: participantRuntimeState, final_scores: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }], teams: [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }], items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions: signedPreviewMode ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', storage_path: 'test/photo.jpg', status: 'approved' }] : [], votes: [] }) })
       }
       return
     }
@@ -213,6 +227,17 @@ test('player can join an invited team and reach the waiting lobby', async ({ pag
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, nodes }) => ({ id, impact, help, nodes: nodes.map(node => ({ target: node.target, ...node.any[0]?.data })) })), null, 2)).toEqual([])
 })
 
+test('participant can return through the original invite after reloading the browser', async ({ page }) => {
+  const inviteUrl = `/#/join/${'a'.repeat(64)}`
+  await page.goto(inviteUrl)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByRole('status')).toContainText('Waiting for the organizer', { timeout: 10_000 })
+  await page.goto(inviteUrl)
+  await expect(page).toHaveURL(/#\/play\/33333333-3333-4333-8333-333333333333$/)
+  await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
+})
+
 test('active participant game exposes the timer, team progress, and photo list', async ({ page }) => {
   participantRuntimeState = 'active'
   const progressResponses: string[] = []
@@ -326,6 +351,23 @@ test('participant sees final standings and winner celebration after results publ
   }
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, targets }) => ({ id, impact, help, targets })), null, 2)).toEqual([])
+})
+
+test('participant renews signed review-photo previews before their URLs expire', async ({ page }) => {
+  participantRuntimeState = 'completed'
+  signedPreviewMode = true
+  await page.clock.install()
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText('Final results')).toBeVisible()
+  const galleryImage = page.getByRole('img', { name: 'Team Cedar photo for A red leaf' })
+  await expect(galleryImage).toBeVisible()
+  await expect.poll(() => signedPreviewRequests).toBeGreaterThan(0)
+  const initialSigningRequests = signedPreviewRequests
+  await page.clock.fastForward(260_000)
+  await expect.poll(() => signedPreviewRequests, { timeout: 10_000 }).toBeGreaterThan(initialSigningRequests)
+  await expect(galleryImage).toBeVisible()
 })
 
 test('organizer reviews a photo, changes its decision, and finalizes results', async ({ page }) => {
