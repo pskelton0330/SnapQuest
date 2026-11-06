@@ -147,7 +147,10 @@ test.beforeEach(async ({ page }) => {
       return
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/get_hunt_messages')) {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(organizerMessages) })
+      const { p_limit = 101, p_before = null, p_before_id = null } = request.postDataJSON() as { p_limit?: number; p_before?: string | null; p_before_id?: string | null }
+      const eligible = organizerMessages.filter(message => !p_before || message.created_at < p_before || (message.created_at === p_before && message.id < p_before_id!))
+      const page = eligible.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)).slice(0, p_limit).reverse()
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(page) })
       return
     }
     if (organizerReviewMode && request.url().includes('/rest/v1/rpc/review_submission')) {
@@ -500,6 +503,26 @@ test('organizer lobby shows the team roster and unread chat count without moving
   expect(await chatMessages.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeGreaterThan(48)
   await jumpButton.click()
   await expect(page.getByText('One more update')).toBeVisible()
+})
+
+test('organizer chat pages more than 200 messages with identical timestamps without gaps', async ({ page }) => {
+  organizerLobbyMode = true
+  const sameTime = '2026-11-06T18:00:00.000Z'
+  organizerMessages = Array.from({ length: 205 }, (_, index) => ({ id: `message-${String(index).padStart(3, '0')}`, sender_name: 'Taylor', sender_role: 'participant' as const, body: `Page message ${index}`, created_at: sameTime }))
+  await restoreOrganizerSession(page)
+  await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
+  const chat = page.locator('.hunt-chat-messages')
+  const messages = chat.locator('.hunt-chat-message')
+  await expect(messages).toHaveCount(100)
+  await expect(messages.last()).toContainText('Page message 204')
+  await page.getByRole('button', { name: 'Load older messages' }).click()
+  await expect(messages).toHaveCount(200)
+  await page.getByRole('button', { name: 'Load older messages' }).click()
+  await expect(messages).toHaveCount(205)
+  await expect(messages.first()).toContainText('Page message 0')
+  const bodies = await messages.locator('p').allTextContents()
+  expect(new Set(bodies).size).toBe(205)
+  await expect(page.getByRole('button', { name: 'Load older messages' })).toHaveCount(0)
 })
 
 
