@@ -1,7 +1,7 @@
 # SnapQuest remediation plan
 
-Date: November 6, 2026  
-Source audit: [Deep review](2026-11-06-deep-review.md)  
+Date: November 6, 2026
+Source audit: [Deep review](2026-11-06-deep-review.md)
 Audit baseline: `9821300ca779bcd18f64fc9d1f94622674f484de`
 
 ## Goal
@@ -29,7 +29,7 @@ Separate pull-request validation from production deployment concurrency. Ensure 
 
 ### Phase 1 — Repair database invariants and authoritative results
 
-**Findings:** R03, R04, R07, R08, R09.  
+**Findings:** R03, R04, R07, R08, R09.
 **Dependency:** R09 must be enforced before changing R05 media cleanup behavior.
 
 1. Make stored `final_scores` authoritative for completed organizer and participant views and celebration data. Normalize provisional vote RPC data at one typed boundary and make helper ranking match the SQL dense-rank contract (R03).
@@ -52,7 +52,7 @@ Implement a real public-home route for anonymous sessions while retaining partic
 
 ### Phase 3 — Make media, invitations, and live views recoverable
 
-**Findings:** R05, R06, R11, R12, R13, R17.  
+**Findings:** R05, R06, R11, R12, R13, R17.
 **Dependencies:** Apply R09 protection before tightening cleanup paths in R05/R06. Use R03's authoritative result contract in R13.
 
 Track upload, server acceptance, and preview as separate outcomes. Never delete an object after an accepted or uncertain commit until server state proves it is unreferenced (R05/R06). Design organizer invitation recovery across devices without displaying revoked codes or relying on localStorage as the source of truth (R11). Refresh lobby data from other devices and distinguish absent, saved, and temporarily unavailable selfies (R12). Reconcile review/vote data and renew expired signed URLs (R13). Coalesce overlapping requests, prevent stale responses from overwriting newer state, retain valid previews, and scope errors to the operation (R17).
