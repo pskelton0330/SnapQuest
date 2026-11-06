@@ -8,7 +8,7 @@ import { calculateTeamScores } from '../src/lib/scoring.ts'
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, auditSafetyMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration
+let migration, managementMigration, auditMigration, auditSafetyMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -46,6 +46,7 @@ before(async () => {
     if(file.includes('0020')) { chatRecoveryMigration=sql; continue }
     if(file.includes('0022')) { inviteClosedMigration=sql; continue }
     if(file.includes('0023')) { auditSafetyMigration=sql; continue }
+    if(file.includes('0024')) { chatCursorMigration=sql; continue }
     await db.exec(sql)
   }
   await db.query('insert into auth.users(id) values ($1),($2)',[owner,other])
@@ -72,6 +73,7 @@ before(async () => {
   await db.exec(chatRecoveryMigration)
   await db.query("insert into public.audit_events(actor_user_id,hunt_id,event_type,outcome,details,created_at) values($1,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','old_test_event','notice','{}'::jsonb,clock_timestamp()-interval '366 days')",[owner])
   await db.exec(auditSafetyMigration)
+  await db.exec(chatCursorMigration)
 })
 after(async()=> { await db?.close() })
 async function snapshot() {
@@ -175,13 +177,32 @@ test('hunt lobby messages are shared by members and closed after review',async()
   assert.deepEqual(messages.map(message=>message.body),['Welcome team!','Ready to play'])
   const latest=(await as('authenticated',other,'select public.get_hunt_messages($1,1) data',[id])).rows[0].data
   assert.equal(latest.length,1); assert.equal(latest[0].body,'Ready to play')
-  const older=(await as('authenticated',other,'select public.get_hunt_messages($1,1,$2::timestamptz) data',[id,latest[0].created_at])).rows[0].data
+  const older=(await as('authenticated',other,'select public.get_hunt_messages($1,1,$2::timestamptz,$3::uuid) data',[id,latest[0].created_at,latest[0].id])).rows[0].data
   assert.equal(older.length,1); assert.equal(older[0].body,'Welcome team!')
   for(let index=0;index<7;index++) await as('authenticated',owner,"select public.send_hunt_message($1,'Update')",[id])
   await assert.rejects(as('authenticated',owner,"select public.send_hunt_message($1,'Rate limit')",[id]),/Wait a minute/)
   await as('authenticated',owner,'select public.start_game_now($1)',[id])
   await as('authenticated',owner,'select public.end_hunt_early($1)',[id])
   await assert.rejects(as('authenticated',other,"select public.send_hunt_message($1,'Too late')",[id]))
+})
+test('chat keyset pagination returns every message when timestamps are identical',async()=>{
+  const template=(await as('authenticated',owner,"select public.save_hunt_template('Chat paging','Shop','',array[]::text[],$1::jsonb,60,'personal') id",[JSON.stringify([{title:'Chat item'}])])).rows[0].id
+  const huntId=(await as('authenticated',owner,'select public.create_game_from_template($1) id',[template])).rows[0].id
+  await as('authenticated',owner,"select * from public.configure_game($1,'Chat paging',60,array['Red','Blue'],'organizer',null)",[huntId])
+  await db.query(`insert into public.hunt_messages(hunt_id,sender_user_id,sender_name,sender_role,body,created_at)
+    select $1,$2,'Organizer','organizer','Message '||n,'2026-11-06T12:00:00Z'::timestamptz
+    from generate_series(1,205) n`,[huntId,owner])
+  const all=[]
+  let cursor=null
+  while(true){
+    const rows=(await as('authenticated',owner,'select public.get_hunt_messages($1,101,$2::timestamptz,$3::uuid) data',[huntId,cursor?.created_at??null,cursor?.id??null])).rows[0].data
+    const page=cursor?(rows.length>100?rows.slice(1):rows):rows.slice(-100)
+    all.push(...page)
+    if(rows.length<=100) break
+    cursor={created_at:page[0].created_at,id:page[0].id}
+  }
+  assert.equal(all.length,205)
+  assert.equal(new Set(all.map(message=>message.id)).size,205)
 })
 test('owners can revise saved draft snapshots and cannot edit another or published hunt',async()=>{
   const draft=(await as('authenticated',owner,"select public.create_hunt_draft('Draft title','Old venue',array['Rule'], $1::jsonb,60) id",[JSON.stringify([{title:'Old prompt',pointValue:1}])])).rows[0].id

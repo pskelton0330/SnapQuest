@@ -23,14 +23,15 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
   const requestId = useRef(0)
   const preserveScroll = useRef(false)
 
-  const loadMessages = useCallback(async (before?: string, older = false) => {
+  const loadMessages = useCallback(async (before?: Pick<HuntMessage, 'created_at' | 'id'>, older = false) => {
     if (!supabase) return
     const id = ++requestId.current
     if (older) setLoadingOlder(true)
-    const { data, error: loadError } = await supabase.rpc('get_hunt_messages', { p_hunt_id: huntId, p_limit: 100, p_before: before ?? null })
+    const { data, error: loadError } = await supabase.rpc('get_hunt_messages', { p_hunt_id: huntId, p_limit: 101, p_before: before?.created_at ?? null, p_before_id: before?.id ?? null })
     if (id !== requestId.current) return
     if (loadError) { void reportOperation(huntId, crypto.randomUUID(), 'chat_load_failed', 'failure'); setError('Messages could not be refreshed. Check your connection and retry.'); setLoading(false); setLoadingOlder(false); return }
-    const page = Array.isArray(data) ? data as HuntMessage[] : []
+    const rows = Array.isArray(data) ? data as HuntMessage[] : []
+    const page = older ? (rows.length > 100 ? rows.slice(1) : rows) : rows.slice(-100)
     if (older) {
       for (const message of page) knownMessageIds.current.add(message.id)
       setMessages(current => [...page.filter(row => !current.some(existing => existing.id === row.id)), ...current])
@@ -40,7 +41,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
       knownMessageIds.current = new Set(page.map(message => message.id))
       setMessages(page)
     }
-    setHasOlder(page.length === 100)
+    setHasOlder(rows.length > 100)
     setError(''); setLoading(false); setLoadingOlder(false)
   }, [huntId])
 
@@ -77,7 +78,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
     setSending(false)
   }
 
-  const oldest = messages[0]?.created_at
+  const oldest = messages[0]
   return <section className={`hunt-chat ${compact ? 'hunt-chat-compact' : ''}`} aria-label="Hunt chat">
     <div className="hunt-chat-heading"><div><span className="eyebrow"><MessageCircle size={14}/> HUNT CHAT</span><h2>Keep everyone in the loop</h2></div><span>{connection === 'live' ? 'Live' : connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span></div>
     <div className="hunt-chat-messages" aria-live="polite" ref={messagesRef} onScroll={event => { const element = event.currentTarget; const latest = element.scrollHeight - element.scrollTop - element.clientHeight < 48; atLatestRef.current = latest; setAtLatest(latest); if (latest) setNewMessageCount(0) }}>
