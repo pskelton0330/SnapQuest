@@ -26,3 +26,21 @@ export function completePhotoCleanup(storage: PhotoCleanupStorage, huntId: strin
     else storage.removeItem(key(huntId, teamId))
   } catch { /* Best-effort local retry queue. */ }
 }
+
+export async function removePhotoOrQueueCleanup(
+  storage: PhotoCleanupStorage | null,
+  huntId: string,
+  teamId: string,
+  path: string,
+  remove: () => Promise<{ error: unknown | null }>,
+): Promise<boolean> {
+  try {
+    const { error } = await remove()
+    if (!error) {
+      if (storage) completePhotoCleanup(storage, huntId, teamId, path)
+      return true
+    }
+  } catch { /* A disconnected client needs the same retry path as a returned Storage error. */ }
+  if (storage) queuePhotoCleanup(storage, huntId, teamId, path)
+  return false
+}

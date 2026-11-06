@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { completePhotoCleanup, pendingPhotoCleanup, queuePhotoCleanup } from '../src/lib/photoCleanup.ts'
+import { completePhotoCleanup, pendingPhotoCleanup, queuePhotoCleanup, removePhotoOrQueueCleanup } from '../src/lib/photoCleanup.ts'
 
 function storage() {
   const values = new Map()
@@ -17,4 +17,22 @@ test('photo cleanup queue deduplicates, caps, and retries only unfinished paths'
   assert.equal(pendingPhotoCleanup(local, 'hunt', 'team').includes('photo-21'), false)
   completePhotoCleanup(local, 'hunt', 'team', 'missing')
   assert.equal(pendingPhotoCleanup(local, 'hunt', 'team').length, 19)
+})
+
+test('failed Storage deletion is queued whether the client returns an error or throws', async () => {
+  const local = storage()
+  const deny = async () => ({ error: new Error('Storage denied the delete') })
+  const disconnect = async () => { throw new Error('network disconnected') }
+
+  assert.equal(await removePhotoOrQueueCleanup(local, 'hunt', 'team', 'returned-error.jpg', deny), false)
+  assert.equal(await removePhotoOrQueueCleanup(local, 'hunt', 'team', 'thrown-error.jpg', disconnect), false)
+  assert.deepEqual(pendingPhotoCleanup(local, 'hunt', 'team'), ['returned-error.jpg', 'thrown-error.jpg'])
+})
+
+test('successful deletion clears its retry entry and returned cleanup failures do not reject saves', async () => {
+  const local = storage()
+  queuePhotoCleanup(local, 'hunt', 'team', 'old-photo.jpg')
+
+  assert.equal(await removePhotoOrQueueCleanup(local, 'hunt', 'team', 'old-photo.jpg', async () => ({ error: null })), true)
+  assert.deepEqual(pendingPhotoCleanup(local, 'hunt', 'team'), [])
 })

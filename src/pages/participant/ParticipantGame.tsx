@@ -3,7 +3,7 @@ import { Camera, Check, CircleHelp, Clock3, LoaderCircle, MapPin, ShieldCheck, T
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase'
 import { optimizePhoto } from '../../lib/photo'
-import { completePhotoCleanup, pendingPhotoCleanup, queuePhotoCleanup } from '../../lib/photoCleanup'
+import { pendingPhotoCleanup, removePhotoOrQueueCleanup } from '../../lib/photoCleanup'
 import HuntChat from '../../components/HuntChat'
 import { celebrationFilename, renderWinnerCelebrationCard, winnerCaption } from '../../lib/celebrationCard'
 import { normalizeFinalScores } from '../../lib/scoring'
@@ -26,6 +26,10 @@ function clockLabel(seconds: number) {
   if (seconds < 0) return 'WAITING'
   const safe = Math.max(0, seconds)
   return `${Math.floor(safe / 60).toString().padStart(2, '0')}:${(safe % 60).toString().padStart(2, '0')}`
+}
+
+function browserStorage(): Storage | null {
+  try { return typeof window === 'undefined' ? null : window.localStorage } catch { return null }
 }
 
 export default function ParticipantGame({ huntId, session }: ParticipantGameProps) {
@@ -58,11 +62,13 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
 
   const flushPhotoCleanup = useCallback(async () => {
     const teamId = currentTeamId
-    if (!supabase || !teamId || typeof window === 'undefined') return
-    const storage = window.localStorage
+    if (!supabase || !teamId) return
+    const storage = browserStorage()
+    if (!storage) return
     for (const path of pendingPhotoCleanup(storage, huntId, teamId)) {
-      const { error: cleanupError } = await supabase.storage.from('hunt-photos').remove([path])
-      if (!cleanupError) completePhotoCleanup(storage, huntId, teamId, path)
+      const removed = await removePhotoOrQueueCleanup(storage, huntId, teamId, path,
+        () => supabase!.storage.from('hunt-photos').remove([path]))
+      if (!removed) void reportOperation(huntId, crypto.randomUUID(), 'photo_cleanup_retry_failed', 'failure')
     }
   }, [currentTeamId, huntId])
 
@@ -281,8 +287,10 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       void reportOperation(huntId, operationId, 'selfie_accepted', 'success')
       setContext(current => current ? { ...current, team: { ...current.team, selfie: { storage_path: storagePath, submitted_by: result.submitted_by, submitted_at: result.submitted_at } } } : current)
       if (result.previous_storage_path) {
-        const { error: cleanupError } = await supabase.storage.from('hunt-photos').remove([result.previous_storage_path])
-        if (cleanupError && typeof window !== 'undefined') queuePhotoCleanup(window.localStorage, huntId, context.team.id, result.previous_storage_path)
+        const storage = browserStorage()
+        const removed = await removePhotoOrQueueCleanup(storage, huntId, context.team.id, result.previous_storage_path,
+          () => supabase!.storage.from('hunt-photos').remove([result.previous_storage_path!]))
+        if (!removed) void reportOperation(huntId, operationId, 'selfie_cleanup_pending', 'failure')
       }
       try {
         const { data: signed, error: signedError } = await supabase.storage.from('hunt-photos').createSignedUrl(storagePath, 300)
@@ -295,8 +303,10 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     } catch (uploadError) {
       void reportOperation(huntId, operationId, uncertain ? 'selfie_reconciliation_uncertain' : uploaded ? 'selfie_acceptance_failed' : 'selfie_upload_failed', 'failure')
       if (uploaded && !committed && !uncertain) {
-        const { error: cleanupError } = await supabase.storage.from('hunt-photos').remove([storagePath])
-        if (cleanupError && typeof window !== 'undefined') queuePhotoCleanup(window.localStorage, huntId, context.team.id, storagePath)
+        const storage = browserStorage()
+        const removed = await removePhotoOrQueueCleanup(storage, huntId, context.team.id, storagePath,
+          () => supabase!.storage.from('hunt-photos').remove([storagePath]))
+        if (!removed) void reportOperation(huntId, operationId, 'selfie_cleanup_pending', 'failure')
       }
       setTeamIdentityError(uploadError instanceof Error ? uploadError.message : 'The team selfie could not be saved.')
     } finally { setTeamIdentityBusy(false) }
@@ -365,9 +375,10 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       accepted = true
       void reportOperation(huntId, operationId, 'photo_accepted', 'success')
       if (result.previous_storage_path) {
-        const { error: cleanupError } = await supabase.storage.from('hunt-photos').remove([result.previous_storage_path])
-        if (cleanupError && typeof window !== 'undefined') queuePhotoCleanup(window.localStorage, huntId, context.team.id, result.previous_storage_path)
-        else if (typeof window !== 'undefined') completePhotoCleanup(window.localStorage, huntId, context.team.id, result.previous_storage_path)
+        const storage = browserStorage()
+        const removed = await removePhotoOrQueueCleanup(storage, huntId, context.team.id, result.previous_storage_path,
+          () => supabase!.storage.from('hunt-photos').remove([result.previous_storage_path!]))
+        if (!removed) void reportOperation(huntId, operationId, 'photo_cleanup_pending', 'failure')
       }
       let previewUrl = ''
       let previewUnavailable = false
@@ -384,7 +395,12 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       if (previewUnavailable) { setUploadErrors(current => ({ ...current, [item.id]: 'Submitted successfully, but the preview could not load yet.' })); void reportOperation(huntId, operationId, 'photo_preview_unavailable') }
     } catch (uploadError) {
       void reportOperation(huntId, operationId, uncertain ? 'photo_reconciliation_uncertain' : storagePath ? 'photo_acceptance_failed' : 'photo_upload_failed', 'failure')
-      if (storagePath && !accepted && !uncertain) await supabase.storage.from('hunt-photos').remove([storagePath])
+      if (storagePath && !accepted && !uncertain) {
+        const storage = browserStorage()
+        const removed = await removePhotoOrQueueCleanup(storage, huntId, context.team.id, storagePath,
+          () => supabase!.storage.from('hunt-photos').remove([storagePath]))
+        if (!removed) void reportOperation(huntId, operationId, 'photo_cleanup_pending', 'failure')
+      }
       const detail = uploadError instanceof Error ? uploadError.message : 'The photo could not be submitted.'
       setUploadErrors(current => ({ ...current, [item.id]: detail }))
     } finally { setUploading(current => ({ ...current, [item.id]: false })) }
