@@ -1,10 +1,10 @@
 import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 
-let showActiveParticipantGame = false
+let participantRuntimeState: 'waiting' | 'active' | 'review' | 'completed' = 'waiting'
 
 test.beforeEach(async ({ page }) => {
-  showActiveParticipantGame = false
+  participantRuntimeState = 'waiting'
   await page.route('https://test-project.supabase.co/**', async route => {
     const request = route.request()
     if (request.url().includes('/rest/v1/organizers')) {
@@ -37,11 +37,15 @@ test.beforeEach(async ({ page }) => {
     }
     if (request.url().includes('/rest/v1/rpc/get_participant_context')) {
       const now = Date.now()
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ participant_id: '55555555-5555-4555-8555-555555555555', hunt_id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', rules: ['Stay together'], status: showActiveParticipantGame ? 'active' : 'scheduled', runtime_state: showActiveParticipantGame ? 'active' : 'waiting', start_at: showActiveParticipantGame ? new Date(now - 60_000).toISOString() : null, ends_at: showActiveParticipantGame ? new Date(now + 3_540_000).toISOString() : null, duration_minutes: 60, server_now: new Date(now).toISOString(), team: { id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a', selfie: null }, participant: { id: '55555555-5555-4555-8555-555555555555', display_name: 'Taylor' }, teammates: [{ id: '55555555-5555-4555-8555-555555555555', display_name: 'Taylor' }] }) })
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ participant_id: '55555555-5555-4555-8555-555555555555', hunt_id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', rules: ['Stay together'], status: participantRuntimeState === 'waiting' ? 'scheduled' : participantRuntimeState, runtime_state: participantRuntimeState, start_at: participantRuntimeState === 'waiting' ? null : new Date(now - 60_000).toISOString(), ends_at: participantRuntimeState === 'active' ? new Date(now + 3_540_000).toISOString() : new Date(now - 1_000).toISOString(), duration_minutes: 60, server_now: new Date(now).toISOString(), team: { id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a', selfie: null }, participant: { id: '55555555-5555-4555-8555-555555555555', display_name: 'Taylor' }, teammates: [{ id: '55555555-5555-4555-8555-555555555555', display_name: 'Taylor' }] }) })
       return
     }
     if (request.url().includes('/rest/v1/rpc/get_hunt_progress')) {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: showActiveParticipantGame ? JSON.stringify([{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', display_color: '#15967a', accepted_count: 1, total_items: 2 }]) : '[]' })
+      await route.fulfill({ status: 200, contentType: 'application/json', body: participantRuntimeState === 'active' ? JSON.stringify([{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', display_color: '#15967a', accepted_count: 1, total_items: 2 }]) : '[]' })
+      return
+    }
+    if (request.url().includes('/rest/v1/rpc/get_hunt_review_gallery')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: participantRuntimeState, final_scores: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }], teams: [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }], items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions: [], votes: [] }) })
       return
     }
     if (request.url().includes('/rest/v1/hunt_items')) {
@@ -144,7 +148,7 @@ test('player can join an invited team and reach the waiting lobby', async ({ pag
 })
 
 test('active participant game exposes the timer, team progress, and photo list', async ({ page }) => {
-  showActiveParticipantGame = true
+  participantRuntimeState = 'active'
   const progressResponses: string[] = []
   page.on('response', async response => {
     if (response.url().includes('/rpc/get_hunt_progress')) progressResponses.push(await response.text())
@@ -164,6 +168,42 @@ test('active participant game exposes the timer, team progress, and photo list',
   }
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, nodes }) => ({ id, impact, help, targets: nodes.map(node => node.target) })), null, 2)).toEqual([])
+})
+
+test('participant can see the post-hunt review gallery while the organizer reviews', async ({ page }) => {
+  participantRuntimeState = 'review'
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText('Photo review time!')).toBeVisible()
+  await expect(page.getByText('Team photo gallery')).toBeVisible()
+  await expect(page.getByText('The organizer is reviewing all team photos.')).toBeVisible()
+  await expect(page.getByText('No approved photo')).toBeVisible()
+  for (const width of [320, 375, 390]) {
+    await page.setViewportSize({ width, height: 844 })
+    const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
+    expect(dimensions.content, `review gallery horizontal overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewport)
+  }
+  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
+  expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, targets }) => ({ id, impact, help, targets })), null, 2)).toEqual([])
+})
+
+test('participant sees final standings and winner celebration after results publish', async ({ page }) => {
+  participantRuntimeState = 'completed'
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText('The results are in!')).toBeVisible()
+  await expect(page.getByText('Final results')).toBeVisible()
+  await expect(page.getByText('#1 Team Cedar')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Share team card' })).toBeVisible()
+  for (const width of [320, 375, 390]) {
+    await page.setViewportSize({ width, height: 844 })
+    const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
+    expect(dimensions.content, `published results horizontal overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewport)
+  }
+  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
+  expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, targets }) => ({ id, impact, help, targets })), null, 2)).toEqual([])
 })
 
 test('organizer login confirms that the email link was requested', async ({ page }) => {

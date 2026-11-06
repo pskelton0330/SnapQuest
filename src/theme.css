@@ -720,3 +720,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .active-game-intro > span,
 .participant-item-detail > p,
 .participant-item-detail > small { color: #5b5d65; }
+.ended-card .waiting-copy,
+.score-row > span { color: #5b5d65; }
+.review-item > header > b { color: #805d2e; }
+.review-photo-empty { color: #626b70; }
