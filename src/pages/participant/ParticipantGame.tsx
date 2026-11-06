@@ -317,6 +317,8 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     setUploading(current => ({ ...current, [item.id]: true }))
     setUploadErrors(current => ({ ...current, [item.id]: '' }))
     let storagePath = ''
+    let uploaded = false
+    let uploadRejected = false
     let accepted = false
     let uncertain = false
     const operationId = crypto.randomUUID()
@@ -326,7 +328,8 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       const { error: uploadError } = await supabase.storage.from('hunt-photos').upload(storagePath, compressed, {
         cacheControl: '3600', contentType: 'image/jpeg', upsert: false,
       })
-      if (uploadError) throw uploadError
+      if (uploadError) { uploadRejected = true; throw uploadError }
+      uploaded = true
       const expectedPath = submissions[item.id]?.storage_path ?? null
       const rpcArgs = { p_hunt_item_id: item.id, p_storage_path: storagePath, p_expected_storage_path: expectedPath }
       const firstAttempt = await supabase.rpc('submit_hunt_photo', rpcArgs)
@@ -394,8 +397,8 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       } }))
       if (previewUnavailable) { setUploadErrors(current => ({ ...current, [item.id]: 'Submitted successfully, but the preview could not load yet.' })); void reportOperation(huntId, operationId, 'photo_preview_unavailable') }
     } catch (uploadError) {
-      void reportOperation(huntId, operationId, uncertain ? 'photo_reconciliation_uncertain' : storagePath ? 'photo_acceptance_failed' : 'photo_upload_failed', 'failure')
-      if (storagePath && !accepted && !uncertain) {
+      void reportOperation(huntId, operationId, uncertain ? 'photo_reconciliation_uncertain' : uploaded ? 'photo_acceptance_failed' : 'photo_upload_failed', 'failure')
+      if (storagePath && !uploadRejected && !accepted && !uncertain) {
         const storage = browserStorage()
         const removed = await removePhotoOrQueueCleanup(storage, huntId, context.team.id, storagePath,
           () => supabase!.storage.from('hunt-photos').remove([storagePath]))
