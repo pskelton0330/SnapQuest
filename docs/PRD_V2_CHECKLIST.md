@@ -4,8 +4,8 @@ Updated November 6, 2026. These labels describe the whole requirement, not just 
 
 ## Current verification snapshot (November 6)
 
-- The most recent fully verified Pages build is `80e41ba`; its successful GitHub Actions deployment is `42313435437`, and the live `build-info.json` matched that commit. The participant home/history fix is included in this build.
-- The current local suite has 79 passing unit/database tests and 76 passing desktop/mobile browser cases. Lint and the production build pass; the JavaScript entry remains below the enforced 150 KiB gzip budget. GitHub is running the workflow for the latest test-only commit `8f5a36b`; see the backlog for confirmation before treating those newest tests as CI evidence.
+- The most recent fully verified Pages build is `8f5a36b`; GitHub Actions run `42314071681` passed, and the live `build-info.json` matched that commit. The participant home/history fix is included in this build.
+- The current suite has 79 passing unit/database tests and 76 passing desktop/mobile browser cases. Lint and the production build pass; the JavaScript entry remains below the enforced 150 KiB gzip budget. The 76 browser cases passed in workflow `42314071681` on the deployed source.
 - Physical-device, screen-reader, hosted Storage HTTP, multi-session concurrency, and full authorization acceptance are still separate gates. The historical AT-01 through AT-36 table remains NOT RUN for physical-device acceptance; mock-browser and PGlite evidence does not satisfy those rows.
 
 The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. This checklist supersedes the older implementation review where requirements conflict; that review remains historical evidence.
@@ -65,14 +65,14 @@ The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. T
 | PRIV-01 | partial | Minimal guest name/identity design, venue rules, semantic forms and private media exist. Legal/privacy, physical device and assistive-technology review outstanding. |
 | A11Y-01 | partial | Minimal guest name/identity design, venue rules, semantic forms and private media exist. Legal/privacy, physical device and assistive-technology review outstanding. |
 | MIG-01 | verified | Entire v2.0 read; repository/migrations/tests inspected; this batch assessment and local evidence recorded. |
-| MIG-02 | partial | The November 3 production smoke evidence records migration `202611030011`. Tracked migrations now extend through `202611060024`; production migration history since 011 needs a fresh audit before claiming them applied. Migration 023 is awaiting authorization because it prunes expired audit rows. |
-| MIG-03 | partial | Migration sources and local PGlite coverage are maintained through 024. Production apply status, legacy-data mapping, rollback/forward-repair, and staged hosted acceptance must be verified before release claims. |
-| MIG-04 | partial | The migration workflow is additive and locally repeatable; production history and legacy compatibility need a fresh audit. The exact deployment and authorization gates are tracked in the improvement backlog. |
-| MIG-05 | partial | Changes are exercised in PGlite and through CI; dedicated hosted authorization, Storage HTTP, and multi-connection tests remain. Production apply status is not inferred from local tests. |
+| MIG-02 | partial | Read-only Supabase CLI migration history check on November 6 confirms production migrations `202610280001` through `202611060022` are applied; `202611060023` and `202611060024` are source-only and unapplied. Migration 023 awaits authorization because it prunes expired audit rows; 024 is behind it in the migration chain. |
+| MIG-03 | partial | Migrations 001–022 are present in production; 023–024 remain unapplied. Local PGlite coverage does not replace legacy-data mapping, rollback/forward-repair, or staged hosted acceptance. |
+| MIG-04 | partial | The migration workflow is additive and locally repeatable. Remote history is verified through 022; production authorization and application of 023–024 remain explicit release gates. |
+| MIG-05 | partial | Migrations 001–022 are applied; 023–024 are not. Dedicated hosted authorization, Storage HTTP, and multi-connection tests remain; local PGlite and CI are not used to infer production apply status. |
 
 ## Code evidence index
 
 - Hunt/template/navigation: src/lib/workspace.ts, src/lib/huntEditor.ts, src/lib/supabaseWorkspace.ts, src/components/HuntEditor.tsx, src/components/GameManager.tsx, src/pages/admin/LocalDemoWorkspace.tsx; migrations 007–008; workspace, editor, adapter and database tests.
 - Accounts/join/continuity: src/App.tsx, src/lib/supabase.ts, src/lib/participantSession.ts, src/pages/participant/JoinGame.tsx, src/pages/participant/ParticipantGame.tsx; migration 003 redemption/context functions; new participant-session tests and permanent-account rejoin database regression.
 - Media/review/results: src/lib/photo.ts, src/lib/scoring.ts, src/pages/admin/OrganizerWorkspace.tsx, src/pages/admin/HuntReview.tsx, participant game; migrations 005–006 and 008 acceptance clock update. Current tests do not prove all scoring/voting/deletion edge cases.
-- Inventory: source migrations run from `202610280001` through `202611060024`. The production migration history must be compared against this source list before calling any migration deployed; 023 audit retention is awaiting operator approval and 024 depends on the migration chain. There is no video worker or licensed music catalog. Selfie uploads and progress aggregates exist; a complete media-deletion/retention service and completion ledger do not.
+- Inventory: source migrations run from `202610280001` through `202611060024`. A read-only linked-project migration listing on November 6 verified production through `202611060022`; `202611060023` audit retention and `202611060024` stable chat pagination are unapplied. The 023 data-prune requires operator authorization before applying; 024 follows it. There is no video worker or licensed music catalog. Selfie uploads and progress aggregates exist; a complete media-deletion/retention service and completion ledger do not.

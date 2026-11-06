@@ -7,7 +7,8 @@ Historical environment snapshot: November 3, 2026. Environment: managed Windows 
 - Local `npm.cmd test`: 79/79 unit and PGlite tests passed.
 - Local `npm.cmd run test:e2e`: 76/76 Chromium desktop and mobile browser cases passed, including invite/session recovery, organizer start/end/review, photo and selfie failure handling, chat retry/paging, gallery approval/vote refresh, and tied/zero-score celebration behavior.
 - Local `npm.cmd run lint` and `npm.cmd run build` passed. The production JS entry is 135.04 KiB gzip against the 150 KiB budget.
-- The most recent published Pages build is `80e41ba`; the source fixes for anonymous-session home recovery and participant history are included. GitHub Actions run `42313435437` passed and the live `build-info.json` matched that commit. The latest test/documentation commit at this snapshot is `8f5a36b`; its workflow is pending, so the 76-case count is local evidence until CI confirms it.
+- The most recent published Pages build is `8f5a36b`; the source fixes for anonymous-session home recovery and participant history are included. GitHub Actions run `42314071681` passed, the 76 desktop/mobile browser cases passed in CI, and live `build-info.json` matched that commit.
+- A read-only `supabase migration list --linked` against production project `ykfkwczcomkhxaraqpuq` confirms migrations `202610280001` through `202611060022` are applied. `202611060023` (audit retention/pruning) and `202611060024` (stable chat pagination) are unapplied. No production mutation was made; 023 still needs explicit operator authorization before it can be applied.
 - These checks use mocked browser service responses and local PGlite; they do not prove live Storage HTTP policies, multi-connection PostgreSQL races, physical-device behavior, screen-reader usability, or real email delivery.
 
 ## Live production smoke evidence
@@ -95,4 +96,4 @@ All physical-device/end-to-end scenarios below remain NOT RUN. Partial local evi
 
 ## Before requesting shared migration approval
 
-Audit actual deployed schema/functions/policies versus sources; record existing IDs/counts and arrange backup. Apply proposed additive changes in the approved test environment first. Record compatibility and ownership tests, forward-repair/rollback plan and exact migration/configuration scope. No such remote change is needed for this session batch.
+A read-only migration-history audit confirms production through migration 022. Before applying 023, review its exact expiration-deletion scope, verify schema/functions/policies and affected-row counts, and capture the rollback/forward-repair plan. Migration 023 requires operator approval because it prunes records. Apply and test migrations 023–024 in a dedicated approved environment before production use; no migration was applied during the November 6 history check.
