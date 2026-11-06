@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile, readdir } from 'node:fs/promises'
 import { PGlite } from '@electric-sql/pglite'
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
+import { calculateTeamScores } from '../src/lib/scoring.ts'
 
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222'
@@ -270,6 +271,42 @@ test('a hunt with no submissions can be finalized with a complete tied-zero resu
   assert.deepEqual(result.map(team => team.total), [0, 0])
   assert.deepEqual(result.map(team => team.rank), [1, 1])
   assert.equal((await db.query('select status from public.hunts where id=$1', [huntId])).rows[0].status, 'completed')
+})
+
+test('SQL final scores match application scoring when cross-team voting changes the winner', async () => {
+  const blueAuth = '12121212-1212-4121-8121-121212121212'
+  await db.query('insert into auth.users(id) values($1)', [blueAuth])
+  const { huntId, teams, participant } = await createReliabilityHunt('Vote-scoring agreement')
+  const redTeamId = participant.team_id
+  const blueInvite = teams.find(team => team.team_id !== redTeamId)
+  const blueParticipant = (await as('authenticated', blueAuth,
+    "select public.redeem_invitation($1,'Blue player') data", [blueInvite.invite_token])).rows[0].data
+  const blueTeamId = blueParticipant.team_id
+  const itemId = (await db.query('select id from public.hunt_items where hunt_id=$1', [huntId])).rows[0].id
+  await db.query('update public.hunts set voting_enabled=true,voting_bonus_points=3 where id=$1', [huntId])
+  const redPath = `${huntId}/${redTeamId}/${itemId}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg`
+  const bluePath = `${huntId}/${blueTeamId}/${itemId}/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg`
+  await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1),('hunt-photos',$2)", [redPath, bluePath])
+  await as('authenticated', owner, 'select public.start_game_now($1)', [huntId])
+  await as('authenticated', other, 'select public.submit_hunt_photo($1,$2,null)', [itemId, redPath])
+  await as('authenticated', blueAuth, 'select public.submit_hunt_photo($1,$2,null)', [itemId, bluePath])
+  await as('authenticated', owner, 'select public.end_hunt_early($1)', [huntId])
+  const submissions = (await db.query('select id,team_id from public.submissions where hunt_id=$1', [huntId])).rows
+  for (const submission of submissions) await as('authenticated', owner, "select public.review_submission($1,'approved')", [submission.id])
+  await as('authenticated', blueAuth, 'select public.cast_hunt_vote($1,$2,$3)', [huntId, itemId, redTeamId])
+  const sqlScores = (await as('authenticated', owner, 'select public.finalize_hunt($1) scores', [huntId])).rows[0].scores
+  const appScores = calculateTeamScores(
+    [{ id: redTeamId, name: 'Red' }, { id: blueTeamId, name: 'Blue' }],
+    [{ id: itemId, pointValue: 5 }],
+    submissions.map(row => ({ teamId: row.team_id, itemId, approvalStatus: 'approved' })),
+    [{ itemId, votingTeamId: blueTeamId, selectedTeamId: redTeamId }],
+    3,
+  )
+  assert.deepEqual(sqlScores.map(row => [row.team_id, row.base_points, row.voting_bonus, row.total, row.rank]),
+    appScores.map(row => [row.teamId, row.basePoints, row.votingBonus, row.total, row.rank]))
+  assert.equal(sqlScores[0].team_id, redTeamId)
+  assert.equal(sqlScores[0].total, 8)
+  assert.equal(sqlScores[0].rank, 1)
 })
 
 test('organizers can correct review decisions until finalization, then decisions lock', async () => {

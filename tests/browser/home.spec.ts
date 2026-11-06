@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
+import { readFile } from 'node:fs/promises'
 
 let participantRuntimeState: 'waiting' | 'active' | 'review' | 'completed' = 'waiting'
 let photoFaultMode: 'committed-rpc-response-lost' | 'storage-denied' | null = null
@@ -300,6 +301,24 @@ test('participant sees final standings and winner celebration after results publ
   await expect(page.getByText('Final results')).toBeVisible()
   await expect(page.getByText('#1 Team Cedar')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Share team card' })).toBeVisible()
+  await page.evaluate(() => Object.defineProperty(navigator, 'share', { configurable: true, value: undefined }))
+  const cardDownloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Share team card' }).click()
+  const cardDownload = await cardDownloadPromise
+  expect(cardDownload.suggestedFilename()).toBe('snapquest-team-cedar-winner.png')
+  const cardPath = await cardDownload.path()
+  expect(cardPath).toBeTruthy()
+  if (cardPath) {
+    const cardBytes = await readFile(cardPath)
+    expect(cardBytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))).toBe(true)
+    expect(cardBytes.byteLength).toBeGreaterThan(1000)
+  }
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'share', { configurable: true, value: async () => { throw new DOMException('User canceled share.', 'AbortError') } })
+    Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true })
+  })
+  await page.getByRole('button', { name: 'Share team card' }).click()
+  await expect(page.getByRole('alert')).toHaveCount(0)
   for (const width of [320, 375, 390]) {
     await page.setViewportSize({ width, height: 844 })
     const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))

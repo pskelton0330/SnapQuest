@@ -17,6 +17,17 @@ test('only approved submissions earn base points and ties share rank', () => {
   ])
 })
 
+test('teams tied below first place share their lower rank', () => {
+  const scores = calculateTeamScores(teams, items, [
+    { teamId: 'red', itemId: 'bonus', approvalStatus: 'approved' },
+    { teamId: 'blue', itemId: 'one', approvalStatus: 'approved' },
+    { teamId: 'gold', itemId: 'one', approvalStatus: 'approved' },
+  ])
+  assert.deepEqual(scores.map(({ teamId, total, rank }) => [teamId, total, rank]), [
+    ['red', 5, 1], ['blue', 1, 2], ['gold', 1, 2],
+  ])
+})
+
 test('voting bonuses apply per item, ignore self votes, and pay ties', () => {
   const scores = calculateTeamScores(teams, items, [
     { teamId: 'blue', itemId: 'one', approvalStatus: 'approved' },
