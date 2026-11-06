@@ -47,7 +47,7 @@ jobs:
         if: github.event_name != 'pull_request'
         env:
           BUILD_COMMIT: ${{ github.sha }}
-        run: node -e "require('node:fs').writeFileSync('dist/build-info.json', JSON.stringify({commit: process.env.BUILD_COMMIT}) + '\n')"
+        run: node scripts/write-build-info.mjs
 
       - name: Upload build artifact
         if: github.event_name != 'pull_request'
