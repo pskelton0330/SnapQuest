@@ -338,6 +338,9 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       let displayPath = storagePath
       let reconciledRow: Omit<PhotoSubmission, 'photoUrl'> | null = null
       if (firstAttempt.error) {
+        // A PostgreSQL exception is a definitive rejection, so retrying it cannot
+        // recover a committed write and only duplicates the rejected request.
+        if (firstAttempt.error.code === 'P0001') throw new Error(firstAttempt.error.message)
         const exact = await supabase.from('submissions')
           .select('id,hunt_item_id,team_id,participant_id,storage_path,submitted_at,approval_status')
           .eq('hunt_id', huntId).eq('hunt_item_id', item.id).eq('team_id', context.team.id).eq('storage_path', storagePath).maybeSingle()

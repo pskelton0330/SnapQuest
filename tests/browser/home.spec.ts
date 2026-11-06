@@ -3,9 +3,10 @@ import AxeBuilder from '@axe-core/playwright'
 import { readFile } from 'node:fs/promises'
 
 let participantRuntimeState: 'waiting' | 'active' | 'review' | 'completed' = 'waiting'
-let photoFaultMode: 'committed-rpc-response-lost' | 'storage-denied' | null = null
+let photoFaultMode: 'committed-rpc-response-lost' | 'storage-denied' | 'rpc-rejected' | null = null
 let uploadedPhotoPath = ''
 let photoSubmissionRpcCalls = 0
+let rollbackDeleteRequests = 0
 let organizerReviewMode = false
 let organizerReviewStatus: 'review' | 'completed' = 'review'
 let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
@@ -17,6 +18,7 @@ test.beforeEach(async ({ page }) => {
   photoFaultMode = null
   uploadedPhotoPath = ''
   photoSubmissionRpcCalls = 0
+  rollbackDeleteRequests = 0
   organizerReviewMode = false
   organizerReviewStatus = 'review'
   organizerReviewDecision = 'pending'
@@ -46,10 +48,17 @@ test.beforeEach(async ({ page }) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ Key: request.url().split('/storage/v1/object/')[1] }) })
       return
     }
+    if (request.url().includes('/storage/v1/object/hunt-photos') && request.method() === 'DELETE') {
+      rollbackDeleteRequests++
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ message: 'Deleted' }) })
+      return
+    }
     if (request.url().includes('/rest/v1/rpc/submit_hunt_photo')) {
       photoSubmissionRpcCalls++
       uploadedPhotoPath = JSON.parse(request.postData() ?? '{}').p_storage_path ?? ''
-      if (photoFaultMode === 'committed-rpc-response-lost') {
+      if (photoFaultMode === 'rpc-rejected') {
+        await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ code: 'P0001', message: 'simulated submission rejection before commit' }) })
+      } else if (photoFaultMode === 'committed-rpc-response-lost') {
         await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ code: 'XX000', message: 'simulated lost response after commit' }) })
       } else {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ accepted: true, submitted_at: new Date().toISOString(), previous_storage_path: null }) })
@@ -297,6 +306,20 @@ test('photo upload reports a Storage policy denial without calling the submissio
   await item.locator('input[type="file"]').setInputFiles({ name: 'leaf.png', mimeType: 'image/png', buffer: image })
   await expect(item.getByRole('status')).toContainText('new row violates row-level security policy', { timeout: 10_000 })
   expect(photoSubmissionRpcCalls).toBe(0)
+})
+
+test('photo upload rolls back the unreferenced Storage object after the submission RPC rejects', async ({ page }) => {
+  participantRuntimeState = 'active'
+  photoFaultMode = 'rpc-rejected'
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
+  const item = page.getByRole('article').filter({ hasText: 'A red leaf' })
+  await item.locator('input[type="file"]').setInputFiles({ name: 'leaf.png', mimeType: 'image/png', buffer: image })
+  await expect(item.getByRole('status')).toContainText('simulated submission rejection before commit', { timeout: 10_000 })
+  expect(photoSubmissionRpcCalls).toBe(1)
+  expect(rollbackDeleteRequests).toBe(1)
 })
 
 test('participant can see the post-hunt review gallery while the organizer reviews', async ({ page }) => {
