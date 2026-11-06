@@ -1,6 +1,14 @@
 # Test evidence and real phone checklist
 
-Date: November 3, 2026. Environment: managed Windows workstation with the production Supabase project linked through the Supabase CLI, plus live browser/phone testing. Local PGlite evidence remains separate from live evidence.
+Historical environment snapshot: November 3, 2026. Environment: managed Windows workstation with the production Supabase project linked through the Supabase CLI, plus live browser/phone testing. Local PGlite evidence remains separate from live evidence. The earlier batch-by-batch sections below preserve what was known at that time; use the current snapshot for present-day test counts and remaining gaps.
+
+## Current automated evidence (November 6, 2026)
+
+- Local `npm.cmd test`: 79/79 unit and PGlite tests passed.
+- Local `npm.cmd run test:e2e`: 76/76 Chromium desktop and mobile browser cases passed, including invite/session recovery, organizer start/end/review, photo and selfie failure handling, chat retry/paging, gallery approval/vote refresh, and tied/zero-score celebration behavior.
+- Local `npm.cmd run lint` and `npm.cmd run build` passed. The production JS entry is 135.04 KiB gzip against the 150 KiB budget.
+- The most recent published Pages build is `80e41ba`; the source fixes for anonymous-session home recovery and participant history are included. GitHub Actions run `42313435437` passed and the live `build-info.json` matched that commit. The latest test/documentation commit at this snapshot is `8f5a36b`; its workflow is pending, so the 76-case count is local evidence until CI confirms it.
+- These checks use mocked browser service responses and local PGlite; they do not prove live Storage HTTP policies, multi-connection PostgreSQL races, physical-device behavior, screen-reader usability, or real email delivery.
 
 ## Live production smoke evidence
 

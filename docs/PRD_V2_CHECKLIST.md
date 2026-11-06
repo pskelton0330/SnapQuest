@@ -1,6 +1,12 @@
 # PRD v2 requirement and gap checklist
 
-Updated November 3, 2026 after live Supabase migration deployment and a controlled end-to-end hunt. These labels describe the whole requirement, not just code existence. Verified means the named behavior passed its stated checks; live smoke evidence is recorded separately below, and does not replace the full acceptance scenarios.
+Updated November 6, 2026. These labels describe the whole requirement, not just code existence. Verified means the named behavior passed its stated checks; live smoke evidence is recorded separately below, and does not replace the full acceptance scenarios. The newer [deep review](reviews/2026-11-06-deep-review.md) and [improvement backlog](reviews/2026-11-06-improvement-backlog.md) track the current implementation, deployment, and remaining manual gates.
+
+## Current verification snapshot (November 6)
+
+- The most recent fully verified Pages build is `80e41ba`; its successful GitHub Actions deployment is `42313435437`, and the live `build-info.json` matched that commit. The participant home/history fix is included in this build.
+- The current local suite has 79 passing unit/database tests and 76 passing desktop/mobile browser cases. Lint and the production build pass; the JavaScript entry remains below the enforced 150 KiB gzip budget. GitHub is running the workflow for the latest test-only commit `8f5a36b`; see the backlog for confirmation before treating those newest tests as CI evidence.
+- Physical-device, screen-reader, hosted Storage HTTP, multi-session concurrency, and full authorization acceptance are still separate gates. The historical AT-01 through AT-36 table remains NOT RUN for physical-device acceptance; mock-browser and PGlite evidence does not satisfy those rows.
 
 The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. This checklist supersedes the older implementation review where requirements conflict; that review remains historical evidence.
 
@@ -18,9 +24,9 @@ The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. T
 | JOIN-02 | verified | Existing redemption RPC and local tests preserve identity/game uniqueness, assigned/balanced teams and existing-member resume. Verification is local, not phones or live Auth. |
 | JOIN-03 | verified | Existing redemption RPC and local tests preserve identity/game uniqueness, assigned/balanced teams and existing-member resume. Verification is local, not phones or live Auth. |
 | TEAM-01 | partial | Teams can choose a unique pre-start name and any teammate can submit/replace one private pre-start selfie; storage authorization and context synchronization are implemented. Physical-device synchronization, cutoff/opt-out wording and montage use remain. |
-| SESSION-01 | partial | This batch restores Auth before join, handles permanent rejoin, retains identity on errors, and fetches context on foreground/online/focus. Phone tests, root/last-game recovery, reconnect UI, full subscription/race recovery remain. |
-| SESSION-02 | partial | This batch restores Auth before join, handles permanent rejoin, retains identity on errors, and fetches context on foreground/online/focus. Phone tests, root/last-game recovery, reconnect UI, full subscription/race recovery remain. |
-| SESSION-03 | partial | This batch restores Auth before join, handles permanent rejoin, retains identity on errors, and fetches context on foreground/online/focus. Phone tests, root/last-game recovery, reconnect UI, full subscription/race recovery remain. |
+| SESSION-01 | partial | Auth is restored before participant rejoin; desktop/mobile tests cover invite recovery after reload and browser Back/Forward. Physical-device, multi-device, and cleared-storage behavior remain. |
+| SESSION-02 | partial | Permanent rejoin retains the existing identity on errors; PGlite covers invitation rotation, early closeout, and membership preservation. Live Auth/JWT and concurrent-session behavior remain. |
+| SESSION-03 | partial | Participant context refreshes on foreground, online, focus, and polling; return-home preserves the anonymous session. Physical-device interruption/token-refresh and complete Realtime recovery remain. |
 | UX-01 | partial | New preview navigation, lifecycle guidance and editor implemented; older authenticated organizer still separate. |
 | TIME-01 | verified | Local Create Game remains setup with no timer; domain and database snapshot/setup tests pass. Remote UI integration unverified. |
 | TIME-02 | partial | Start Now now passes a live controlled hunt; rescheduling, duplicate-start behavior and connected-device timing reconciliation remain unverified. |
@@ -28,10 +34,10 @@ The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. T
 | PLAY-01 | partial | Challenge list, camera controls, server-clock timer, top time-progress bar and all-team accepted-photo progress are implemented. Physical-device timing/reconnect verification and displayed submitter names remain. |
 | PROGRESS-01 | partial | Scoped all-team accepted-slot aggregate endpoint/UI is implemented and live migrations are deployed; team selfie model and selfie cutoff/opt-out remain D-07. |
 | PHOTO-01 | implemented-unverified | OptimizePhoto re-encodes/resizes images; supported physical phone orientation and HEIC behavior not verified. |
-| PHOTO-02 | partial | Private unique upload, server acceptance/cutoff and one active slot exist. Client reconciliation now checks persisted submissions and retries idempotently after uncertain RPC responses; upload stages, expected-version protection and server-side durable cleanup remain. |
-| PHOTO-03 | partial | Replacement keeps one active slot; failed old-photo deletion now enters a capped local retry queue processed on focus/connection return. Expected-version protection, server-side durable cleanup and multi-device races remain. |
-| PHOTO-04 | partial | Private unique upload, server acceptance/cutoff and one active slot exist. Separate stages, retained retry, expected-version protection, uncertain-response reconciliation and durable cleanup retry remain. |
-| SCORE-01 | conflicting | Configurable approved-item points exist. SQL dense ranks versus display competition ranks still disagree; quick policy absent. |
+| PHOTO-02 | partial | Private unique upload, server acceptance/cutoff, one active slot, expected-version protection, persisted reconciliation after uncertain responses, and privacy-safe operation events exist. Browser fault tests cover Storage denial, lost response after commit, RPC rejection, cleanup, and signed-preview failure. Hosted Storage HTTP and multi-device races remain. |
+| PHOTO-03 | partial | Replacement preserves one active slot and checks the expected previous version; failed cleanup enters a capped local retry queue processed on focus/connection return. A two-device replacement race and server-side durable cleanup remain. |
+| PHOTO-04 | partial | Browser tests cover photo denial, uncertain success reconciliation, definitive rejection, and a saved selfie whose preview signing fails without deleting the committed selfie. Real Storage HTTP, device image variants, and durable server cleanup remain. |
+| SCORE-01 | partial | PGlite compares SQL final scores with the app scorer for vote-driven winner changes and positive ties; organizer and participant snapshots are checked for agreement. A quick-review policy and hosted scoring/concurrency verification remain. |
 | REVIEW-01 | conflicting | Current SQL finalization requires every pending entry decided. Must add per-game quick policy and preserve legacy manual behavior. |
 | SCORE-02 | partial | Legacy optional team voting retained. Best-photo rule is open D-06, no new rule implemented. |
 | REVIEW-02 | partial | Existing all-item grid/placeholders/enlargement and pending approval controls. Selected-item paging, attribution and reject/restore UI missing. |
@@ -59,14 +65,14 @@ The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. T
 | PRIV-01 | partial | Minimal guest name/identity design, venue rules, semantic forms and private media exist. Legal/privacy, physical device and assistive-technology review outstanding. |
 | A11Y-01 | partial | Minimal guest name/identity design, venue rules, semantic forms and private media exist. Legal/privacy, physical device and assistive-technology review outstanding. |
 | MIG-01 | verified | Entire v2.0 read; repository/migrations/tests inspected; this batch assessment and local evidence recorded. |
-| MIG-02 | partial | Migrations 001–010 are applied and remotely verified; future migrations still require legacy mapping, repair steps and approval, and release gates remain unresolved. |
-| MIG-03 | partial | Existing additive migrations and local tests retained; no schema/live auth change or deployment this batch. Future migrations still require legacy mapping, repair steps and approval; release gates unresolved. |
-| MIG-04 | partial | Existing additive migrations and local tests retained; no schema/live auth change or deployment this batch. Future migrations still require legacy mapping, repair steps and approval; release gates unresolved. |
-| MIG-05 | partial | Existing additive migrations and local tests retained; no schema/live auth change or deployment this batch. Future migrations still require legacy mapping, repair steps and approval; release gates unresolved. |
+| MIG-02 | partial | The November 3 production smoke evidence records migration `202611030011`. Tracked migrations now extend through `202611060024`; production migration history since 011 needs a fresh audit before claiming them applied. Migration 023 is awaiting authorization because it prunes expired audit rows. |
+| MIG-03 | partial | Migration sources and local PGlite coverage are maintained through 024. Production apply status, legacy-data mapping, rollback/forward-repair, and staged hosted acceptance must be verified before release claims. |
+| MIG-04 | partial | The migration workflow is additive and locally repeatable; production history and legacy compatibility need a fresh audit. The exact deployment and authorization gates are tracked in the improvement backlog. |
+| MIG-05 | partial | Changes are exercised in PGlite and through CI; dedicated hosted authorization, Storage HTTP, and multi-connection tests remain. Production apply status is not inferred from local tests. |
 
 ## Code evidence index
 
 - Hunt/template/navigation: src/lib/workspace.ts, src/lib/huntEditor.ts, src/lib/supabaseWorkspace.ts, src/components/HuntEditor.tsx, src/components/GameManager.tsx, src/pages/admin/LocalDemoWorkspace.tsx; migrations 007–008; workspace, editor, adapter and database tests.
 - Accounts/join/continuity: src/App.tsx, src/lib/supabase.ts, src/lib/participantSession.ts, src/pages/participant/JoinGame.tsx, src/pages/participant/ParticipantGame.tsx; migration 003 redemption/context functions; new participant-session tests and permanent-account rejoin database regression.
 - Media/review/results: src/lib/photo.ts, src/lib/scoring.ts, src/pages/admin/OrganizerWorkspace.tsx, src/pages/admin/HuntReview.tsx, participant game; migrations 005–006 and 008 acceptance clock update. Current tests do not prove all scoring/voting/deletion edge cases.
-- Inventory: eight migrations 202610280001 through 202610290008; no new migration this batch. No video worker, music catalog, selfie lifecycle, aggregate progress RPC, media-deletion service or completion ledger exists in the inspected application.
+- Inventory: source migrations run from `202610280001` through `202611060024`. The production migration history must be compared against this source list before calling any migration deployed; 023 audit retention is awaiting operator approval and 024 depends on the migration chain. There is no video worker or licensed music catalog. Selfie uploads and progress aggregates exist; a complete media-deletion/retention service and completion ledger do not.

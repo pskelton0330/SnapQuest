@@ -19,7 +19,8 @@ This backlog intentionally distinguishes **implementation** from **observed acce
 - IMP-19: in progress. Browser tests now exercise an actual PNG card download from the participant results screen and the canceled-share path; the scan found and fixed a low-contrast hover state on the share button. Tied and no-selfie cases still need device/canvas walkthroughs.
 - IMP-17: in progress. Added phone regression coverage and corrected decorative overflow in the organizer workspace. Continue through lobby status, QR/copy link placement, roster, chat, start/end, and play/manage switching with an organizer-player acceptance walkthrough.
 - IMP-20: complete and live in `536fdb3`; GitHub Actions run `42294181653` passed and the Pages manifest matches. Lazy-loaded organizer, participant, and invite routes reduced the initial entry from about 170 KiB to 135 KiB gzip; the build enforces a 150 KiB gzip budget and browser checks confirm home does not download route chunks. The checker resolves assets correctly under GitHub Pages’ `/SnapQuest/` prefix.
-- IMP-21–IMP-24: queued in the order below.
+- IMP-21: in progress. PRD checklist and test-evidence pages now state the current local counts, exact Pages verification, remaining physical/hosted gates, and the source-versus-production migration-history distinction. Requirement-by-requirement test pointers and roadmap alignment still need a final cross-check.
+- IMP-22–IMP-24: queued in the order below.
 - No item is complete until its acceptance evidence and published commit are recorded here.
 
 ## Work order
@@ -63,7 +64,7 @@ This backlog intentionally distinguishes **implementation** from **observed acce
 
 | ID | Priority | Improvement | Completion evidence |
 | --- | --- | --- | --- |
-| IMP-21 | P2 | Reconcile the PRD v2 checklist, test evidence, roadmap, and shipped feature ledger with migrations 001–022 and the production workspace. | Every listed requirement has one current status, code pointer, test evidence, and an explicit deferred/missing explanation; obsolete claims are corrected without deleting history. |
+| IMP-21 | P2 | Reconcile the PRD v2 checklist, test evidence, roadmap, and shipped feature ledger with migrations 001–024 and the production workspace. | In progress: refreshed the PRD checklist and test-evidence snapshots with current local results, latest verified Pages commit, and explicit physical/hosted gaps. Requirement-by-requirement pointers and actual remote migration-history comparison remain. |
 | IMP-22 | P2 | Define a privacy and lifecycle policy for team selfies, submissions, finalized results, invitation secrets, and diagnostic events, including deletion and retention behavior. | In progress: diagnostics UI now states the 365-day log retention and describes exactly which client fields are recorded. Photo/selfie lifecycle and finalized-result retention policy remain. |
 | IMP-23 | P2 | Exercise the release workflow under rapid main pushes and a simultaneous PR run. | PR validation cannot cancel a publish; publish jobs serialize; the final live manifest equals the newest successfully tested commit. |
 | IMP-24 | P3 | Keep video generation, music, direct social integrations, and AI hunt generation behind explicit future design/cost/rights gates. | No premium implementation begins until operating cost, licensing, retention, privacy, failure recovery, and user value are documented and approved in the roadmap. |
