@@ -8,6 +8,7 @@ let uploadedPhotoPath = ''
 let photoSubmissionRpcCalls = 0
 let rollbackDeleteRequests = 0
 let organizerReviewMode = false
+let organizerTieMode = false
 let organizerLobbyMode = false
 let organizerReviewStatus: 'review' | 'completed' = 'review'
 let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
@@ -24,6 +25,7 @@ test.beforeEach(async ({ page }) => {
   photoSubmissionRpcCalls = 0
   rollbackDeleteRequests = 0
   organizerReviewMode = false
+  organizerTieMode = false
   organizerLobbyMode = false
   organizerReviewStatus = 'review'
   organizerReviewDecision = 'pending'
@@ -142,7 +144,16 @@ test.beforeEach(async ({ page }) => {
     if (request.url().includes('/rest/v1/rpc/get_hunt_review_gallery')) {
       if (organizerReviewMode) {
         const final = organizerReviewStatus === 'completed'
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: organizerReviewStatus, can_begin_review: false, final_scores: final ? [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }] : null, teams: [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }], items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 0 }], submissions: [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: 'test/photo.jpg', status: organizerReviewDecision, submitted_at: '2026-11-01T17:10:00Z' }], votes: [], team_selfies: [] }) })
+        const tieScore = { base_points: 10, voting_bonus: 0, total: 10, rank: 1 }
+        const finalScores = final ? [
+          { team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', ...tieScore },
+          ...(organizerTieMode ? [{ team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', ...tieScore }] : []),
+        ] : null
+        const teams = [
+          { id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' },
+          ...(organizerTieMode ? [{ id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : []),
+        ]
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: organizerReviewStatus, can_begin_review: false, final_scores: finalScores, teams, items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 0 }], submissions: [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: 'test/photo.jpg', status: organizerReviewDecision, submitted_at: '2026-11-01T17:10:00Z' }], votes: [], team_selfies: [] }) })
       } else {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: participantRuntimeState, final_scores: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }], teams: [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }], items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions: signedPreviewMode ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', storage_path: 'test/photo.jpg', status: 'approved' }] : [], votes: [] }) })
       }
@@ -571,6 +582,21 @@ test('organizer can join an assigned team and return to hunt management', async 
   await expect(organizerMenu).toBeVisible()
   await organizerMenu.click()
   await expect(page.getByRole('heading', { name: 'Team lobby' })).toBeVisible()
+})
+
+test('organizer winner card picker offers each team tied for first', async ({ page }) => {
+  organizerReviewMode = true
+  organizerReviewStatus = 'completed'
+  organizerTieMode = true
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  await page.getByRole('button', { name: 'View results' }).click()
+  await expect(page.getByRole('heading', { name: '2 teams share first place' })).toBeVisible()
+  const chooser = page.getByLabel('Choose a team card')
+  await expect(chooser.locator('option')).toHaveText(['Team Cedar', 'Team Maple'])
+  await chooser.selectOption('55555555-5555-4555-8555-555555555555')
+  await expect(page.getByRole('img', { name: 'Winner celebration card for Team Maple' })).toBeVisible()
 })
 
 test('organizer chat pages more than 200 messages with identical timestamps without gaps', async ({ page }) => {
