@@ -7,7 +7,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration
+let migration, managementMigration, auditMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -33,6 +33,7 @@ before(async () => {
     if(file.includes('0011')) { timingAuditMigration=sql; continue }
     if(file.includes('0012')) { teamIdentityMigration=sql; continue }
     if(file.includes('0013')) { manualStartMigration=sql; continue }
+    if(file.includes('0014')) { messageMigration=sql; continue }
     await db.exec(sql)
   }
   await db.query('insert into auth.users(id) values ($1),($2)',[owner,other])
@@ -50,6 +51,7 @@ before(async () => {
   await db.exec(timingAuditMigration)
   await db.exec(teamIdentityMigration)
   await db.exec(manualStartMigration)
+  await db.exec(messageMigration)
 })
 after(async()=> { await db?.close() })
 async function snapshot() {
@@ -119,6 +121,21 @@ test('manual-start hunts hold a lobby until the organizer starts the timer',asyn
   await as('authenticated',owner,'select public.start_game_now($1)',[id])
   const active=(await db.query('select status,start_at from public.hunts where id=$1',[id])).rows[0]
   assert.equal(active.status,'active'); assert.ok(active.start_at)
+})
+test('hunt lobby messages are shared by members and closed after review',async()=>{
+  const localTemplate=(await as('authenticated',owner,"select public.save_hunt_template('Chat source','Shop','',array[]::text[],$1::jsonb,60,'personal') id",[JSON.stringify([{title:'Chat item'}])])).rows[0].id
+  const id=(await as('authenticated',owner,'select public.create_game_from_template($1) id',[localTemplate])).rows[0].id
+  const invites=(await as('authenticated',owner,"select * from public.configure_game($1,'Chat game',60,array['Red','Blue'],'organizer',null)",[id])).rows
+  await as('authenticated',other,"select public.redeem_invitation($1,'Chat player')",[invites[0].invite_token])
+  const organizerMessage=(await as('authenticated',owner,"select public.send_hunt_message($1,'Welcome team!') data",[id])).rows[0].data
+  assert.equal(organizerMessage.sender_role,'organizer'); assert.equal(organizerMessage.sender_name,'SnapQuest organizer')
+  const participantMessage=(await as('authenticated',other,"select public.send_hunt_message($1,'Ready to play') data",[id])).rows[0].data
+  assert.equal(participantMessage.sender_role,'participant');
+  const messages=(await as('authenticated',other,'select public.get_hunt_messages($1) data',[id])).rows[0].data
+  assert.deepEqual(messages.map(message=>message.body),['Welcome team!','Ready to play'])
+  await as('authenticated',owner,'select public.start_game_now($1)',[id])
+  await as('authenticated',owner,'select public.end_hunt_early($1)',[id])
+  await assert.rejects(as('authenticated',other,"select public.send_hunt_message($1,'Too late')",[id]))
 })
 test('teams can choose a unique pre-start name and replace one private selfie',async()=>{
   const localTemplate=(await as('authenticated',owner,"select public.save_hunt_template('Identity source','Shop','',array[]::text[],$1::jsonb,60,'personal') id",[JSON.stringify([{title:'Identity item'}])])).rows[0].id
