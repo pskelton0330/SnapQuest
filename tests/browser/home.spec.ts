@@ -12,6 +12,7 @@ let organizerLobbyMode = false
 let organizerReviewStatus: 'review' | 'completed' = 'review'
 let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
 let organizerLobbyStatus: 'scheduled' | 'active' = 'scheduled'
+let organizerStartCalls = 0
 let organizerMessages: { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }[] = []
 let signedPreviewMode = false
 let signedPreviewRequests = 0
@@ -27,6 +28,7 @@ test.beforeEach(async ({ page }) => {
   organizerReviewStatus = 'review'
   organizerReviewDecision = 'pending'
   organizerLobbyStatus = 'scheduled'
+  organizerStartCalls = 0
   organizerMessages = []
   signedPreviewMode = false
   signedPreviewRequests = 0
@@ -86,6 +88,10 @@ test.beforeEach(async ({ page }) => {
     if ((organizerReviewMode || organizerLobbyMode) && request.url().includes('/rest/v1/hunts') && request.url().includes('organizer_id=')) {
       const startAt = organizerLobbyMode ? new Date(Date.now() + (organizerLobbyStatus === 'scheduled' ? 60 * 60_000 : -60_000)).toISOString() : '2026-11-01T17:00:00Z'
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', status: organizerLobbyMode ? organizerLobbyStatus : organizerReviewStatus, created_at: '2026-11-01T12:00:00Z', start_at: startAt, duration_minutes: 60, team_assignment_mode: 'organizer', voting_enabled: false, voting_bonus_points: 0 }]) })
+      return
+    }
+    if (organizerLobbyMode && request.url().includes('/rest/v1/hunts') && request.url().includes('id=eq.')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', status: organizerLobbyStatus, created_at: '2026-11-01T12:00:00Z', start_at: new Date(Date.now() + (organizerLobbyStatus === 'scheduled' ? 60 * 60_000 : -60_000)).toISOString(), duration_minutes: 60, team_assignment_mode: 'organizer', voting_enabled: false, voting_bonus_points: 0 }) })
       return
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/teams') && request.url().includes('select=id%2Chunt_id%2Cname')) {
@@ -151,6 +157,12 @@ test.beforeEach(async ({ page }) => {
       const eligible = organizerMessages.filter(message => !p_before || message.created_at < p_before || (message.created_at === p_before && message.id < p_before_id!))
       const page = eligible.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)).slice(0, p_limit).reverse()
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(page) })
+      return
+    }
+    if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/start_game_now')) {
+      organizerStartCalls++
+      organizerLobbyStatus = 'active'
+      await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
       return
     }
     if (organizerReviewMode && request.url().includes('/rest/v1/rpc/review_submission')) {
@@ -494,15 +506,31 @@ test('organizer lobby shows the team roster and unread chat count without moving
   await expect(page.getByRole('heading', { name: 'Keep everyone in the loop' })).toBeVisible()
   const chatMessages = page.locator('.hunt-chat-messages')
   await expect(chatMessages.getByText('Chat message 14')).toBeVisible()
+  await page.clock.runFor(1_000)
+  await expect.poll(() => chatMessages.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThan(48)
   await chatMessages.evaluate(element => { element.scrollTop = 0; element.dispatchEvent(new Event('scroll')) })
-  await expect.poll(() => chatMessages.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+  await expect.poll(() => chatMessages.evaluate(element => element.scrollTop)).toBe(0)
+  await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible()
   organizerMessages.push({ id: 'message-new', sender_name: 'Taylor', sender_role: 'participant', body: 'One more update', created_at: new Date(baseTime + 20_000).toISOString() })
-  await page.clock.fastForward(15_000)
+  await page.clock.runFor(15_000)
   const jumpButton = page.getByRole('button', { name: /Jump to latest.*1 new/ })
   await expect(jumpButton).toBeVisible()
   expect(await chatMessages.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeGreaterThan(48)
   await jumpButton.click()
   await expect(page.getByText('One more update')).toBeVisible()
+})
+
+test('organizer can start a scheduled hunt immediately from its lobby', async ({ page }) => {
+  organizerLobbyMode = true
+  page.on('dialog', dialog => dialog.accept())
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  await page.getByRole('button', { name: 'Open lobby' }).click()
+  await expect(page.getByRole('heading', { name: 'Ready to start?' })).toBeVisible()
+  await page.getByRole('button', { name: 'Start hunt now' }).click()
+  await expect.poll(() => organizerStartCalls).toBe(1)
+  await expect(page.getByRole('button', { name: 'End hunt now and review' })).toBeVisible()
 })
 
 test('organizer chat pages more than 200 messages with identical timestamps without gaps', async ({ page }) => {

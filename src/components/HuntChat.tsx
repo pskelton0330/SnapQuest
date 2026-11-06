@@ -36,8 +36,9 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
       for (const message of page) knownMessageIds.current.add(message.id)
       setMessages(current => [...page.filter(row => !current.some(existing => existing.id === row.id)), ...current])
     } else {
+      const unread = countNewMessages(knownMessageIds.current, page)
       if (atLatestRef.current) setNewMessageCount(0)
-      else setNewMessageCount(current => current + countNewMessages(knownMessageIds.current, page))
+      else if (unread > 0) setNewMessageCount(current => current + unread)
       knownMessageIds.current = new Set(page.map(message => message.id))
       setMessages(page)
     }
@@ -63,7 +64,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
   useEffect(() => {
     if (loadingOlder) return
     if (preserveScroll.current) { preserveScroll.current = false; return }
-    if (atLatest) messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' })
+    if (atLatestRef.current && messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight
   }, [messages, loadingOlder, atLatest])
 
   async function send(event: FormEvent<HTMLFormElement>) {
