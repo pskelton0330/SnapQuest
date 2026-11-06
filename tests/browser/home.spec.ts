@@ -16,6 +16,8 @@ let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
 let organizerLobbyStatus: 'scheduled' | 'active' | 'review' = 'scheduled'
 let organizerStartCalls = 0
 let organizerMessages: { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }[] = []
+let chatLoadFailures = 0
+let chatSendFailures = 0
 let signedPreviewMode = false
 let signedPreviewRequests = 0
 let participantReviewPhotoStatus: 'pending' | 'approved' | 'rejected' | null = null
@@ -35,6 +37,8 @@ test.beforeEach(async ({ page }) => {
   organizerLobbyStatus = 'scheduled'
   organizerStartCalls = 0
   organizerMessages = []
+  chatLoadFailures = 0
+  chatSendFailures = 0
   signedPreviewMode = false
   signedPreviewRequests = 0
   participantReviewPhotoStatus = null
@@ -174,10 +178,26 @@ test.beforeEach(async ({ page }) => {
       return
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/get_hunt_messages')) {
+      if (chatLoadFailures > 0) {
+        chatLoadFailures--
+        await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'simulated chat connection failure' }) })
+        return
+      }
       const { p_limit = 101, p_before = null, p_before_id = null } = request.postDataJSON() as { p_limit?: number; p_before?: string | null; p_before_id?: string | null }
       const eligible = organizerMessages.filter(message => !p_before || message.created_at < p_before || (message.created_at === p_before && message.id < p_before_id!))
       const page = eligible.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)).slice(0, p_limit).reverse()
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(page) })
+      return
+    }
+    if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/send_hunt_message')) {
+      if (chatSendFailures > 0) {
+        chatSendFailures--
+        await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'simulated chat send failure' }) })
+      } else {
+        const { p_body } = request.postDataJSON() as { p_body: string }
+        organizerMessages.push({ id: `sent-${organizerMessages.length}`, sender_name: 'Organizer', sender_role: 'organizer', body: p_body, created_at: new Date().toISOString() })
+        await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
+      }
       return
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/start_game_now')) {
@@ -605,6 +625,28 @@ test('organizer lobby shows the team roster and unread chat count without moving
   expect(await chatMessages.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeGreaterThan(48)
   await jumpButton.click()
   await expect(page.getByText('One more update')).toBeVisible()
+})
+
+test('hunt chat offers retry after read failure and keeps a message after send failure', async ({ page }) => {
+  organizerLobbyMode = true
+  chatLoadFailures = 1
+  chatSendFailures = 1
+  await restoreOrganizerSession(page)
+  await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
+  await expect(page.getByRole('heading', { name: 'Team lobby' })).toBeVisible()
+  const chatError = page.locator('.hunt-chat-error')
+  await expect(chatError).toContainText('Messages could not be refreshed')
+  await chatError.getByRole('button', { name: 'Retry' }).click()
+  await expect(chatError).toHaveCount(0)
+
+  const message = page.getByRole('textbox', { name: 'Message' })
+  await message.fill('Please meet by the fountain')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(chatError).toContainText('simulated chat send failure')
+  await expect(message).toHaveValue('Please meet by the fountain')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(message).toHaveValue('')
+  await expect(page.locator('.hunt-chat-messages').getByText('Please meet by the fountain')).toBeVisible()
 })
 
 test('organizer can start a scheduled hunt immediately, end it, and open photo review', async ({ page }) => {
