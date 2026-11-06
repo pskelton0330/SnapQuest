@@ -5,7 +5,10 @@ const html = await readFile('dist/index.html', 'utf8')
 const entry = html.match(/<script[^>]+src="([^"]+\.js)"/i)?.[1]
 if (!entry) throw new Error('Could not find the production JavaScript entry in dist/index.html')
 
-const file = `dist/${entry.replace(/^\//, '')}`
+const assetPath = new URL(entry, 'https://snapquest.invalid').pathname
+const assetMarker = assetPath.indexOf('/assets/')
+if (assetMarker < 0) throw new Error(`JavaScript entry is outside the expected assets directory: ${assetPath}`)
+const file = `dist/${assetPath.slice(assetMarker + 1)}`
 const [bytes, info] = await Promise.all([readFile(file), stat(file)])
 const compressedBytes = gzipSync(bytes).byteLength
 const budgetBytes = 150 * 1024
