@@ -192,6 +192,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   const canManageCurrentHunt = organizerCapability.huntId === huntId && organizerCapability.allowed
   const participantScores = runtimeState === 'completed' && reviewGallery ? normalizeFinalScores(reviewGallery.final_scores) : []
   const ownFinalScore = participantScores.find(score => score.teamId === context?.team.id)
+  const ownTeamIsTied = participantScores.filter(score => score.rank === 1 && score.total > 0).length > 1
 
   useEffect(() => {
     if (!supabase || !currentTeamId || !['active', 'review', 'completed'].includes(runtimeState)) return
@@ -419,7 +420,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
 
   async function buildTeamCard() {
     if (!context || !ownFinalScore || ownFinalScore.total <= 0 || ownFinalScore.rank !== 1) return null
-    return renderWinnerCelebrationCard({ title: context.title, venue: context.venue, teamName: context.team.name, teamColor: context.team.display_color, score: ownFinalScore.total, rank: ownFinalScore.rank, selfieUrl: selfieUrl || undefined })
+    return renderWinnerCelebrationCard({ title: context.title, venue: context.venue, teamName: context.team.name, teamColor: context.team.display_color, score: ownFinalScore.total, rank: ownFinalScore.rank, selfieUrl: selfieUrl || undefined, tied: ownTeamIsTied })
   }
 
   async function shareTeamCard() {
@@ -429,7 +430,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       const blob = await buildTeamCard()
       if (!blob) return
       const file = new File([blob], celebrationFilename(context.team.name), { type: 'image/png' })
-      if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] })) ) await navigator.share({ title: `${context.team.name} won ${context.title}`, text: winnerCaption({ title: context.title, teamName: context.team.name, score: ownFinalScore.total }), files: [file] })
+      if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] })) ) await navigator.share({ title: `${context.team.name} ${ownTeamIsTied ? 'tied for first in' : 'won'} ${context.title}`, text: winnerCaption({ title: context.title, teamName: context.team.name, score: ownFinalScore.total, tied: ownTeamIsTied }), files: [file] })
       else { const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = file.name; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000) }
     } catch (shareError) {
       if (shareError instanceof DOMException && shareError.name === 'AbortError') return

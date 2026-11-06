@@ -108,6 +108,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
   const ended = ['ended', 'review', 'completed'].includes(status) || reviewStarted || canBeginReview
   const winningTeams = findWinningTeams(scores)
   const winner = winningTeams.find(score => score.teamId === celebrationTeamId) ?? winningTeams[0]
+  const tiedWinner = winningTeams.length > 1
 
   useEffect(() => {
     // The card is an external canvas/blob resource; its preview state belongs in this effect.
@@ -116,12 +117,12 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     let cancelled = false
     let objectUrl = ''
     const selfie = data.team_selfies.find(row => row.team_id === winner.teamId)
-    void renderWinnerCelebrationCard({ title, teamName: winner.teamName, teamColor: data.teams.find(team => team.id === winner.teamId)?.display_color ?? '#ef766f', score: winner.total, rank: winner.rank, selfieUrl: selfie?.photo_url }).then(blob => {
+    void renderWinnerCelebrationCard({ title, teamName: winner.teamName, teamColor: data.teams.find(team => team.id === winner.teamId)?.display_color ?? '#ef766f', score: winner.total, rank: winner.rank, selfieUrl: selfie?.photo_url, tied: tiedWinner }).then(blob => {
       if (!cancelled) { objectUrl = URL.createObjectURL(blob); setCelebrationPreviewUrl(objectUrl) }
     }).catch(() => { if (!cancelled) setCelebrationPreviewUrl('') })
     return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, title, winner?.teamId, winner?.teamName, winner?.total, winner?.rank])
+  }, [data, title, winner?.teamId, winner?.teamName, winner?.total, winner?.rank, tiedWinner])
 
   async function buildCelebrationCard() {
     if (!data || !winner) return null
@@ -133,6 +134,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
       score: winner.total,
       rank: winner.rank,
       selfieUrl: selfie?.photo_url,
+      tied: tiedWinner,
     })
   }
 
@@ -144,7 +146,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
       if (!blob) return
       const file = new File([blob], celebrationFilename(winner.teamName), { type: 'image/png' })
       if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
-        await navigator.share({ title: `${winner.teamName} ${winningTeams.length > 1 ? 'tied for first in' : 'won'} ${title}`, text: winningTeams.length > 1 ? `${winner.teamName} tied for first in ${title} with ${winner.total} points! #SnapQuest` : winnerCaption({ title, teamName: winner.teamName, score: winner.total }), files: [file] })
+        await navigator.share({ title: `${winner.teamName} ${tiedWinner ? 'tied for first in' : 'won'} ${title}`, text: winnerCaption({ title, teamName: winner.teamName, score: winner.total, tied: tiedWinner }), files: [file] })
       } else {
         const url = URL.createObjectURL(blob)
         const link = document.createElement('a'); link.href = url; link.download = file.name; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000)
@@ -162,7 +164,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
       const blob = await buildCelebrationCard()
       if (!blob) return
       const url = URL.createObjectURL(blob)
-      const link = document.createElement('a'); link.href = url; link.download = celebrationFilename(winner.teamName); link.click(); URL.revokeObjectURL(url)
+      const link = document.createElement('a'); link.href = url; link.download = celebrationFilename(winner.teamName); link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch (cardError) { setCelebrationError(cardError instanceof Error ? cardError.message : 'The celebration card could not be downloaded.')
     } finally { setCelebrationBusy(false) }
   }

@@ -6,6 +6,7 @@ export type CelebrationCardInput = {
   score: number
   rank: number
   selfieUrl?: string
+  tied?: boolean
 }
 
 const CARD_WIDTH = 1080
@@ -54,8 +55,10 @@ function fitFontSize(context: CanvasRenderingContext2D, text: string, maxWidth: 
   return minimum
 }
 
-export function winnerCaption(input: Pick<CelebrationCardInput, 'title' | 'teamName' | 'score'>) {
-  return `🏆 ${input.teamName} won ${input.title} with ${input.score} points! #SnapQuest`
+export function winnerCaption(input: Pick<CelebrationCardInput, 'title' | 'teamName' | 'score'> & { tied?: boolean }) {
+  return input.tied
+    ? `🏆 ${input.teamName} tied for first in ${input.title} with ${input.score} points! #SnapQuest`
+    : `🏆 ${input.teamName} won ${input.title} with ${input.score} points! #SnapQuest`
 }
 
 export function celebrationFilename(teamName: string) {
@@ -94,7 +97,7 @@ export async function renderWinnerCelebrationCard(input: CelebrationCardInput): 
   context.fillText('SNAPQUEST', 70, 90)
   context.font = '700 24px Arial, sans-serif'
   context.fillStyle = '#bce8d9'
-  context.fillText('WINNER CELEBRATION', 70, 135)
+  context.fillText(input.tied ? 'TIED FOR FIRST' : 'WINNER CELEBRATION', 70, 135)
 
   const photoX = 70
   const photoY = 185
