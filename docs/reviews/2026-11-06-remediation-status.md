@@ -1,6 +1,6 @@
 # SnapQuest deep review remediation status
 
-Updated: November 6, 2026  
+Updated: November 6, 2026
 Source: [deep review](2026-11-06-deep-review.md) and [remediation plan](2026-11-06-remediation-plan.md)
 
 ## Release evidence
@@ -9,7 +9,7 @@ Source: [deep review](2026-11-06-deep-review.md) and [remediation plan](2026-11-
 - `npm.cmd run lint`: passed without warnings.
 - `npm.cmd run build`: passed. Vite still reports the existing large JavaScript chunk warning (about 600 KB minified, 170 KB gzip); it does not fail the build.
 - Supabase production migrations 001–022 are applied to project `ykfkwczcomkhxaraqpuq`.
-- Phase 0 and reliability commits are live on [GitHub Pages](https://pskelton0330.github.io/SnapQuest/). The last live manifest check returned commit `26c3feffaec0549173fd76e54a243403de572e6b`; later phase 4 changes are awaiting their release run.
+- Phase 0 and all remediation commits are live on [GitHub Pages](https://pskelton0330.github.io/SnapQuest/). [GitHub Actions run 44](https://github.com/pskelton0330/SnapQuest/actions/runs/42284163294) passed build, deploy, and the live home/version smoke check. The served manifest reports `63398f8ce962240c7695e2fff968b15b694e417b`.
 
 ## Finding ledger
 
@@ -33,7 +33,7 @@ Source: [deep review](2026-11-06-deep-review.md) and [remediation plan](2026-11-
 | R16 | Fixed | Production organizers can reopen/edit saved drafts; migration 021 enforces owner and draft status. Scheduled start changes and active-hunt time extensions are exposed in the workspace. |
 | R17 | Fixed | Participant, gallery, and lobby responses use request generations; stable media paths reuse signed URLs; polling and error states are scoped to their operation. |
 | R18 | Fixed | Client operation IDs record privacy-safe photo, selfie, chat, review, and finalization stages through the existing owner-scoped audit log; a Troubleshooting log is available in hunt management. Client reports are labeled and contain no media paths, signed URLs, tokens, or message text. |
-| R19 | Implemented | Waiting copy is rendered in JSX; active-player chat follows the challenge list; quick team links now sit directly below QR codes; key phone controls have larger touch targets and focus styling. |
+| R19 | Fixed in code | Waiting copy is rendered in JSX; active-player chat follows the challenge list; quick team links now sit directly below QR codes; key phone controls have larger touch targets and focus styling. Physical-device visual/accessibility acceptance was unavailable here. |
 | R20 | Fixed | Phase 0 separates PR validation from serialized Pages publishing and verifies the served commit in the deploy smoke step. |
 
 ## Limits of verification
