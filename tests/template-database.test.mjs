@@ -8,7 +8,7 @@ import { calculateTeamScores } from '../src/lib/scoring.ts'
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration
+let migration, managementMigration, auditMigration, auditSafetyMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -45,6 +45,7 @@ before(async () => {
     if(file.includes('0018')) { inviteRecoveryMigration=sql; continue }
     if(file.includes('0020')) { chatRecoveryMigration=sql; continue }
     if(file.includes('0022')) { inviteClosedMigration=sql; continue }
+    if(file.includes('0023')) { auditSafetyMigration=sql; continue }
     await db.exec(sql)
   }
   await db.query('insert into auth.users(id) values ($1),($2)',[owner,other])
@@ -69,6 +70,8 @@ before(async () => {
   await db.exec(inviteRecoveryMigration)
   await db.exec(inviteClosedMigration)
   await db.exec(chatRecoveryMigration)
+  await db.query("insert into public.audit_events(actor_user_id,hunt_id,event_type,outcome,details,created_at) values($1,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','old_test_event','notice','{}'::jsonb,clock_timestamp()-interval '366 days')",[owner])
+  await db.exec(auditSafetyMigration)
 })
 after(async()=> { await db?.close() })
 async function snapshot() {
@@ -107,6 +110,22 @@ test('organizer audit events record timing operations and stay owner-scoped',asy
   assert.equal(events[0].event_type,'game_start_now'); assert.equal(events[0].outcome,'success')
   assert.equal(events[0].details.duration_minutes,60)
   await assert.rejects(as('authenticated',other,"select public.record_audit_event('probe',$1,'notice','{}'::jsonb)",[id]))
+})
+test('client audit events are source-labeled, sanitized, and expire after one year',async()=>{
+  const legacy=(await db.query("select id from public.hunt_templates where legacy_game_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'")).rows[0].id
+  const id=(await as('authenticated',owner,'select public.create_game_from_template($1) id',[legacy])).rows[0].id
+  await as('authenticated',owner,"select * from public.configure_game($1,'Audit privacy',60,array['Red','Blue'],'organizer',clock_timestamp()+interval '1 hour')",[id])
+  const operationId='12121212-1212-4121-8121-121212121212'
+  await as('authenticated',owner,"select public.record_audit_event('client_operation',$1,'failure',$2::jsonb)",[id,JSON.stringify({client_report:true,operation_id:operationId,stage:'photo_upload_failed',app:'participant_web'})])
+  await as('authenticated',owner,'select public.list_hunt_audit_events($1)',[id])
+  const events=(await as('authenticated',owner,'select public.list_hunt_audit_events($1) data',[id])).rows[0].data
+  const clientEvent=events.find(event=>event.details.operation_id===operationId)
+  assert.equal(clientEvent.source,'client-reported')
+  assert.equal(clientEvent.details.stage,'photo_upload_failed')
+  await assert.rejects(as('authenticated',owner,"select public.record_audit_event('forged_server_event',$1,'success','{}'::jsonb)",[id]),/Only client operation reports are accepted/)
+  await assert.rejects(as('authenticated',owner,"select public.record_audit_event('client_operation',$1,'failure',$2::jsonb)",[id,JSON.stringify({client_report:true,operation_id:operationId,stage:'photo_upload_failed',app:'participant_web',email:'private@example.test'})]),/Unsupported client audit detail/)
+  const expired=(await db.query("select count(*)::int count from public.audit_events where event_type='old_test_event'")).rows[0].count
+  assert.equal(expired,0)
 })
 test('timing transitions create owner-scoped audit events with authoritative details',async()=>{
   const localTemplate=(await as('authenticated',owner,"select public.save_hunt_template('Timing source','Shop','',array[]::text[],$1::jsonb,60,'personal') id",[JSON.stringify([{title:'Timing item'}])])).rows[0].id

@@ -483,6 +483,7 @@ test('organizer lobby shows the team roster and unread chat count without moving
   organizerLobbyMode = true
   const baseTime = Date.now()
   organizerMessages = Array.from({ length: 15 }, (_, index) => ({ id: `message-${index}`, sender_name: index % 2 ? 'Taylor' : 'Organizer', sender_role: index % 2 ? 'participant' as const : 'organizer' as const, body: `Chat message ${index}`, created_at: new Date(baseTime + index * 1000).toISOString() }))
+  await page.clock.install()
   await restoreOrganizerSession(page)
   await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
   await expect(page.getByRole('heading', { name: 'Team lobby' })).toBeVisible()
@@ -493,7 +494,7 @@ test('organizer lobby shows the team roster and unread chat count without moving
   await chatMessages.evaluate(element => { element.scrollTop = 0; element.dispatchEvent(new Event('scroll')) })
   await expect.poll(() => chatMessages.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
   organizerMessages.push({ id: 'message-new', sender_name: 'Taylor', sender_role: 'participant', body: 'One more update', created_at: new Date(baseTime + 20_000).toISOString() })
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await page.clock.fastForward(15_000)
   const jumpButton = page.getByRole('button', { name: /Jump to latest.*1 new/ })
   await expect(jumpButton).toBeVisible()
   expect(await chatMessages.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeGreaterThan(48)
