@@ -6,13 +6,14 @@ import { supabase } from '../../lib/supabase'
 import { joinInvitation } from '../../lib/participantSession'
 import HuntReview from './HuntReview'
 import HuntChat from '../../components/HuntChat'
+import TeamLobby from '../../components/TeamLobby'
 
 type OrganizerWorkspaceProps = { session: Session; onSignOut: () => void; initialHuntId?: string }
 type Organizer = { id: string }
 type LibraryItem = { id: string; title: string; description: string | null; category: string | null; archived: boolean; created_at: string }
 type Hunt = { id: string; title: string; venue: string; status: string; created_at: string; start_at: string | null; duration_minutes: number; team_assignment_mode: 'organizer' | 'balanced'; voting_enabled: boolean; voting_bonus_points: number }
 type DraftItem = { key: string; title: string; description: string; pointValue: number; libraryItemId?: string }
-type Team = { id: string; hunt_id: string; name: string; display_color: string; display_order: number }
+type Team = { id: string; hunt_id: string; name: string; display_color: string; display_order: number; selfieUrl?: string; selfieSubmittedAt?: string }
 type Participant = { id: string; hunt_id: string; team_id: string; display_name: string; joined_at: string }
 type InviteCode = { team_id: string | null; team_name: string; invite_token: string }
 type Page = 'overview' | 'library' | 'hunts' | 'new-hunt' | 'manage-hunt' | 'review-hunt'
@@ -198,15 +199,30 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     setManageMessage('')
     setPage('manage-hunt')
     if (hunt.status !== 'draft' && supabase) {
-      const [teamResult, participantResult] = await Promise.all([
-        supabase.from('teams').select('id,hunt_id,name,display_color,display_order').eq('hunt_id', hunt.id).order('display_order'),
-        supabase.from('participants').select('id,hunt_id,team_id,display_name,joined_at').eq('hunt_id', hunt.id).order('joined_at'),
-      ])
-      if (teamResult.error) setManageMessage(teamResult.error.message)
-      else setManagedTeams(teamResult.data ?? [])
-      if (participantResult.error) setManageMessage(participantResult.error.message)
-      else setManagedParticipants(participantResult.data ?? [])
+      await loadManagedLobby(hunt.id)
     }
+  }
+
+  async function loadManagedLobby(huntId: string) {
+    if (!supabase) return
+    const [teamResult, participantResult, selfieResult] = await Promise.all([
+      supabase.from('teams').select('id,hunt_id,name,display_color,display_order').eq('hunt_id', huntId).order('display_order'),
+      supabase.from('participants').select('id,hunt_id,team_id,display_name,joined_at').eq('hunt_id', huntId).order('joined_at'),
+      supabase.from('team_selfies').select('team_id,storage_path,submitted_at').eq('hunt_id', huntId),
+    ])
+    if (teamResult.error) setManageMessage(teamResult.error.message)
+    if (participantResult.error) setManageMessage(participantResult.error.message)
+    if (selfieResult.error) setManageMessage(selfieResult.error.message)
+    if (teamResult.error || participantResult.error || selfieResult.error) return
+    const selfieRows = selfieResult.data ?? []
+    const teams = await Promise.all((teamResult.data ?? []).map(async team => {
+      const selfie = selfieRows.find(row => row.team_id === team.id)
+      if (!selfie) return team
+      const { data } = await supabase!.storage.from('hunt-photos').createSignedUrl(selfie.storage_path, 300)
+      return { ...team, selfieUrl: data?.signedUrl ?? '', selfieSubmittedAt: selfie.submitted_at }
+    }))
+    setManagedTeams(teams)
+    setManagedParticipants(participantResult.data ?? [])
   }
 
   async function publishHunt(event: FormEvent<HTMLFormElement>) {
@@ -238,12 +254,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       setInviteCodes(codes)
       setManagedHunt({ ...managedHunt, status: 'scheduled', start_at: startTime?.toISOString() ?? null, team_assignment_mode: assignmentMode, voting_enabled: votingEnabled, voting_bonus_points: votingBonusPoints })
       await loadWorkspace()
-      const [teamResult, participantResult] = await Promise.all([
-        supabase.from('teams').select('id,hunt_id,name,display_color,display_order').eq('hunt_id', managedHunt.id).order('display_order'),
-        supabase.from('participants').select('id,hunt_id,team_id,display_name,joined_at').eq('hunt_id', managedHunt.id).order('joined_at'),
-      ])
-      setManagedTeams(teamResult.data ?? [])
-      setManagedParticipants(participantResult.data ?? [])
+      await loadManagedLobby(managedHunt.id)
     } catch (error) {
       setManageMessage(error instanceof Error ? error.message : 'Could not publish the hunt.')
     } finally {
@@ -374,7 +385,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
         <button className="back-link" onClick={() => setPage('hunts')}><ArrowLeft size={15}/> Back to your hunts</button>
         <div className="new-hunt-heading"><div className="eyebrow"><Settings2 size={14}/> HUNT SETUP</div><h1>{managedHunt.title}</h1><p><MapPin size={14}/> {managedHunt.venue} <span className="manage-divider">·</span> {managedHunt.duration_minutes} minute time limit</p></div>
          {manageMessage && <div className="form-error" role="alert">{manageMessage}</div>}
-         {managedHunt.status !== 'draft' && <HuntChat huntId={managedHunt.id} compact />}
+         {managedHunt.status !== 'draft' && <><HuntChat huntId={managedHunt.id} compact /><TeamLobby teams={managedTeams} participants={managedParticipants} onRefresh={() => void loadManagedLobby(managedHunt.id)} /></>}
         {managedHunt.status === 'scheduled' && <section className="builder-section"><div className="builder-step"><Play size={15}/></div><div className="builder-main"><h2>Ready to start?</h2><p>Start immediately if your players are ready. This uses the server clock and preserves the roster and invitation links.</p><button type="button" className="primary-button" disabled={manageSaving} onClick={() => void startHuntNow()}><Play size={15}/> Start hunt now</button></div></section>}
         {managedHunt.status === 'draft' ? <form className="hunt-builder" onSubmit={publishHunt}>
           <section className="builder-section"><div className="builder-step"><CalendarDays size={15}/></div><div className="builder-main"><h2>Choose when and how to play</h2><p>Set up the lobby now, then start the timer when your teams are ready.</p><div className="start-mode-options" role="group" aria-label="Hunt start mode"><label className={`start-mode-option ${startMode === 'manual' ? 'selected' : ''}`}><input type="radio" name="start-mode" checked={startMode === 'manual'} onChange={() => setStartMode('manual')}/><span><b>Start manually</b><small>Teams join a waiting lobby. You start the hunt when everyone is ready.</small></span></label><label className={`start-mode-option ${startMode === 'scheduled' ? 'selected' : ''}`}><input type="radio" name="start-mode" checked={startMode === 'scheduled'} onChange={() => setStartMode('scheduled')}/><span><b>Schedule a start</b><small>The server starts the hunt automatically at the selected time.</small></span></label></div>{startMode === 'scheduled' && <label className="builder-field">Scheduled start time<input type="datetime-local" required value={startAtLocal} onChange={event => setStartAtLocal(event.target.value)}/><span className="optional">Shown in your local time zone; saved as UTC. You can still start early.</span></label>}<label className="builder-field">Team assignment method<select value={assignmentMode} onChange={event => setAssignmentMode(event.target.value as 'organizer' | 'balanced')}><option value="organizer">Participants scan their assigned team's code</option><option value="balanced">One shared code assigns balanced teams</option></select></label><label className="builder-field">Team names <span className="optional">One name per line · 2–12 teams</span><textarea rows={Math.min(8, Math.max(3, teamNamesText.split('\n').length))} maxLength={600} value={teamNamesText} onChange={event => setTeamNamesText(event.target.value)} placeholder={'Team Red\nTeam Blue'} /></label><label className="voting-config"><input type="checkbox" checked={votingEnabled} onChange={event => setVotingEnabled(event.target.checked)}/><span><b>Enable photo voting during review</b><small>Teams can vote for another team's approved photos.</small></span></label>{votingEnabled && <label className="builder-field duration-field">Voting bonus points<input type="number" min={0} max={1000} value={votingBonusPoints} onChange={event => setVotingBonusPoints(Math.max(0, Number(event.target.value)))}/></label>}</div></section>
