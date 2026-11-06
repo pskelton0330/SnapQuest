@@ -17,6 +17,7 @@ let organizerStartCalls = 0
 let organizerMessages: { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }[] = []
 let signedPreviewMode = false
 let signedPreviewRequests = 0
+let participantReviewPhotoStatus: 'pending' | 'approved' | 'rejected' | null = null
 
 test.beforeEach(async ({ page }) => {
   participantRuntimeState = 'waiting'
@@ -34,6 +35,7 @@ test.beforeEach(async ({ page }) => {
   organizerMessages = []
   signedPreviewMode = false
   signedPreviewRequests = 0
+  participantReviewPhotoStatus = null
   await page.route('https://test-project.supabase.co/**', async route => {
     const request = route.request()
     if (request.url().includes('/storage/v1/object/sign/hunt-photos/')) {
@@ -155,7 +157,8 @@ test.beforeEach(async ({ page }) => {
         ]
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: organizerReviewStatus, can_begin_review: false, final_scores: finalScores, teams, items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 0 }], submissions: [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: 'test/photo.jpg', status: organizerReviewDecision, submitted_at: '2026-11-01T17:10:00Z' }], votes: [], team_selfies: [] }) })
       } else {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: participantRuntimeState, final_scores: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }], teams: [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }], items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions: signedPreviewMode ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', storage_path: 'test/photo.jpg', status: 'approved' }] : [], votes: [] }) })
+        const reviewPhotoStatus = participantReviewPhotoStatus ?? (signedPreviewMode ? 'approved' : null)
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: participantRuntimeState, final_scores: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }], teams: [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }], items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions: reviewPhotoStatus ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', storage_path: 'test/photo.jpg', status: reviewPhotoStatus }] : [], votes: [] }) })
       }
       return
     }
@@ -389,7 +392,7 @@ test('participant can see the post-hunt review gallery while the organizer revie
   await expect(page.getByText('Photo review time!')).toBeVisible()
   await expect(page.getByText('Team photo gallery')).toBeVisible()
   await expect(page.getByText('The organizer is reviewing all team photos.')).toBeVisible()
-  await expect(page.getByText('No approved photo')).toBeVisible()
+  await expect(page.getByText('No photo submitted')).toBeVisible()
   for (const width of [320, 375, 390]) {
     await page.setViewportSize({ width, height: 844 })
     const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
@@ -397,6 +400,19 @@ test('participant can see the post-hunt review gallery while the organizer revie
   }
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, targets }) => ({ id, impact, help, targets })), null, 2)).toEqual([])
+})
+
+test('participant gallery explains pending approval and an unavailable approved photo preview', async ({ page }) => {
+  participantRuntimeState = 'review'
+  participantReviewPhotoStatus = 'pending'
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText('Awaiting organizer approval')).toBeVisible()
+
+  participantReviewPhotoStatus = 'approved'
+  await page.reload()
+  await expect(page.getByText('Photo preview unavailable')).toBeVisible()
 })
 
 test('participant sees final standings and winner celebration after results publish', async ({ page }) => {
