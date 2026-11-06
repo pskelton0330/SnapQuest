@@ -5,12 +5,18 @@ let participantRuntimeState: 'waiting' | 'active' | 'review' | 'completed' = 'wa
 let photoFaultMode: 'committed-rpc-response-lost' | 'storage-denied' | null = null
 let uploadedPhotoPath = ''
 let photoSubmissionRpcCalls = 0
+let organizerReviewMode = false
+let organizerReviewStatus: 'review' | 'completed' = 'review'
+let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
 
 test.beforeEach(async ({ page }) => {
   participantRuntimeState = 'waiting'
   photoFaultMode = null
   uploadedPhotoPath = ''
   photoSubmissionRpcCalls = 0
+  organizerReviewMode = false
+  organizerReviewStatus = 'review'
+  organizerReviewDecision = 'pending'
   await page.route('https://test-project.supabase.co/**', async route => {
     const request = route.request()
     if (request.url().includes('/storage/v1/object/sign/hunt-photos/')) {
@@ -47,6 +53,10 @@ test.beforeEach(async ({ page }) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '11111111-1111-4111-8111-111111111111' }]) })
       return
     }
+    if (organizerReviewMode && request.url().includes('/rest/v1/hunts') && request.url().includes('organizer_id=')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', status: organizerReviewStatus, created_at: '2026-11-01T12:00:00Z', start_at: '2026-11-01T17:00:00Z', duration_minutes: 60, team_assignment_mode: 'organizer', voting_enabled: false, voting_bonus_points: 0 }]) })
+      return
+    }
     if (request.url().includes('/rest/v1/participants') && request.url().includes('select=hunt_id%2Cteam_id')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ hunt_id: '33333333-3333-4333-8333-333333333333', team_id: '44444444-4444-4444-8444-444444444444' }]) })
       return
@@ -81,7 +91,26 @@ test.beforeEach(async ({ page }) => {
       return
     }
     if (request.url().includes('/rest/v1/rpc/get_hunt_review_gallery')) {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: participantRuntimeState, final_scores: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }], teams: [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }], items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions: [], votes: [] }) })
+      if (organizerReviewMode) {
+        const final = organizerReviewStatus === 'completed'
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: organizerReviewStatus, can_begin_review: false, final_scores: final ? [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }] : null, teams: [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }], items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 0 }], submissions: [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: 'test/photo.jpg', status: organizerReviewDecision, submitted_at: '2026-11-01T17:10:00Z' }], votes: [], team_selfies: [] }) })
+      } else {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: participantRuntimeState, final_scores: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }], teams: [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }], items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions: [], votes: [] }) })
+      }
+      return
+    }
+    if (organizerReviewMode && request.url().includes('/rest/v1/rpc/review_submission')) {
+      organizerReviewDecision = JSON.parse(request.postData() ?? '{}').p_decision
+      await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
+      return
+    }
+    if (organizerReviewMode && request.url().includes('/rest/v1/rpc/finalize_hunt')) {
+      organizerReviewStatus = 'completed'
+      await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
+      return
+    }
+    if (organizerReviewMode && request.url().includes('/rest/v1/rpc/get_hunt_invites')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ has_active_invites: false, recoverable: true, invite_codes: [] }) })
       return
     }
     if (request.url().includes('/rest/v1/hunt_items')) {
@@ -263,6 +292,37 @@ test('participant sees final standings and winner celebration after results publ
     await page.setViewportSize({ width, height: 844 })
     const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
     expect(dimensions.content, `published results horizontal overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewport)
+  }
+  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
+  expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, targets }) => ({ id, impact, help, targets })), null, 2)).toEqual([])
+})
+
+test('organizer reviews a photo, changes its decision, and finalizes results', async ({ page }) => {
+  organizerReviewMode = true
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await expect(page.getByRole('heading', { name: /Welcome in/ })).toBeVisible()
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  const hunt = page.getByRole('article').filter({ hasText: 'Spring Photo Hunt' })
+  await expect(hunt.getByRole('button', { name: 'Review photos' })).toBeVisible()
+  await hunt.getByRole('button', { name: 'Review photos' }).click()
+  await expect(page.getByRole('heading', { name: 'Spring Photo Hunt' })).toBeVisible()
+  await expect(page.getByText('Preview unavailable')).toBeVisible()
+  await page.getByRole('button', { name: 'Approve' }).click()
+  await expect(page.getByRole('button', { name: 'Change decision to rejected' })).toBeVisible()
+  await page.getByRole('button', { name: 'Change decision to rejected' }).click()
+  await expect(page.getByRole('button', { name: 'Change decision to approved' })).toBeVisible()
+  await page.getByRole('button', { name: 'Change decision to approved' }).click()
+  await expect(page.getByRole('button', { name: 'Change decision to rejected' })).toBeVisible()
+  await page.getByRole('button', { name: 'Finalize results' }).click()
+  await page.getByRole('button', { name: 'Confirm final results' }).click()
+  await expect(page.getByRole('heading', { name: 'Hunt complete' })).toBeVisible()
+  await expect(page.getByText('#1 Team Cedar')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Share winner card' })).toBeVisible()
+  for (const width of [320, 375, 390]) {
+    await page.setViewportSize({ width, height: 844 })
+    const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
+    expect(dimensions.content, `organizer review/results horizontal overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewport)
   }
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, targets }) => ({ id, impact, help, targets })), null, 2)).toEqual([])

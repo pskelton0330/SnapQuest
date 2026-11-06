@@ -724,3 +724,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .score-row > span { color: #5b5d65; }
 .review-item > header > b { color: #805d2e; }
 .review-photo-empty { color: #626b70; }
+.review-summary > span { color: #5b5d65; }
+.review-status.status-approved { color: #2f6f45; }
+.review-status.status-rejected { color: #91474c; }
