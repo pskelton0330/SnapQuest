@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: github-pages
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -43,6 +43,12 @@ jobs:
       - name: Build application
         run: npm run build
 
+      - name: Record deployed revision
+        if: github.event_name != 'pull_request'
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: node -e "require('node:fs').writeFileSync('dist/build-info.json', JSON.stringify({commit: process.env.BUILD_COMMIT}) + '\n')"
+
       - name: Upload build artifact
         if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v4
@@ -64,3 +70,9 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Verify deployed revision and home page
+        env:
+          DEPLOY_URL: ${{ steps.deployment.outputs.page_url }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: node scripts/smoke-deploy.mjs
