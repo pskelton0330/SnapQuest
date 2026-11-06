@@ -11,7 +11,7 @@ let organizerReviewMode = false
 let organizerLobbyMode = false
 let organizerReviewStatus: 'review' | 'completed' = 'review'
 let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
-let organizerLobbyStatus: 'scheduled' | 'active' = 'scheduled'
+let organizerLobbyStatus: 'scheduled' | 'active' | 'review' = 'scheduled'
 let organizerStartCalls = 0
 let organizerMessages: { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }[] = []
 let signedPreviewMode = false
@@ -162,6 +162,12 @@ test.beforeEach(async ({ page }) => {
     if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/start_game_now')) {
       organizerStartCalls++
       organizerLobbyStatus = 'active'
+      await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
+      return
+    }
+    if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/end_hunt_early')) {
+      organizerLobbyStatus = 'review'
+      organizerReviewStatus = 'review'
       await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
       return
     }
@@ -520,8 +526,9 @@ test('organizer lobby shows the team roster and unread chat count without moving
   await expect(page.getByText('One more update')).toBeVisible()
 })
 
-test('organizer can start a scheduled hunt immediately from its lobby', async ({ page }) => {
+test('organizer can start a scheduled hunt immediately, end it, and open photo review', async ({ page }) => {
   organizerLobbyMode = true
+  organizerReviewMode = true
   page.on('dialog', dialog => dialog.accept())
   await restoreOrganizerSession(page)
   await page.goto('/#/')
@@ -531,6 +538,9 @@ test('organizer can start a scheduled hunt immediately from its lobby', async ({
   await page.getByRole('button', { name: 'Start hunt now' }).click()
   await expect.poll(() => organizerStartCalls).toBe(1)
   await expect(page.getByRole('button', { name: 'End hunt now and review' })).toBeVisible()
+  await page.getByRole('button', { name: 'End hunt now and review' }).click()
+  await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Finalize results' })).toBeDisabled()
 })
 
 test('organizer can copy a team invitation from the QR code card', async ({ page }) => {
