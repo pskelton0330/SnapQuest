@@ -410,6 +410,10 @@ test('participant gallery explains pending approval and an unavailable approved 
   await page.getByRole('button', { name: 'Join the hunt' }).click()
   await expect(page.getByText('Awaiting organizer approval')).toBeVisible()
 
+  participantReviewPhotoStatus = 'rejected'
+  await page.reload()
+  await expect(page.getByText('Not approved')).toBeVisible()
+
   participantReviewPhotoStatus = 'approved'
   await page.reload()
   await expect(page.getByText('Photo preview unavailable')).toBeVisible()
