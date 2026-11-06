@@ -2,11 +2,47 @@ import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 
 let participantRuntimeState: 'waiting' | 'active' | 'review' | 'completed' = 'waiting'
+let photoFaultMode: 'committed-rpc-response-lost' | 'storage-denied' | null = null
+let uploadedPhotoPath = ''
+let photoSubmissionRpcCalls = 0
 
 test.beforeEach(async ({ page }) => {
   participantRuntimeState = 'waiting'
+  photoFaultMode = null
+  uploadedPhotoPath = ''
+  photoSubmissionRpcCalls = 0
   await page.route('https://test-project.supabase.co/**', async route => {
     const request = route.request()
+    if (request.url().includes('/storage/v1/object/sign/hunt-photos/')) {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'simulated signed-preview failure' }) })
+      return
+    }
+    if (request.url().includes('/storage/v1/object/hunt-photos/') && request.method() === 'POST') {
+      if (photoFaultMode === 'storage-denied') {
+        await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ statusCode: '403', error: 'Unauthorized', message: 'new row violates row-level security policy' }) })
+        return
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ Key: request.url().split('/storage/v1/object/')[1] }) })
+      return
+    }
+    if (request.url().includes('/rest/v1/rpc/submit_hunt_photo')) {
+      photoSubmissionRpcCalls++
+      uploadedPhotoPath = JSON.parse(request.postData() ?? '{}').p_storage_path ?? ''
+      if (photoFaultMode === 'committed-rpc-response-lost') {
+        await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ code: 'XX000', message: 'simulated lost response after commit' }) })
+      } else {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ accepted: true, submitted_at: new Date().toISOString(), previous_storage_path: null }) })
+      }
+      return
+    }
+    if (request.url().includes('/rest/v1/submissions')) {
+      const requestedPath = new URL(request.url()).searchParams.get('storage_path')?.replace(/^eq\./, '')
+      const row = photoFaultMode === 'committed-rpc-response-lost' && requestedPath === uploadedPhotoPath
+        ? [{ id: '99999999-9999-4999-8999-999999999999', hunt_item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: uploadedPhotoPath, submitted_at: new Date().toISOString(), approval_status: 'pending' }]
+        : []
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(row) })
+      return
+    }
     if (request.url().includes('/rest/v1/organizers')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '11111111-1111-4111-8111-111111111111' }]) })
       return
@@ -168,6 +204,32 @@ test('active participant game exposes the timer, team progress, and photo list',
   }
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, nodes }) => ({ id, impact, help, targets: nodes.map(node => node.target) })), null, 2)).toEqual([])
+})
+
+test('photo upload reconciles a committed submission after its RPC response is lost', async ({ page }) => {
+  participantRuntimeState = 'active'
+  photoFaultMode = 'committed-rpc-response-lost'
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
+  await page.getByRole('article').filter({ hasText: 'A red leaf' }).locator('input[type="file"]').setInputFiles({ name: 'leaf.png', mimeType: 'image/png', buffer: image })
+  await expect(page.getByText('Photo submitted · awaiting review')).toBeVisible({ timeout: 10_000 })
+  expect(photoSubmissionRpcCalls).toBe(1)
+  await expect(page.getByText(/Submitted successfully, but the preview could not load yet/)).toBeVisible()
+})
+
+test('photo upload reports a Storage policy denial without calling the submission RPC', async ({ page }) => {
+  participantRuntimeState = 'active'
+  photoFaultMode = 'storage-denied'
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
+  const item = page.getByRole('article').filter({ hasText: 'A red leaf' })
+  await item.locator('input[type="file"]').setInputFiles({ name: 'leaf.png', mimeType: 'image/png', buffer: image })
+  await expect(item.getByRole('status')).toContainText('new row violates row-level security policy', { timeout: 10_000 })
+  expect(photoSubmissionRpcCalls).toBe(0)
 })
 
 test('participant can see the post-hunt review gallery while the organizer reviews', async ({ page }) => {
