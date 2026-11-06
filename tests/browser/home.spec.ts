@@ -6,6 +6,7 @@ let participantRuntimeState: 'waiting' | 'active' | 'review' | 'completed' = 'wa
 let photoFaultMode: 'committed-rpc-response-lost' | 'storage-denied' | 'rpc-rejected' | null = null
 let uploadedPhotoPath = ''
 let photoSubmissionRpcCalls = 0
+let selfieSubmissionRpcCalls = 0
 let rollbackDeleteRequests = 0
 let organizerReviewMode = false
 let organizerTieMode = false
@@ -24,6 +25,7 @@ test.beforeEach(async ({ page }) => {
   photoFaultMode = null
   uploadedPhotoPath = ''
   photoSubmissionRpcCalls = 0
+  selfieSubmissionRpcCalls = 0
   rollbackDeleteRequests = 0
   organizerReviewMode = false
   organizerTieMode = false
@@ -75,6 +77,11 @@ test.beforeEach(async ({ page }) => {
       } else {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ accepted: true, submitted_at: new Date().toISOString(), previous_storage_path: null }) })
       }
+      return
+    }
+    if (request.url().includes('/rest/v1/rpc/submit_team_selfie')) {
+      selfieSubmissionRpcCalls++
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ submitted_at: new Date().toISOString(), previous_storage_path: null, submitted_by: '55555555-5555-4555-8555-555555555555' }) })
       return
     }
     if (request.url().includes('/rest/v1/submissions')) {
@@ -296,6 +303,19 @@ test('player can join an invited team and reach the waiting lobby', async ({ pag
   }
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, nodes }) => ({ id, impact, help, nodes: nodes.map(node => ({ target: node.target, ...node.any[0]?.data })) })), null, 2)).toEqual([])
+})
+
+test('saved team selfie stays saved when signing its preview fails', async ({ page }) => {
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
+
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
+  await page.locator('.team-identity-panel input[type="file"]').setInputFiles({ name: 'team.png', mimeType: 'image/png', buffer: image })
+  await expect(page.getByRole('alert')).toContainText('Team selfie saved. Its preview is temporarily unavailable')
+  expect(selfieSubmissionRpcCalls).toBe(1)
+  expect(rollbackDeleteRequests).toBe(0)
 })
 
 test('participant can return through the original invite after reloading the browser', async ({ page }) => {
