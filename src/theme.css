@@ -45,7 +45,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .primary-button { background: var(--sq-coral); box-shadow: 0 5px 0 #8f2c25; border-radius: 11px; }
 .primary-button:not(:disabled):hover { background: #ad322b; box-shadow: 0 6px 0 #79251f; }
 .outline-button { border-color: #bac6ca; color: var(--sq-ink); background: #fffefa; }
-.outline-button:hover { border-color: var(--sq-teal); color: var(--sq-teal); background: #f1fbfb; }
+.outline-button:hover { border-color: var(--sq-teal); color: #006579; background: #f1fbfb; }
 .secure-note { color: #687783; }
 .shell footer { border-color: var(--sq-line); color: #77818a; }
 

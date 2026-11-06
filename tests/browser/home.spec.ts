@@ -409,6 +409,17 @@ test('organizer login confirms that the email link was requested', async ({ page
   await expect(page.getByRole('status')).toContainText('Check your email')
 })
 
+test('organizer email callback restores the session at the site root', async ({ page }) => {
+  await page.goto('/#/')
+  await page.getByRole('button', { name: /Organizer Login/ }).click()
+  await page.getByLabel('Email address').fill('organizer@example.test')
+  await page.getByRole('button', { name: /Send me a sign-in link/ }).click()
+  await expect(page.getByRole('status')).toContainText('Check your email')
+  await page.goto('/?email-callback=1#access_token=callback-access-token&refresh_token=callback-refresh-token&expires_in=3600&token_type=bearer&type=magiclink')
+  await expect(page.getByRole('heading', { name: /Welcome in/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Create your first hunt' })).toBeVisible()
+})
+
 test('restored organizer session opens the production organizer workspace', async ({ page }) => {
   await restoreOrganizerSession(page)
   await page.goto('/#/')
