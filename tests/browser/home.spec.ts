@@ -22,6 +22,15 @@ test('public home exposes clear player and organizer entry points', async ({ pag
   await expect(page.getByRole('button', { name: /Organizer Login/ })).toBeVisible()
 })
 
+test('public home does not download organizer or gameplay routes', async ({ page }) => {
+  const routeChunks: string[] = []
+  page.on('request', request => {
+    if (/\/assets\/(OrganizerWorkspace|ParticipantGame|JoinGame)-[^/]+\.js/.test(request.url())) routeChunks.push(request.url())
+  })
+  await page.goto('/#/', { waitUntil: 'networkidle' })
+  expect(routeChunks).toEqual([])
+})
+
 test('player invite form explains an invalid team link', async ({ page }) => {
   await page.goto('/#/')
   await page.getByRole('button', { name: /I.?m a Player/ }).click()

@@ -16,7 +16,8 @@ This backlog intentionally distinguishes **implementation** from **observed acce
 - IMP-04: in progress. Storage delete errors and thrown network failures now queue cleanup retries, including failed upload rollback and replaced media cleanup. Failed retry outcomes emit privacy-safe operation events. Fault-injection tests cover returned/throwing delete failures and successful retry; remaining upload-denial, RPC reconciliation, signed-preview, and replacement-race cases are not yet covered.
 - IMP-05–IMP-18: queued in the order below.
 - IMP-19: in progress. Existing code already supports participant cards, multiple positive tied winners, zero-score no-winner, missing-selfie color fallback, measured long-name fitting, share cancellation handling, and preview URL cleanup. This pass adds explicit tie language to the card and share caption; remaining canvas/device walkthroughs are outstanding.
-- IMP-20–IMP-24: queued in the order below.
+- IMP-20: in progress. Lazy-loaded organizer, participant, and invite routes reduced the initial entry from about 170 KiB to 135 KiB gzip. A 150 KiB gzip budget and a browser assertion that home does not request route chunks are being added; complete after CI/deploy confirmation and a route navigation check.
+- IMP-21–IMP-24: queued in the order below.
 - No item is complete until its acceptance evidence and published commit are recorded here.
 
 ## Work order
@@ -54,7 +55,7 @@ This backlog intentionally distinguishes **implementation** from **observed acce
 | IMP-17 | P2 | Review the organizer's end-to-end lobby hierarchy on phones: status, play/manage switch, start/time controls, QR and copy links, roster/readiness, chat, and detailed controls. | First-time users can find Start, Copy team link, Join as organizer, Return to team, End, and Review without coaching; copy links sit beside their QR codes. |
 | IMP-18 | P2 | Improve chat and live-screen feedback with visible offline/reconnecting state, new-message count when scrolled away, and retry guidance for each failed action. | Accessibility tree announces state changes; new messages do not force-scroll a reader; the user can jump to latest or retry a failed fetch. |
 | IMP-19 | P2 | Finish celebration-card polish: copy caption, display the winning team's selfie when available, clear no-selfie fallback, long-name wrapping, tie language, cancellation, and unsupported-share download fallback. | In progress. Code already offers participant cards, supports multiple positive tied winners, omits a winner card at zero points, uses team color when a selfie cannot load, shrinks long text to fit, handles share cancellation, and revokes preview URLs. New work labels tied cards/captions accurately, with unit coverage for captions and safe filenames. Still need canvas assertions and Safari/iOS/Android checks for winner, tie, zero-score, missing selfie, long names, cancellation, and share/download fallback. |
-| IMP-20 | P2 | Add performance budgets and reduce the current ~600 KB minified JavaScript entry bundle with route-level lazy loading. | CI records compressed bundle sizes and enforces an agreed budget; home loads without downloading organizer/review-only code. |
+| IMP-20 | P2 | Add performance budgets and reduce the current ~600 KB minified JavaScript entry bundle with route-level lazy loading. | In progress: lazy-loaded organizer, participant, invite, and development routes reduced initial JS from 600 KB / 170 KB gzip to 472 KB / 135 KB gzip. Build enforces a 150 KiB gzip entry budget; browser test checks home does not fetch organizer/player route chunks. Confirm CI/deployed build and route loading before completion. |
 
 ### Wave 4 — Product and documentation alignment
 

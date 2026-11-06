@@ -1,15 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Camera, ChevronRight, Compass, ShieldCheck, Sparkles, Users } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
-import OrganizerWorkspace from './pages/admin/OrganizerWorkspace'
-import JoinGame from './pages/participant/JoinGame'
-import ParticipantGame from './pages/participant/ParticipantGame'
-import { LocalPlayerPreview } from './components/GameManager'
-import LocalDemoWorkspace from './pages/admin/LocalDemoWorkspace'
 import { shouldRouteToOrganizerWorkspace } from './lib/appNavigation'
 import './App.css'
 import './theme.css'
+
+const OrganizerWorkspace = lazy(() => import('./pages/admin/OrganizerWorkspace'))
+const JoinGame = lazy(() => import('./pages/participant/JoinGame'))
+const ParticipantGame = lazy(() => import('./pages/participant/ParticipantGame'))
+const LocalPlayerPreview = lazy(() => import('./components/GameManager').then(module => ({ default: module.LocalPlayerPreview })))
+const LocalDemoWorkspace = lazy(() => import('./pages/admin/LocalDemoWorkspace'))
+
+function RouteLoading() {
+  return <main className="participant-shell"><section className="participant-message"><p role="status">Loading your hunt…</p></section></main>
+}
 
 function App() {
   const collageUrl = `${import.meta.env.BASE_URL}adventure-collage.webp`
@@ -60,13 +65,13 @@ function App() {
   const manageMatch = routeHash.match(/^#\/manage\/([0-9a-f-]{36})$/i)
 
   if ((joinMatch || playMatch) && (!authReady || authError)) return <main className="participant-shell"><section className="participant-message"><h1>{authError ? 'Reconnect to your game' : 'Restoring your saved session'}</h1><p role={authError ? 'alert' : 'status'}>{authError || 'Checking your existing identity before opening the game…'}</p>{authError && <button className="outline-button" onClick={() => window.location.reload()}>Retry connection</button>}</section></main>
-  if (joinMatch) return <JoinGame token={joinMatch[1]} session={session} />
+  if (joinMatch) return <Suspense fallback={<RouteLoading/>}><JoinGame token={joinMatch[1]} session={session} /></Suspense>
   if (playMatch && !session) return <main className="participant-shell"><section className="participant-message"><h1>Your saved game session is unavailable</h1><p>Return in the same browser and website address you used to join. Clearing site data, private browsing, signing out, or using a different device can lose guest access. Ask your organizer for help; your name alone cannot recover your identity.</p><a className="outline-button" href={window.location.pathname}>Return home</a></section></main>
-  if (playMatch && session) return <ParticipantGame huntId={playMatch[1]} session={session} />
-  if (manageMatch && session && !session.user.is_anonymous) return <OrganizerWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} initialHuntId={manageMatch[1]} />
+  if (playMatch && session) return <Suspense fallback={<RouteLoading/>}><ParticipantGame huntId={playMatch[1]} session={session} /></Suspense>
+  if (manageMatch && session && !session.user.is_anonymous) return <Suspense fallback={<RouteLoading/>}><OrganizerWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} initialHuntId={manageMatch[1]} /></Suspense>
   const demoPlayerMatch = routeHash.match(/^#\/dev\/player\/([a-zA-Z0-9-]+)\/([a-zA-Z0-9-]+)$/)
-  if (import.meta.env.DEV && demoPlayerMatch) return <LocalPlayerPreview key={`${demoPlayerMatch[1]}-${demoPlayerMatch[2]}`} gameId={demoPlayerMatch[1]} token={demoPlayerMatch[2]}/>
-  if (import.meta.env.DEV && routeHash.startsWith('#/dev/')) return <LocalDemoWorkspace routeHash={routeHash} />
+  if (import.meta.env.DEV && demoPlayerMatch) return <Suspense fallback={<RouteLoading/>}><LocalPlayerPreview key={`${demoPlayerMatch[1]}-${demoPlayerMatch[2]}`} gameId={demoPlayerMatch[1]} token={demoPlayerMatch[2]}/></Suspense>
+  if (import.meta.env.DEV && routeHash.startsWith('#/dev/')) return <Suspense fallback={<RouteLoading/>}><LocalDemoWorkspace routeHash={routeHash} /></Suspense>
   if (session?.user.is_anonymous) return <main className="participant-shell"><section className="participant-message"><Camera size={25}/><h1>Open your hunt invite</h1><p>Use the team QR code or invitation link again to return to your participant session.</p><a className="outline-button" href={window.location.pathname}>Return home</a></section></main>
 
   async function signIn(event: React.FormEvent<HTMLFormElement>) {
@@ -97,7 +102,7 @@ function App() {
     window.location.hash = `/join/${token}`
   }
 
-  if (session && shouldRouteToOrganizerWorkspace(session)) return <OrganizerWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} />
+  if (session && shouldRouteToOrganizerWorkspace(session)) return <Suspense fallback={<RouteLoading/>}><OrganizerWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} /></Suspense>
 
   return <main className="home-scene">
     <div className="home-scene-backdrop" style={{ backgroundImage: `url("${collageUrl}")` }} aria-hidden="true" />
