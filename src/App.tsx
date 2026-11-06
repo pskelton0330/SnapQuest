@@ -7,6 +7,7 @@ import JoinGame from './pages/participant/JoinGame'
 import ParticipantGame from './pages/participant/ParticipantGame'
 import { LocalPlayerPreview } from './components/GameManager'
 import LocalDemoWorkspace from './pages/admin/LocalDemoWorkspace'
+import { shouldRouteToOrganizerWorkspace } from './lib/appNavigation'
 import './App.css'
 import './theme.css'
 
@@ -89,7 +90,7 @@ function App() {
     window.location.hash = `/join/${token}`
   }
 
-  if (session) return <OrganizerWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} />
+  if (session && shouldRouteToOrganizerWorkspace(session)) return <OrganizerWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} />
 
   return <main className="home-scene">
     <div className="home-scene-backdrop" style={{ backgroundImage: `url("${collageUrl}")` }} aria-hidden="true" />

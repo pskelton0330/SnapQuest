@@ -7,7 +7,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration
+let migration, managementMigration, auditMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -35,6 +35,7 @@ before(async () => {
     if(file.includes('0013')) { manualStartMigration=sql; continue }
     if(file.includes('0014')) { messageMigration=sql; continue }
     if(file.includes('0015')) { manualLobbySelfieMigration=sql; continue }
+    if(file.includes('0016')) { reliabilityMigration=sql; continue }
     await db.exec(sql)
   }
   await db.query('insert into auth.users(id) values ($1),($2)',[owner,other])
@@ -54,6 +55,7 @@ before(async () => {
   await db.exec(manualStartMigration)
   await db.exec(messageMigration)
   await db.exec(manualLobbySelfieMigration)
+  await db.exec(reliabilityMigration)
 })
 after(async()=> { await db?.close() })
 async function snapshot() {
@@ -168,6 +170,85 @@ test('teams can choose a unique pre-start name and replace one private selfie',a
   await as('authenticated',owner,'select public.start_game_now($1)',[id])
   await assert.rejects(as('authenticated',other,"select public.set_team_name($1,$2,'Late name')",[id,teamId]))
   await assert.rejects(as('authenticated',other,'select public.submit_team_selfie($1,$2,$3)',[id,teamId,path1]))
+})
+
+async function createReliabilityHunt(name, startAt = null) {
+  const template = (await as('authenticated', owner,
+    "select public.save_hunt_template($1,'Test venue','',array[]::text[],$2::jsonb,60,'personal') id",
+    [name, JSON.stringify([{ title: 'Secret challenge', points: 5 }])])).rows[0].id
+  const huntId = (await as('authenticated', owner,
+    'select public.create_game_from_template($1) id', [template])).rows[0].id
+  const teams = await as('authenticated', owner,
+    "select * from public.configure_game($1,$2,60,array['Red','Blue'],'organizer',$3)",
+    [huntId, name, startAt])
+  const participantData = (await as('authenticated', other,
+    "select public.redeem_invitation($1,'Test player') data", [teams.rows[0].invite_token])).rows[0].data
+  return { huntId, teams: teams.rows, participant: participantData }
+}
+
+test('manual-start participants cannot read the review gallery before the hunt starts', async () => {
+  const { huntId } = await createReliabilityHunt('Closed manual lobby')
+  await assert.rejects(
+    as('authenticated', other, 'select public.get_hunt_review_gallery($1)', [huntId]),
+    /gallery opens after the hunt ends/,
+  )
+  const hiddenTitle = await db.query('select title_snapshot from public.hunt_items where hunt_id=$1', [huntId])
+  assert.equal(hiddenTitle.rows[0].title_snapshot, 'Secret challenge')
+})
+
+test('an expired hunt can enter photo review through the server-authoritative transition', async () => {
+  const startsLater = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  const { huntId } = await createReliabilityHunt('Natural expiry review', startsLater)
+  await db.query("update public.hunts set created_at=clock_timestamp()-interval '2 hours',start_at=clock_timestamp()-interval '61 minutes',status='active' where id=$1", [huntId])
+  const gallery = (await as('authenticated', owner, 'select public.get_hunt_review_gallery($1) data', [huntId])).rows[0].data
+  assert.equal(gallery.status, 'active')
+  assert.equal(gallery.can_begin_review, true)
+  await as('authenticated', owner, 'select public.begin_hunt_review($1)', [huntId])
+  const transitioned = (await db.query('select status from public.hunts where id=$1', [huntId])).rows[0]
+  assert.equal(transitioned.status, 'review')
+})
+
+test('moving a selfie submitter preserves the original team selfie and attribution', async () => {
+  const startsLater = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  const { huntId, teams, participant } = await createReliabilityHunt('Selfie member move', startsLater)
+  const selfiePath = `${huntId}/${participant.team_id}/selfie/33333333-3333-4333-8333-333333333333.jpg`
+  await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1)", [selfiePath])
+  await as('authenticated', other, 'select public.submit_team_selfie($1,$2,$3)', [huntId, participant.team_id, selfiePath])
+  const targetTeam = teams.find(team => team.team_id !== participant.team_id).team_id
+  await as('authenticated', owner, 'select public.move_participant($1,$2)', [participant.participant_id, targetTeam])
+  const saved = (await db.query('select team_id,submitted_by,storage_path from public.team_selfies where hunt_id=$1', [huntId])).rows[0]
+  assert.equal(saved.team_id, participant.team_id)
+  assert.equal(saved.submitted_by, participant.participant_id)
+  assert.equal(saved.storage_path, selfiePath)
+  assert.equal((await db.query('select team_id from public.participants where id=$1', [participant.participant_id])).rows[0].team_id, targetTeam)
+})
+
+test('review writes stop at completion and finalization retries return the stored result', async () => {
+  const submissionId = (await db.query("select id from public.submissions where storage_path='original/photo.jpg'")).rows[0].id
+  const original = (await db.query("select approval_status from public.submissions where id=$1", [submissionId])).rows[0].approval_status
+  const resultBefore = (await db.query("select final_scores from public.hunts where id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'")).rows[0].final_scores
+  await assert.rejects(as('authenticated', owner, 'select public.review_submission($1,\'rejected\')', [submissionId]), /Photo review is not open/)
+  const retry = (await as('authenticated', owner, "select public.finalize_hunt('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa') scores")).rows[0].scores
+  assert.deepEqual(retry, resultBefore)
+  assert.equal((await db.query('select approval_status from public.submissions where id=$1', [submissionId])).rows[0].approval_status, original)
+})
+
+test('ordinary Storage cleanup is denied for referenced photos and selfies', async () => {
+  const startsLater = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  const { huntId, teams, participant } = await createReliabilityHunt('Protected media', startsLater)
+  const teamId = participant.team_id
+  const itemId = (await db.query('select id from public.hunt_items where hunt_id=$1', [huntId])).rows[0].id
+  const selfiePath = `${huntId}/${teamId}/selfie/44444444-4444-4444-8444-444444444444.jpg`
+  const photoPath = `${huntId}/${teamId}/${itemId}/55555555-5555-4555-8555-555555555555.jpg`
+  await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1),('hunt-photos',$2)", [selfiePath, photoPath])
+  await as('authenticated', other, 'select public.submit_team_selfie($1,$2,$3)', [huntId, teamId, selfiePath])
+  await as('authenticated', owner, 'select public.start_game_now($1)', [huntId])
+  await as('authenticated', other, 'select public.submit_hunt_photo($1,$2)', [itemId, photoPath])
+  assert.equal((await as('authenticated', other, 'select public.can_delete_hunt_photo($1) allowed', [photoPath])).rows[0].allowed, false)
+  assert.equal((await as('authenticated', other, 'select public.can_delete_team_selfie($1) allowed', [selfiePath])).rows[0].allowed, false)
+  const unreferencedPath = `${huntId}/${teamId}/${itemId}/66666666-6666-4666-8666-666666666666.jpg`
+  assert.equal((await as('authenticated', other, 'select public.can_delete_hunt_photo($1) allowed', [unreferencedPath])).rows[0].allowed, true)
+  assert.equal(teams.length, 2)
 })
 test('organizer creates a public reusable hunt with safe creator attribution',async()=>{
   templateId=(await as('authenticated',owner,"select public.save_hunt_template('Public hunt','Park','Description',array['Be safe'],$1::jsonb) id",[JSON.stringify([{title:'A red item',points:2}])])).rows[0].id
