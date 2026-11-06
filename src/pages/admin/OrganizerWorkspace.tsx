@@ -7,6 +7,7 @@ import { joinInvitation } from '../../lib/participantSession'
 import HuntReview from './HuntReview'
 import HuntChat from '../../components/HuntChat'
 import TeamLobby from '../../components/TeamLobby'
+import InviteLinksPanel from '../../components/InviteLinksPanel'
 
 type OrganizerWorkspaceProps = { session: Session; onSignOut: () => void; initialHuntId?: string }
 type Organizer = { id: string }
@@ -337,6 +338,8 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
 
   function inviteUrl(token: string) { return `${window.location.origin}${window.location.pathname}#/join/${token}` }
 
+  function testInvite(token: string) { window.open(inviteUrl(token), '_blank', 'noopener,noreferrer') }
+
   async function copyInvite(token: string) {
     try { await navigator.clipboard.writeText(inviteUrl(token)); setCopiedInvite(token) }
     catch { setManageMessage('Copy was blocked by the browser. Select the invitation link and copy it manually.') }
@@ -413,7 +416,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
         </form> : <>
       <section className="builder-section"><div className="builder-step"><QrCode size={15}/></div><div className="builder-main invite-builder-main"><div className="builder-items-heading"><div><h2>Team invitations</h2><p>{managedHunt.team_assignment_mode === 'balanced' ? 'Share this one code with everyone. The app will place each person on a smaller team.' : 'Show each code only to the participants assigned to that team.'}</p></div><button className="outline-button" disabled={manageSaving} onClick={() => void regenerateInvites()}><RefreshCw size={14}/> {inviteCodes.length ? 'Replace codes' : 'Create codes'}</button></div>{inviteCodes.length ? <div className="invite-grid">{inviteCodes.map(invite => <article className="invite-card" key={invite.invite_token}><div className="invite-card-top"><span className="team-swatch" style={{backgroundColor: managedTeams.find(team => team.id === invite.team_id)?.display_color ?? '#b88bbf'}}/><b>{invite.team_name}</b></div><QRCodeSVG value={inviteUrl(invite.invite_token)} size={148} level="M" includeMargin/><label className="invite-url-label">Invitation link<input readOnly value={inviteUrl(invite.invite_token)}/></label><button className="outline-button" onClick={() => void copyInvite(invite.invite_token)}><Copy size={14}/>{copiedInvite === invite.invite_token ? 'Copied!' : 'Copy invite link'}</button><button className="outline-button" disabled={manageSaving} onClick={() => void joinTeam(invite.invite_token)}><Users size={14}/> Join this team</button></article>)}</div> : <div className="locked-note"><ShieldCheck size={15}/> Invite tokens are stored as secure hashes. Create or replace the codes to display them; replacing links revokes older QR codes.</div>}{inviteCodes.length > 0 && <button className="outline-button print-invites" onClick={() => window.print()}><QrCode size={14}/> Print team codes</button>}</div></section>
           <section className="builder-section"><div className="builder-step"><Users size={15}/></div><div className="builder-main"><h2>Participants</h2><p>{managedParticipants.length} {managedParticipants.length === 1 ? 'person has' : 'people have'} joined this hunt. You can move participants before the scheduled start.</p>{managedParticipants.length ? <div className="participant-roster">{managedParticipants.map(participant => <div className="participant-roster-row" key={participant.id}><span className="participant-avatar"><UserRound size={15}/></span><b>{participant.display_name}</b><select aria-label={`Team for ${participant.display_name}`} value={participant.team_id} onChange={event => void moveParticipant(participant, event.target.value)} disabled={managedHunt.status !== 'scheduled'}>{managedTeams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select></div>)}</div> : <div className="locked-note"><Users size={15}/> The roster fills in as participants join from their invitation links.</div>}{['scheduled','active'].includes(managedHunt.status) && <button className="reject-button end-hunt-button" disabled={manageSaving} onClick={() => void endHuntNow()}><Clock3 size={14}/> End hunt now and review</button>}</div></section>
-        </>}
+        <InviteLinksPanel invites={inviteCodes} inviteUrl={inviteUrl} copiedInvite={copiedInvite} onCopy={token => void copyInvite(token)} onTest={testInvite} /></>}
       </section> : page === 'review-hunt' && managedHunt ? <HuntReview huntId={managedHunt.id} title={managedHunt.title} status={managedHunt.status} onBack={() => setPage('hunts')} onChanged={() => void loadWorkspace()} /> : null}
     </main>
   </div>
