@@ -41,6 +41,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   const [teamIdentityBusy, setTeamIdentityBusy] = useState(false)
   const [teamIdentityError, setTeamIdentityError] = useState('')
   const [selfieUrl, setSelfieUrl] = useState('')
+  const [organizerCapability, setOrganizerCapability] = useState<{ huntId: string; allowed: boolean }>({ huntId: '', allowed: false })
 
   const flushPhotoCleanup = useCallback(async () => {
     if (!supabase || !context || typeof window === 'undefined') return
@@ -80,6 +81,14 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   // Initial load synchronizes this screen with the authoritative participant session.
   // eslint-disable-next-line react/set-state-in-effect
   useEffect(() => { void loadContext() }, [loadContext])
+  useEffect(() => {
+    let cancelled = false
+    if (!supabase || session.user.is_anonymous) return () => { cancelled = true }
+    void supabase.rpc('is_hunt_organizer', { p_hunt_id: huntId }).then(({ data }) => {
+      if (!cancelled) setOrganizerCapability({ huntId, allowed: data === true })
+    })
+    return () => { cancelled = true }
+  }, [huntId, session.user.id, session.user.is_anonymous])
   useEffect(() => {
     const reconcile = () => { if (document.visibilityState === 'visible') void loadContext() }
     document.addEventListener('visibilitychange', reconcile)
@@ -123,6 +132,8 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     if (serverNow < new Date(context.start_at).getTime()) return 'waiting'
     return 'active'
   }, [serverNow, context])
+
+  const canManageCurrentHunt = organizerCapability.huntId === huntId && organizerCapability.allowed
 
   useEffect(() => {
     if (!supabase || !context || !['active', 'review', 'completed'].includes(runtimeState)) return
@@ -289,7 +300,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   }
 
   return <main className={`participant-shell game-shell ${!context?.start_at && runtimeState === 'waiting' ? 'manual-start-lobby' : ''}`}>
-    <header className="participant-topbar"><a className="brand" href="#"><span className="brand-icon"><Camera size={19}/></span> SnapQuest</a><span className="nav-note"><ShieldCheck size={15}/> {context ? context.team.name : 'Participant space'} {!session.user.is_anonymous && <a className="outline-button" href={`#/manage/${huntId}`}><Settings2 size={14}/> Organizer menu</a>}</span></header>
+    <header className="participant-topbar"><a className="brand" href="#"><span className="brand-icon"><Camera size={19}/></span> SnapQuest</a><span className="nav-note"><ShieldCheck size={15}/> {context ? context.team.name : 'Participant space'} {canManageCurrentHunt && <a className="outline-button" href={`#/manage/${huntId}`}><Settings2 size={14}/> Organizer menu</a>}</span></header>
     {loading ? <div className="participant-loading"><LoaderCircle className="spin" size={24}/> Loading your hunt…</div> : error && !context ? <section className="participant-message"><CircleHelp size={24}/><h1>We couldn’t open this hunt</h1><p>{error}</p><button className="outline-button" onClick={() => { setLoading(true); setError(''); void loadContext() }}>Try again</button></section> : context ? <>
       <section className="participant-game-heading"><div><div className="eyebrow"><MapPin size={14}/> {context.venue}</div><h1>{context.title}</h1><p>You’re playing as <b>{context.participant.display_name}</b> on <span className="team-name-pill" style={{color:context.team.display_color}}>{context.team.name}</span></p></div>{runtimeState === 'active' && <div className="game-clock"><Clock3 size={19}/><span>{clockLabel(remainingSeconds)}</span><small>TIME LEFT</small></div>}</section>
       {runtimeState === 'active' && <section className="participant-live-status" aria-label="Live hunt progress"><div className="live-time-progress"><div className="live-status-heading"><b>Time remaining</b><span>{clockLabel(remainingSeconds)}</span></div><div className="live-progress-track" role="progressbar" aria-label="Time remaining" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, Math.min(100, remainingSeconds / (context.duration_minutes * 60) * 100)))}><span className="live-time-fill" style={{width: `${Math.max(0, Math.min(100, remainingSeconds / (context.duration_minutes * 60) * 100))}%`}}/></div></div>{teamProgress.length > 0 && <div className="live-team-progress"><div className="live-status-heading"><b>Team progress</b><span>Accepted photos</span></div>{teamProgress.map(team => <div className="live-team-row" key={team.team_id}><span className="team-swatch" style={{backgroundColor: team.display_color}}/><b>{team.team_name}</b><span>{team.accepted_count}/{team.total_items}</span><div className="live-progress-track" role="progressbar" aria-label={`${team.team_name} accepted photos`} aria-valuemin={0} aria-valuemax={team.total_items} aria-valuenow={team.accepted_count}><span style={{width: `${team.total_items ? Math.min(100, team.accepted_count / team.total_items * 100) : 0}%`}}/></div></div>)}</div>}</section>}

@@ -16,6 +16,7 @@ type Hunt = { id: string; title: string; venue: string; status: string; created_
 type DraftItem = { key: string; title: string; description: string; pointValue: number; libraryItemId?: string }
 type Team = { id: string; hunt_id: string; name: string; display_color: string; display_order: number; selfieUrl?: string; selfieSubmittedAt?: string }
 type Participant = { id: string; hunt_id: string; team_id: string; display_name: string; joined_at: string }
+type PlayerGame = { hunt_id: string; team_id: string; team_name: string; hunt_title: string }
 type InviteCode = { team_id: string | null; team_name: string; invite_token: string }
 type Page = 'overview' | 'library' | 'hunts' | 'new-hunt' | 'manage-hunt' | 'review-hunt'
 
@@ -83,6 +84,10 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const [inviteCodes, setInviteCodes] = useState<InviteCode[]>([])
   const [managedTeams, setManagedTeams] = useState<Team[]>([])
   const [managedParticipants, setManagedParticipants] = useState<Participant[]>([])
+  const [playerGames, setPlayerGames] = useState<PlayerGame[]>([])
+  const [resumeHuntId, setResumeHuntId] = useState('')
+  const [routeMessage, setRouteMessage] = useState('')
+  const [processedRouteHuntId, setProcessedRouteHuntId] = useState('')
   const [manageSaving, setManageSaving] = useState(false)
   const [manageMessage, setManageMessage] = useState('')
   const [copiedInvite, setCopiedInvite] = useState('')
@@ -102,6 +107,24 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       return
     }
     setOrganizer(profile.data)
+    const memberships = await supabase.from('participants').select('hunt_id,team_id').eq('auth_user_id', session.user.id)
+    if (!memberships.error && memberships.data?.length) {
+      const huntIds = [...new Set(memberships.data.map(row => row.hunt_id))]
+      const teamIds = [...new Set(memberships.data.map(row => row.team_id))]
+      const [playerHunts, playerTeams] = await Promise.all([
+        supabase.from('hunts').select('id,title').in('id', huntIds),
+        supabase.from('teams').select('id,name').in('id', teamIds),
+      ])
+      if (!playerHunts.error && !playerTeams.error) {
+        const huntNames = new Map(playerHunts.data.map(row => [row.id, row.title]))
+        const teamNames = new Map(playerTeams.data.map(row => [row.id, row.name]))
+        setPlayerGames(memberships.data.flatMap(row => {
+          const huntTitle = huntNames.get(row.hunt_id)
+          const teamName = teamNames.get(row.team_id)
+          return huntTitle && teamName ? [{ ...row, hunt_title: huntTitle, team_name: teamName }] : []
+        }))
+      } else setPlayerGames([])
+    } else setPlayerGames([])
     const library = await supabase.from('library_items').select('id,title,description,category,archived,created_at').eq('organizer_id', profile.data.id).order('created_at', { ascending: false })
     if (library.error) setLoadError(library.error.message)
     else setItems(library.data ?? [])
@@ -127,10 +150,20 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   useEffect(() => { void loadWorkspace() }, [loadWorkspace])
 
   useEffect(() => {
-    if (!initialHuntId || managedHunt || loading) return
+    if (!initialHuntId || loading || initialHuntId === processedRouteHuntId) return
     const hunt = hunts.find(row => row.id === initialHuntId)
-    if (hunt) void openManageHunt(hunt)
-  }, [hunts, initialHuntId, loading, managedHunt])
+    // Hash routing arrives from outside React; synchronize the selected workspace once per route.
+    // eslint-disable-next-line react/set-state-in-effect
+    setProcessedRouteHuntId(initialHuntId)
+    if (hunt) {
+      setRouteMessage('')
+      void openManageHunt(hunt)
+    } else {
+      setManagedHunt(null)
+      setPage('overview')
+      setRouteMessage('That hunt is not in your organizer account. Your team membership is unchanged.')
+    }
+  }, [hunts, initialHuntId, loading, processedRouteHuntId])
 
   async function addItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -362,6 +395,9 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const selectableLibraryItems = items.filter(item => !item.archived && !draftItems.some(draft => draft.libraryItemId === item.id))
   const activeCount = items.filter(item => !item.archived).length
   const displayName = session.user.email?.split('@')[0] || 'Organizer'
+  const selectedResumeGame = playerGames.find(game => game.hunt_id === resumeHuntId)
+    ?? playerGames.find(game => game.hunt_id === initialHuntId)
+    ?? playerGames[0]
   const nextHunt = hunts.find(hunt => hunt.status === 'active') ?? hunts.find(hunt => hunt.status === 'scheduled') ?? hunts.find(hunt => ['review', 'ended'].includes(hunt.status)) ?? hunts.find(hunt => hunt.status === 'draft')
 
   return <div className="workspace">
@@ -376,7 +412,8 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       <div className="sidebar-bottom"><span className="sidebar-avatar">{displayName.slice(0, 1).toUpperCase()}</span><span className="sidebar-user"><b>{displayName}</b><small>Organizer account</small></span></div>
     </aside>
     <main className="workspace-main">
-      <header className="workspace-topbar"><div className="breadcrumb">Workspace <span>/</span> {page === 'overview' ? 'Home' : page === 'library' ? 'Challenge library' : page === 'new-hunt' ? 'New hunt' : page === 'manage-hunt' ? 'Hunt lobby' : page === 'review-hunt' ? 'Photo review' : 'My hunts'}</div><div className="topbar-actions">{initialHuntId && <a className="outline-button" href={`#/play/${initialHuntId}`}><Camera size={14}/> Return to team game</a>}<div className="topbar-badge"><ShieldCheck size={15}/> Private organizer space</div></div></header>
+      <header className="workspace-topbar"><div className="breadcrumb">Workspace <span>/</span> {page === 'overview' ? 'Home' : page === 'library' ? 'Challenge library' : page === 'new-hunt' ? 'New hunt' : page === 'manage-hunt' ? 'Hunt lobby' : page === 'review-hunt' ? 'Photo review' : 'My hunts'}</div><div className="topbar-actions">{playerGames.length > 1 && <label className="resume-game-picker"><span className="sr-only">Choose team game</span><select value={selectedResumeGame?.hunt_id ?? ''} onChange={event => setResumeHuntId(event.target.value)}>{playerGames.map(game => <option value={game.hunt_id} key={game.hunt_id}>{game.team_name} · {game.hunt_title}</option>)}</select></label>}{selectedResumeGame && <a className="outline-button" href={`#/play/${selectedResumeGame.hunt_id}`}><Camera size={14}/> Return to {selectedResumeGame.team_name}</a>}<div className="topbar-badge"><ShieldCheck size={15}/> Private organizer space</div></div></header>
+      {routeMessage && <div className="inline-alert" role="status">{routeMessage}</div>}
       {loading ? <div className="workspace-loading">Opening your organizer space…</div> : loadError && !organizer ? <section className="workspace-content"><div className="workspace-alert"><CircleHelp size={19}/><div><b>Organizer access needs attention</b><p>{loadError}</p><button className="outline-button" onClick={() => { setLoading(true); setLoadError(''); void loadWorkspace() }}>Try again</button></div></div></section> : page === 'overview' ? <section className="workspace-content">
         <div className="workspace-greeting"><div><div className="eyebrow"><Sparkles size={14}/> YOUR FAMILY GAME NIGHT</div><h1>Welcome in, {displayName}!</h1><p>Your organizer space is ready. Let’s start gathering the fun.</p></div><div className="greeting-sticker"><Camera size={30}/><span>Let’s play!</span></div></div>
          {loadError && <div className="inline-alert">{loadError}</div>}
