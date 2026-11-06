@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { LoaderCircle, MessageCircle, Send } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { reportOperation } from '../lib/operationLog'
+import { countNewMessages } from '../lib/chatMessages'
 
 type HuntMessage = { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }
 
@@ -15,7 +16,10 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
   const [error, setError] = useState('')
   const [connection, setConnection] = useState<'connecting' | 'live' | 'reconnecting'>('connecting')
   const [atLatest, setAtLatest] = useState(true)
+  const [newMessageCount, setNewMessageCount] = useState(0)
   const messagesRef = useRef<HTMLDivElement>(null)
+  const knownMessageIds = useRef(new Set<string>())
+  const atLatestRef = useRef(true)
   const requestId = useRef(0)
   const preserveScroll = useRef(false)
 
@@ -27,8 +31,15 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
     if (id !== requestId.current) return
     if (loadError) { void reportOperation(huntId, crypto.randomUUID(), 'chat_load_failed', 'failure'); setError('Messages could not be refreshed. Check your connection and retry.'); setLoading(false); setLoadingOlder(false); return }
     const page = Array.isArray(data) ? data as HuntMessage[] : []
-    if (older) setMessages(current => [...page.filter(row => !current.some(existing => existing.id === row.id)), ...current])
-    else setMessages(page)
+    if (older) {
+      for (const message of page) knownMessageIds.current.add(message.id)
+      setMessages(current => [...page.filter(row => !current.some(existing => existing.id === row.id)), ...current])
+    } else {
+      if (atLatestRef.current) setNewMessageCount(0)
+      else setNewMessageCount(current => current + countNewMessages(knownMessageIds.current, page))
+      knownMessageIds.current = new Set(page.map(message => message.id))
+      setMessages(page)
+    }
     setHasOlder(page.length === 100)
     setError(''); setLoading(false); setLoadingOlder(false)
   }, [huntId])
@@ -69,11 +80,11 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
   const oldest = messages[0]?.created_at
   return <section className={`hunt-chat ${compact ? 'hunt-chat-compact' : ''}`} aria-label="Hunt chat">
     <div className="hunt-chat-heading"><div><span className="eyebrow"><MessageCircle size={14}/> HUNT CHAT</span><h2>Keep everyone in the loop</h2></div><span>{connection === 'live' ? 'Live' : connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span></div>
-    <div className="hunt-chat-messages" aria-live="polite" ref={messagesRef} onScroll={event => { const element = event.currentTarget; setAtLatest(element.scrollHeight - element.scrollTop - element.clientHeight < 48) }}>
+    <div className="hunt-chat-messages" aria-live="polite" ref={messagesRef} onScroll={event => { const element = event.currentTarget; const latest = element.scrollHeight - element.scrollTop - element.clientHeight < 48; atLatestRef.current = latest; setAtLatest(latest); if (latest) setNewMessageCount(0) }}>
       {hasOlder && oldest && <button className="outline-button" type="button" disabled={loadingOlder} onClick={() => { preserveScroll.current = true; void loadMessages(oldest, true) }}>{loadingOlder ? 'Loading…' : 'Load older messages'}</button>}
       {loading ? <div className="hunt-chat-empty"><LoaderCircle className="spin" size={17}/> Loading messages…</div> : messages.length ? messages.map(message => <article className={`hunt-chat-message ${message.sender_role === 'organizer' ? 'organizer-message' : ''}`} key={message.id}><div className="hunt-chat-message-meta"><b>{message.sender_name}</b><time dateTime={message.created_at}>{new Date(message.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div><p>{message.body}</p></article>) : <div className="hunt-chat-empty">No messages yet. Say hello to your teams.</div>}
     </div>
-    {!atLatest && <button type="button" className="outline-button" onClick={() => { setAtLatest(true); messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' }) }}>Jump to latest</button>}
+    {!atLatest && <button type="button" className="outline-button" onClick={() => { atLatestRef.current = true; setAtLatest(true); setNewMessageCount(0); messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' }) }}>Jump to latest{newMessageCount > 0 ? ` · ${newMessageCount} new` : ''}</button>}
     {readOnly ? <p className="hunt-chat-empty">This hunt is closed. Messages are available to read.</p> : <form className="hunt-chat-form" onSubmit={send}><input maxLength={500} value={draft} onChange={event => setDraft(event.target.value)} placeholder="Write a message to the hunt…" aria-label="Message"/><button className="primary-button" type="submit" disabled={sending || !draft.trim()}>{sending ? <LoaderCircle className="spin" size={15}/> : <Send size={15}/>}<span className="sr-only">Send message</span></button></form>}
     {error && <p className="hunt-chat-error" role="alert">{error} <button className="outline-button" type="button" onClick={() => void loadMessages()}>Retry</button></p>}
   </section>

@@ -8,8 +8,11 @@ let uploadedPhotoPath = ''
 let photoSubmissionRpcCalls = 0
 let rollbackDeleteRequests = 0
 let organizerReviewMode = false
+let organizerLobbyMode = false
 let organizerReviewStatus: 'review' | 'completed' = 'review'
 let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
+let organizerLobbyStatus: 'scheduled' | 'active' = 'active'
+let organizerMessages: { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }[] = []
 let signedPreviewMode = false
 let signedPreviewRequests = 0
 
@@ -20,8 +23,11 @@ test.beforeEach(async ({ page }) => {
   photoSubmissionRpcCalls = 0
   rollbackDeleteRequests = 0
   organizerReviewMode = false
+  organizerLobbyMode = false
   organizerReviewStatus = 'review'
   organizerReviewDecision = 'pending'
+  organizerLobbyStatus = 'active'
+  organizerMessages = []
   signedPreviewMode = false
   signedPreviewRequests = 0
   await page.route('https://test-project.supabase.co/**', async route => {
@@ -77,8 +83,20 @@ test.beforeEach(async ({ page }) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '11111111-1111-4111-8111-111111111111' }]) })
       return
     }
-    if (organizerReviewMode && request.url().includes('/rest/v1/hunts') && request.url().includes('organizer_id=')) {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', status: organizerReviewStatus, created_at: '2026-11-01T12:00:00Z', start_at: '2026-11-01T17:00:00Z', duration_minutes: 60, team_assignment_mode: 'organizer', voting_enabled: false, voting_bonus_points: 0 }]) })
+    if ((organizerReviewMode || organizerLobbyMode) && request.url().includes('/rest/v1/hunts') && request.url().includes('organizer_id=')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', status: organizerLobbyMode ? organizerLobbyStatus : organizerReviewStatus, created_at: '2026-11-01T12:00:00Z', start_at: '2026-11-01T17:00:00Z', duration_minutes: 60, team_assignment_mode: 'organizer', voting_enabled: false, voting_bonus_points: 0 }]) })
+      return
+    }
+    if (organizerLobbyMode && request.url().includes('/rest/v1/teams') && request.url().includes('select=id%2Chunt_id%2Cname')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '44444444-4444-4444-8444-444444444444', hunt_id: '33333333-3333-4333-8333-333333333333', name: 'Team Cedar', display_color: '#15967a', display_order: 0 }, { id: '55555555-5555-4555-8555-555555555555', hunt_id: '33333333-3333-4333-8333-333333333333', name: 'Team Maple', display_color: '#b68bca', display_order: 1 }]) })
+      return
+    }
+    if (organizerLobbyMode && request.url().includes('/rest/v1/participants') && request.url().includes('select=id%2Chunt_id%2Cteam_id')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '66666666-6666-4666-8666-666666666666', hunt_id: '33333333-3333-4333-8333-333333333333', team_id: '44444444-4444-4444-8444-444444444444', display_name: 'Taylor', joined_at: '2026-11-01T17:00:00Z' }]) })
+      return
+    }
+    if (organizerLobbyMode && request.url().includes('/rest/v1/team_selfies')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
       return
     }
     if (request.url().includes('/rest/v1/participants') && request.url().includes('select=hunt_id%2Cteam_id')) {
@@ -121,6 +139,14 @@ test.beforeEach(async ({ page }) => {
       } else {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: participantRuntimeState, final_scores: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }], teams: [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }], items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions: signedPreviewMode ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', storage_path: 'test/photo.jpg', status: 'approved' }] : [], votes: [] }) })
       }
+      return
+    }
+    if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/get_hunt_invites')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ has_active_invites: true, recoverable: true, invite_codes: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', invite_token: 'a'.repeat(64) }, { team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', invite_token: 'b'.repeat(64) }] }) })
+      return
+    }
+    if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/get_hunt_messages')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(organizerMessages) })
       return
     }
     if (organizerReviewMode && request.url().includes('/rest/v1/rpc/review_submission')) {
@@ -450,6 +476,28 @@ test('restored organizer session opens the production organizer workspace', asyn
   await expect(page.getByRole('heading', { name: 'Create your first hunt' })).toBeVisible()
   const returnToTeam = page.getByRole('link', { name: /Return to Team Cedar/ })
   await expect(returnToTeam).toHaveAttribute('href', '#/play/33333333-3333-4333-8333-333333333333')
+})
+
+test('organizer lobby shows the team roster and unread chat count without moving the scroll', async ({ page }) => {
+  organizerLobbyMode = true
+  const baseTime = Date.now()
+  organizerMessages = Array.from({ length: 15 }, (_, index) => ({ id: `message-${index}`, sender_name: index % 2 ? 'Taylor' : 'Organizer', sender_role: index % 2 ? 'participant' as const : 'organizer' as const, body: `Chat message ${index}`, created_at: new Date(baseTime + index * 1000).toISOString() }))
+  await restoreOrganizerSession(page)
+  await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
+  await expect(page.getByRole('heading', { name: 'Team lobby' })).toBeVisible()
+  await expect(page.locator('.participant-roster').getByText('Taylor')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Keep everyone in the loop' })).toBeVisible()
+  const chatMessages = page.locator('.hunt-chat-messages')
+  await expect(chatMessages.getByText('Chat message 14')).toBeVisible()
+  await chatMessages.evaluate(element => { element.scrollTop = 0; element.dispatchEvent(new Event('scroll')) })
+  await expect.poll(() => chatMessages.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+  organizerMessages.push({ id: 'message-new', sender_name: 'Taylor', sender_role: 'participant', body: 'One more update', created_at: new Date(baseTime + 20_000).toISOString() })
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  const jumpButton = page.getByRole('button', { name: /Jump to latest.*1 new/ })
+  await expect(jumpButton).toBeVisible()
+  expect(await chatMessages.evaluate(element => element.scrollTop)).toBeLessThanOrEqual(1)
+  await jumpButton.click()
+  await expect(page.getByText('One more update')).toBeVisible()
 })
 
 test('organizer workspace fits common phone widths without horizontal scrolling', async ({ page }) => {
