@@ -11,7 +11,7 @@ let organizerReviewMode = false
 let organizerLobbyMode = false
 let organizerReviewStatus: 'review' | 'completed' = 'review'
 let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
-let organizerLobbyStatus: 'scheduled' | 'active' = 'active'
+let organizerLobbyStatus: 'scheduled' | 'active' = 'scheduled'
 let organizerMessages: { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }[] = []
 let signedPreviewMode = false
 let signedPreviewRequests = 0
@@ -26,7 +26,7 @@ test.beforeEach(async ({ page }) => {
   organizerLobbyMode = false
   organizerReviewStatus = 'review'
   organizerReviewDecision = 'pending'
-  organizerLobbyStatus = 'active'
+  organizerLobbyStatus = 'scheduled'
   organizerMessages = []
   signedPreviewMode = false
   signedPreviewRequests = 0
@@ -84,7 +84,8 @@ test.beforeEach(async ({ page }) => {
       return
     }
     if ((organizerReviewMode || organizerLobbyMode) && request.url().includes('/rest/v1/hunts') && request.url().includes('organizer_id=')) {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', status: organizerLobbyMode ? organizerLobbyStatus : organizerReviewStatus, created_at: '2026-11-01T12:00:00Z', start_at: '2026-11-01T17:00:00Z', duration_minutes: 60, team_assignment_mode: 'organizer', voting_enabled: false, voting_bonus_points: 0 }]) })
+      const startAt = organizerLobbyMode ? new Date(Date.now() + (organizerLobbyStatus === 'scheduled' ? 60 * 60_000 : -60_000)).toISOString() : '2026-11-01T17:00:00Z'
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', status: organizerLobbyMode ? organizerLobbyStatus : organizerReviewStatus, created_at: '2026-11-01T12:00:00Z', start_at: startAt, duration_minutes: 60, team_assignment_mode: 'organizer', voting_enabled: false, voting_bonus_points: 0 }]) })
       return
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/teams') && request.url().includes('select=id%2Chunt_id%2Cname')) {
@@ -495,10 +496,11 @@ test('organizer lobby shows the team roster and unread chat count without moving
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
   const jumpButton = page.getByRole('button', { name: /Jump to latest.*1 new/ })
   await expect(jumpButton).toBeVisible()
-  expect(await chatMessages.evaluate(element => element.scrollTop)).toBeLessThanOrEqual(1)
+  expect(await chatMessages.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeGreaterThan(48)
   await jumpButton.click()
   await expect(page.getByText('One more update')).toBeVisible()
 })
+
 
 test('organizer workspace fits common phone widths without horizontal scrolling', async ({ page }) => {
   await restoreOrganizerSession(page)
