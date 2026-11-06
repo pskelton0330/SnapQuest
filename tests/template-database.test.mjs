@@ -7,7 +7,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration
+let migration, managementMigration, auditMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -34,6 +34,7 @@ before(async () => {
     if(file.includes('0012')) { teamIdentityMigration=sql; continue }
     if(file.includes('0013')) { manualStartMigration=sql; continue }
     if(file.includes('0014')) { messageMigration=sql; continue }
+    if(file.includes('0015')) { manualLobbySelfieMigration=sql; continue }
     await db.exec(sql)
   }
   await db.query('insert into auth.users(id) values ($1),($2)',[owner,other])
@@ -52,6 +53,7 @@ before(async () => {
   await db.exec(teamIdentityMigration)
   await db.exec(manualStartMigration)
   await db.exec(messageMigration)
+  await db.exec(manualLobbySelfieMigration)
 })
 after(async()=> { await db?.close() })
 async function snapshot() {
@@ -116,6 +118,10 @@ test('manual-start hunts hold a lobby until the organizer starts the timer',asyn
   const lobby=(await db.query('select status,start_at from public.hunts where id=$1',[id])).rows[0]
   assert.equal(lobby.status,'scheduled'); assert.equal(lobby.start_at,null)
   await as('authenticated',other,"select public.redeem_invitation($1,'Manual player')",[invites[0].invite_token])
+  const manualParticipant=(await db.query('select * from public.participants where hunt_id=$1',[id])).rows[0]
+  const manualSelfiePath=`${id}/${manualParticipant.team_id}/selfie/33333333-3333-4333-8333-333333333333.jpg`
+  await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1)",[manualSelfiePath])
+  await as('authenticated',other,'select public.submit_team_selfie($1,$2,$3)',[id,manualParticipant.team_id,manualSelfiePath])
   const before=(await as('authenticated',other,'select public.get_participant_context($1) data',[id])).rows[0].data
   assert.equal(before.runtime_state,'waiting'); assert.equal(before.start_at,null); assert.equal(before.ends_at,null)
   await as('authenticated',owner,'select public.start_game_now($1)',[id])
