@@ -184,7 +184,7 @@ test.beforeEach(async ({ page }) => {
       return
     }
     if (request.url().includes('/rest/v1/rpc/is_hunt_organizer')) {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: 'false' })
+      await route.fulfill({ status: 200, contentType: 'application/json', body: organizerLobbyMode ? 'true' : 'false' })
       return
     }
     if (request.url().includes('/auth/v1/signup')) {
@@ -531,6 +531,36 @@ test('organizer can start a scheduled hunt immediately from its lobby', async ({
   await page.getByRole('button', { name: 'Start hunt now' }).click()
   await expect.poll(() => organizerStartCalls).toBe(1)
   await expect(page.getByRole('button', { name: 'End hunt now and review' })).toBeVisible()
+})
+
+test('organizer can copy a team invitation from the QR code card', async ({ page }) => {
+  organizerLobbyMode = true
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  await page.getByRole('button', { name: 'Open lobby' }).click()
+  const inviteCard = page.locator('.invite-card').first()
+  const invitationLink = inviteCard.locator('input')
+  await expect(invitationLink).toBeVisible()
+  const expectedUrl = await invitationLink.inputValue()
+  await inviteCard.getByRole('button', { name: 'Copy invite link' }).click()
+  await expect(inviteCard.getByRole('button', { name: 'Copied!' })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(expectedUrl)
+})
+
+test('organizer can join an assigned team and return to hunt management', async ({ page }) => {
+  organizerLobbyMode = true
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  await page.getByRole('button', { name: 'Open lobby' }).click()
+  await page.locator('.invite-card').first().getByRole('button', { name: 'Join this team' }).click()
+  await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
+  const organizerMenu = page.getByRole('link', { name: 'Organizer menu' })
+  await expect(organizerMenu).toBeVisible()
+  await organizerMenu.click()
+  await expect(page.getByRole('heading', { name: 'Team lobby' })).toBeVisible()
 })
 
 test('organizer chat pages more than 200 messages with identical timestamps without gaps', async ({ page }) => {
