@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Camera, ChevronRight, Compass, ShieldCheck, Sparkles, Users } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
@@ -23,6 +23,13 @@ function App() {
   const [authReady, setAuthReady] = useState(!supabase)
   const [authError, setAuthError] = useState('')
   const [routeHash, setRouteHash] = useState(window.location.hash)
+  const inviteFieldRef = useRef<HTMLInputElement>(null)
+  const emailFieldRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (homeMode === 'player') inviteFieldRef.current?.focus()
+    if (homeMode === 'organizer') emailFieldRef.current?.focus()
+  }, [homeMode])
 
   useEffect(() => {
     const onHashChange = () => setRouteHash(window.location.hash)
@@ -137,7 +144,7 @@ function App() {
           <p className="home-form-description">Scan your team’s QR code with your phone camera, or paste the invitation link or team code here.</p>
           <form onSubmit={openInvite}>
             <label htmlFor="invite-link">Team invitation</label>
-            <input id="invite-link" type="text" inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} required placeholder="Paste your invite link or code" value={inviteInput} onChange={event => { setInviteInput(event.target.value); setInviteError('') }}/>
+            <input ref={inviteFieldRef} id="invite-link" type="text" inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} required placeholder="Paste your invite link or code" value={inviteInput} onChange={event => { setInviteInput(event.target.value); setInviteError('') }}/>
             {inviteError && <p className="home-form-error" role="alert">{inviteError}</p>}
             <button className="home-form-submit home-form-submit-player" type="submit">Join the hunt <ArrowRight size={17}/></button>
           </form>
@@ -151,7 +158,7 @@ function App() {
           <p className="home-form-description">Sign in to create a hunt and bring your crew together.</p>
           <form onSubmit={signIn}>
             <label htmlFor="email">Email address</label>
-            <input id="email" type="email" autoComplete="email" required placeholder="you@example.com" value={email} onChange={event => setEmail(event.target.value)}/>
+            <input ref={emailFieldRef} id="email" type="email" autoComplete="email" required placeholder="you@example.com" value={email} onChange={event => setEmail(event.target.value)}/>
             <button className="home-form-submit" type="submit" disabled={!isSupabaseConfigured || loading}>{loading ? 'Sending link…' : <>Send me a sign-in link <ArrowRight size={17}/></>}</button>
             {message && <p className="home-form-message" role="status">{message}</p>}
           </form>

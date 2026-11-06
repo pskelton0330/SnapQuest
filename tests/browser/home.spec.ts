@@ -38,6 +38,13 @@ test('organizer login confirms that the email link was requested', async ({ page
   await expect(page.getByRole('status')).toContainText('Check your email')
 })
 
+test('an unavailable saved player session gives a working return-home action', async ({ page }) => {
+  await page.goto('/#/play/123e4567-e89b-12d3-a456-426614174000')
+  await expect(page.getByRole('heading', { name: 'Your saved game session is unavailable' })).toBeVisible()
+  await page.getByRole('link', { name: 'Return home' }).click()
+  await expect(page.getByRole('button', { name: /I.?m a Player/ })).toBeVisible()
+})
+
 test('home fits common phone widths without horizontal page scrolling', async ({ page }) => {
   await page.goto('/#/')
   for (const width of [320, 375, 390]) {
@@ -47,6 +54,25 @@ test('home fits common phone widths without horizontal page scrolling', async ({
     await expect(page.getByRole('button', { name: /I.?m a Player/ })).toBeVisible()
     await expect(page.getByRole('button', { name: /Organizer Login/ })).toBeVisible()
   }
+})
+
+test('home supports keyboard-only entry to the player form', async ({ page }) => {
+  await page.goto('/#/')
+  const playerButton = page.getByRole('button', { name: /I.?m a Player/ })
+  await page.keyboard.press('Tab')
+  await expect(playerButton).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('textbox', { name: 'Team invitation' })).toBeFocused()
+})
+
+test('home stays usable at 200% text size on a narrow viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 })
+  await page.goto('/#/')
+  await page.evaluate(() => { document.documentElement.style.fontSize = '200%' })
+  await expect(page.getByRole('button', { name: /I.?m a Player/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Organizer Login/ })).toBeVisible()
+  const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
+  expect(dimensions.content, 'horizontal overflow at 200% text size').toBeLessThanOrEqual(dimensions.viewport)
 })
 
 test('home has no automated WCAG 2.1 A/AA violations', async ({ page }) => {

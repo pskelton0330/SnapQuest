@@ -10,8 +10,10 @@ This backlog intentionally distinguishes **implementation** from **observed acce
 
 ## Current status
 
-- IMP-01: implementation complete; automated regression passes; publication pending.
-- IMP-02–IMP-24: queued in the order below.
+- IMP-01: complete and live in commit `26375bd`; workflow `42287341216` passed and the served build manifest matched.
+- IMP-02: in progress. Production-build browser coverage is live in commit `7e44fe4`; home, invite validation, organizer email request, and guest recovery currently pass on Chromium desktop and mobile emulation. Expand coverage to authenticated player, organizer, review, and results routes.
+- IMP-03: in progress. Added 320/375/390-pixel layout, 200% text-size, keyboard-entry, and home accessibility checks. Keyboard testing found and fixed missing focus transfer into the player form; broaden checks to game, lobby, review, and results and record manual device/screen-reader observations.
+- IMP-04–IMP-24: queued in the order below.
 - No item is complete until its acceptance evidence and published commit are recorded here.
 
 ## Work order
@@ -20,9 +22,9 @@ This backlog intentionally distinguishes **implementation** from **observed acce
 
 | ID | Priority | Improvement | Completion evidence |
 | --- | --- | --- | --- |
-| IMP-01 | P1 | Let organizers correct approve/reject decisions while review remains open. Preserve the finalized-results lock. | Implemented in HuntReview; PGlite regression confirms decisions can change both ways during review and cannot change after finalization. Awaiting publish verification. |
-| IMP-02 | P1 | Add a production-route browser suite for home, invite entry, guest recovery, organizer entry, player/organizer switching, review, and completed results. Use isolated fixtures or mocked service responses where external services are not needed. | CI runs the browser suite and fails on broken primary journeys; reports screenshots and accessible names for failures. |
-| IMP-03 | P1 | Add responsive layout checks at 320, 375, and 390 CSS pixels, plus 200% text zoom and keyboard-only navigation for home, play, lobby, review, and results. | Automated overflow/touch-target/focus assertions pass; capture a short manual screen-reader and real-device checklist with observed results. |
+| IMP-01 | P1 | Let organizers correct approve/reject decisions while review remains open. Preserve the finalized-results lock. | Shipped in `26375bd`; PGlite regression confirms decisions can change both ways during review and cannot change after finalization. GitHub Actions run `42287341216` passed; live `build-info.json` matched the commit. |
+| IMP-02 | P1 | Add a production-route browser suite for home, invite entry, guest recovery, organizer entry, player/organizer switching, review, and completed results. Use isolated fixtures or mocked service responses where external services are not needed. | In progress: browser suite runs against production preview in CI and covers home, invalid invite, organizer email request, and unavailable-session return home in desktop/mobile Chromium. Authenticated player/organizer switching, review, and completed results remain. |
+| IMP-03 | P1 | Add responsive layout checks at 320, 375, and 390 CSS pixels, plus 200% text zoom and keyboard-only navigation for home, play, lobby, review, and results. | In progress: home phone-width, 200% text-size, keyboard focus, and axe checks pass in desktop/mobile Chromium. Focus transfer into player and organizer forms is implemented. Extend checks to authenticated flows and record manual screen-reader/device results. |
 | IMP-04 | P1 | Exercise photo and selfie upload failure stages: upload denial, RPC rejection, lost response after commit, replacement race, and signed-preview failure. | Fault-injection tests show accepted objects remain; errors name the affected action; operation IDs can trace each simulated path without recording image data or storage URLs. |
 | IMP-05 | P1 | Verify Storage authorization through actual HTTP requests, including pre-start/manual-start upload, cross-team access denial, referenced-object deletion denial, and cleanup of an unreferenced object. | Dedicated test project produces request/response evidence for each policy case; production data is untouched. |
 | IMP-06 | P1 | Run concurrent review/finalize and two-device photo replacement tests against PostgreSQL, where row locking and ordering are real. | Races consistently leave either a mutable review or one immutable final snapshot; stale photo versions cannot replace newer versions. |
