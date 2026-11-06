@@ -260,6 +260,18 @@ test('review writes stop at completion and finalization retries return the store
   assert.equal((await db.query('select approval_status from public.submissions where id=$1', [submissionId])).rows[0].approval_status, original)
 })
 
+test('a hunt with no submissions can be finalized with a complete tied-zero results snapshot', async () => {
+  const startsLater = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  const { huntId } = await createReliabilityHunt('No-submission hunt', startsLater)
+  await as('authenticated', owner, 'select public.start_game_now($1)', [huntId])
+  await as('authenticated', owner, 'select public.end_hunt_early($1)', [huntId])
+  const result = (await as('authenticated', owner, 'select public.finalize_hunt($1) scores', [huntId])).rows[0].scores
+  assert.equal(result.length, 2)
+  assert.deepEqual(result.map(team => team.total), [0, 0])
+  assert.deepEqual(result.map(team => team.rank), [1, 1])
+  assert.equal((await db.query('select status from public.hunts where id=$1', [huntId])).rows[0].status, 'completed')
+})
+
 test('organizers can correct review decisions until finalization, then decisions lock', async () => {
   const startsLater = new Date(Date.now() + 60 * 60 * 1000).toISOString()
   const { huntId, participant } = await createReliabilityHunt('Correctable review', startsLater)

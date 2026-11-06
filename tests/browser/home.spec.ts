@@ -235,6 +235,18 @@ test('active participant game exposes the timer, team progress, and photo list',
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, nodes }) => ({ id, impact, help, targets: nodes.map(node => node.target) })), null, 2)).toEqual([])
 })
 
+test('participant gameplay follows server time when the device clock is years behind', async ({ page }) => {
+  participantRuntimeState = 'active'
+  await page.clock.install({ time: new Date('2000-01-01T00:00:00Z') })
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText('Your photo list')).toBeVisible()
+  await expect(page.getByRole('progressbar', { name: 'Time remaining' })).toBeVisible()
+  await expect(page.getByText('A red leaf')).toBeVisible()
+  await expect(page.getByText('Time’s up!')).toHaveCount(0)
+})
+
 test('photo upload reconciles a committed submission after its RPC response is lost', async ({ page }) => {
   participantRuntimeState = 'active'
   photoFaultMode = 'committed-rpc-response-lost'
