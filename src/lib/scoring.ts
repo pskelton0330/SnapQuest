@@ -4,6 +4,12 @@ export type ScoringSubmission = { teamId: string; itemId: string; approvalStatus
 export type ScoringVote = { itemId: string; votingTeamId: string; selectedTeamId: string }
 export type TeamScore = { teamId: string; teamName: string; basePoints: number; votingBonus: number; total: number; rank: number }
 
+/** Zero-point ties have no winner; all positive teams at rank one share the win. */
+export function winningTeams(scores: TeamScore[]) {
+  if (!scores.length || scores[0].total <= 0) return []
+  return scores.filter(score => score.rank === scores[0].rank)
+}
+
 /** Convert the snake_case vote rows returned by the review RPC at the API boundary. */
 export function normalizeScoringVotes(value: unknown): ScoringVote[] {
   if (!Array.isArray(value)) return []

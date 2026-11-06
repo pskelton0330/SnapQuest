@@ -35,12 +35,23 @@ async function loadImage(url: string) {
   const response = await fetch(url)
   if (!response.ok) throw new Error('The team selfie could not be loaded for the celebration card.')
   const image = new Image()
-  image.src = URL.createObjectURL(await response.blob())
-  await new Promise<void>((resolve, reject) => {
-    image.onload = () => resolve()
-    image.onerror = () => reject(new Error('The team selfie could not be prepared for the celebration card.'))
-  })
-  return image
+  const objectUrl = URL.createObjectURL(await response.blob())
+  try {
+    image.src = objectUrl
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve()
+      image.onerror = () => reject(new Error('The team selfie could not be prepared for the celebration card.'))
+    })
+    return image
+  } finally { URL.revokeObjectURL(objectUrl) }
+}
+
+function fitFontSize(context: CanvasRenderingContext2D, text: string, maxWidth: number, start: number, minimum: number) {
+  for (let size = start; size > minimum; size -= 2) {
+    context.font = `800 ${size}px Arial, sans-serif`
+    if (context.measureText(text).width <= maxWidth) return size
+  }
+  return minimum
 }
 
 export function winnerCaption(input: Pick<CelebrationCardInput, 'title' | 'teamName' | 'score'>) {
@@ -95,7 +106,6 @@ export async function renderWinnerCelebrationCard(input: CelebrationCardInput): 
     try {
       const image = await loadImage(input.selfieUrl)
       drawCover(context, image, photoX, photoY, photoSize, photoSize)
-      URL.revokeObjectURL(image.src)
     } catch {
       context.fillStyle = color
       context.fillRect(photoX, photoY, photoSize, photoSize)
@@ -113,14 +123,17 @@ export async function renderWinnerCelebrationCard(input: CelebrationCardInput): 
   context.font = '120px Arial, sans-serif'
   context.fillText('🏆', CARD_WIDTH / 2, 850)
   context.fillStyle = '#ffffff'
-  context.font = '800 66px Arial, sans-serif'
-  context.fillText(input.teamName, CARD_WIDTH / 2, 935)
+  const nameSize = fitFontSize(context, input.teamName, 880, 66, 30)
+  context.font = `800 ${nameSize}px Arial, sans-serif`
+  context.fillText(input.teamName, CARD_WIDTH / 2, 935, 880)
   context.font = '700 30px Arial, sans-serif'
   context.fillStyle = '#fff8e7'
   context.fillText(`#${input.rank}  ·  ${input.score} POINTS`, CARD_WIDTH / 2, 985)
-  context.font = '500 23px Arial, sans-serif'
+  const caption = input.venue ? `${input.title} · ${input.venue}` : input.title
+  const captionSize = fitFontSize(context, caption, 900, 23, 16)
+  context.font = `500 ${captionSize}px Arial, sans-serif`
   context.fillStyle = '#d7f2e8'
-  context.fillText(input.venue ? `${input.title}  ·  ${input.venue}` : input.title, CARD_WIDTH / 2, 1030)
+  context.fillText(caption, CARD_WIDTH / 2, 1030, 900)
   context.textAlign = 'start'
 
   return await new Promise<Blob>((resolve, reject) => {

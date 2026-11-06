@@ -7,7 +7,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration
+let migration, managementMigration, auditMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -42,6 +42,8 @@ before(async () => {
     if(file.includes('0016')) { reliabilityMigration=sql; continue }
     if(file.includes('0017')) { photoVersionMigration=sql; continue }
     if(file.includes('0018')) { inviteRecoveryMigration=sql; continue }
+    if(file.includes('0020')) { chatRecoveryMigration=sql; continue }
+    if(file.includes('0022')) { inviteClosedMigration=sql; continue }
     await db.exec(sql)
   }
   await db.query('insert into auth.users(id) values ($1),($2)',[owner,other])
@@ -64,6 +66,8 @@ before(async () => {
   await db.exec(reliabilityMigration)
   await db.exec(photoVersionMigration)
   await db.exec(inviteRecoveryMigration)
+  await db.exec(inviteClosedMigration)
+  await db.exec(chatRecoveryMigration)
 })
 after(async()=> { await db?.close() })
 async function snapshot() {
@@ -149,9 +153,24 @@ test('hunt lobby messages are shared by members and closed after review',async()
   assert.equal(participantMessage.sender_role,'participant');
   const messages=(await as('authenticated',other,'select public.get_hunt_messages($1) data',[id])).rows[0].data
   assert.deepEqual(messages.map(message=>message.body),['Welcome team!','Ready to play'])
+  const latest=(await as('authenticated',other,'select public.get_hunt_messages($1,1) data',[id])).rows[0].data
+  assert.equal(latest.length,1); assert.equal(latest[0].body,'Ready to play')
+  const older=(await as('authenticated',other,'select public.get_hunt_messages($1,1,$2::timestamptz) data',[id,latest[0].created_at])).rows[0].data
+  assert.equal(older.length,1); assert.equal(older[0].body,'Welcome team!')
+  for(let index=0;index<7;index++) await as('authenticated',owner,"select public.send_hunt_message($1,'Update')",[id])
+  await assert.rejects(as('authenticated',owner,"select public.send_hunt_message($1,'Rate limit')",[id]),/Wait a minute/)
   await as('authenticated',owner,'select public.start_game_now($1)',[id])
   await as('authenticated',owner,'select public.end_hunt_early($1)',[id])
   await assert.rejects(as('authenticated',other,"select public.send_hunt_message($1,'Too late')",[id]))
+})
+test('owners can revise saved draft snapshots and cannot edit another or published hunt',async()=>{
+  const draft=(await as('authenticated',owner,"select public.create_hunt_draft('Draft title','Old venue',array['Rule'], $1::jsonb,60) id",[JSON.stringify([{title:'Old prompt',pointValue:1}])])).rows[0].id
+  await as('authenticated',owner,"select public.update_hunt_draft($1,'Updated title','New venue',array['New rule'],$2::jsonb,90)",[draft,JSON.stringify([{title:'Updated prompt',description:'Find it',pointValue:7}])])
+  const result=(await db.query('select h.title,h.venue,h.rules,h.duration_minutes,i.title_snapshot,i.description_snapshot,i.point_value from public.hunts h join public.hunt_items i on i.hunt_id=h.id where h.id=$1',[draft])).rows[0]
+  assert.deepEqual(result,{title:'Updated title',venue:'New venue',rules:['New rule'],duration_minutes:90,title_snapshot:'Updated prompt',description_snapshot:'Find it',point_value:7})
+  await assert.rejects(as('authenticated',other,"select public.update_hunt_draft($1,'Nope','Shop',array[]::text[],$2::jsonb,60)",[draft,JSON.stringify([{title:'x'}])]),/Organizer access/)
+  await db.query("update public.hunts set status='scheduled' where id=$1",[draft])
+  await assert.rejects(as('authenticated',owner,"select public.update_hunt_draft($1,'Nope','Shop',array[]::text[],$2::jsonb,60)",[draft,JSON.stringify([{title:'x'}])]),/Only an unpublished draft/)
 })
 test('teams can choose a unique pre-start name and replace one private selfie',async()=>{
   const localTemplate=(await as('authenticated',owner,"select public.save_hunt_template('Identity source','Shop','',array[]::text[],$1::jsonb,60,'personal') id",[JSON.stringify([{title:'Identity item'}])])).rows[0].id
@@ -283,6 +302,10 @@ test('invitation recovery returns encrypted owner-only links and never rotates l
   const refreshed = (await as('authenticated', owner, 'select public.get_hunt_invites($1) data', [huntId])).rows[0].data
   assert.equal(refreshed.recoverable, true)
   assert.deepEqual(refreshed.invite_codes.map(code => code.invite_token), replaced.rows.map(row => row.invite_token))
+  await db.query("update public.hunts set status='completed' where id=$1", [huntId])
+  const closed = (await as('authenticated', owner, 'select public.get_hunt_invites($1) data', [huntId])).rows[0].data
+  assert.equal(closed.has_active_invites, false)
+  assert.deepEqual(closed.invite_codes, [])
 })
 test('organizer creates a public reusable hunt with safe creator attribution',async()=>{
   templateId=(await as('authenticated',owner,"select public.save_hunt_template('Public hunt','Park','Description',array['Be safe'],$1::jsonb) id",[JSON.stringify([{title:'A red item',points:2}])])).rows[0].id

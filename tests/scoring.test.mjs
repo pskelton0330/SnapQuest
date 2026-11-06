@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { calculateTeamScores, normalizeFinalScores, normalizeScoringVotes } from '../src/lib/scoring.ts'
+import { calculateTeamScores, normalizeFinalScores, normalizeScoringVotes, winningTeams } from '../src/lib/scoring.ts'
 
 const teams = [{ id: 'red', name: 'Team Red' }, { id: 'blue', name: 'Team Blue' }, { id: 'gold', name: 'Team Gold' }]
 const items = [{ id: 'one', pointValue: 1 }, { id: 'bonus', pointValue: 5 }]
@@ -37,6 +37,15 @@ test('voting bonuses apply per item, ignore self votes, and pay ties', () => {
 test('no submissions or votes produce a tied zero score', () => {
   const scores = calculateTeamScores(teams, items, [])
   assert.ok(scores.every(score => score.total === 0 && score.rank === 1))
+  assert.deepEqual(winningTeams(scores), [])
+})
+
+test('all positive teams tied at first share the winner result', () => {
+  const scores = calculateTeamScores(teams, items, [
+    { teamId: 'blue', itemId: 'one', approvalStatus: 'approved' },
+    { teamId: 'gold', itemId: 'one', approvalStatus: 'approved' },
+  ])
+  assert.deepEqual(winningTeams(scores).map(team => team.teamId), ['blue','gold'])
 })
 
 test('review RPC snake_case votes normalize before provisional scoring', () => {

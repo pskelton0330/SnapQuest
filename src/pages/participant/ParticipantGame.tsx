@@ -5,6 +5,9 @@ import { supabase } from '../../lib/supabase'
 import { optimizePhoto } from '../../lib/photo'
 import { completePhotoCleanup, pendingPhotoCleanup, queuePhotoCleanup } from '../../lib/photoCleanup'
 import HuntChat from '../../components/HuntChat'
+import { celebrationFilename, renderWinnerCelebrationCard, winnerCaption } from '../../lib/celebrationCard'
+import { normalizeFinalScores } from '../../lib/scoring'
+import { reportOperation } from '../../lib/operationLog'
 
 type ParticipantGameProps = { huntId: string; session: Session }
 type TeamMate = { id: string; display_name: string }
@@ -33,6 +36,8 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({})
   const [submissionRefreshTick, setSubmissionRefreshTick] = useState(0)
   const [reviewGallery, setReviewGallery] = useState<ReviewGallery | null>(null)
+  const [celebrationBusy, setCelebrationBusy] = useState(false)
+  const [celebrationError, setCelebrationError] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [serverNow, setServerNow] = useState(0)
@@ -52,7 +57,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   const currentTeamId = context?.team.id
 
   const flushPhotoCleanup = useCallback(async () => {
-    const teamId = context?.team.id
+    const teamId = currentTeamId
     if (!supabase || !teamId || typeof window === 'undefined') return
     const storage = window.localStorage
     for (const path of pendingPhotoCleanup(storage, huntId, teamId)) {
@@ -179,10 +184,12 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   }, [serverNow, context])
 
   const canManageCurrentHunt = organizerCapability.huntId === huntId && organizerCapability.allowed
+  const participantScores = runtimeState === 'completed' && reviewGallery ? normalizeFinalScores(reviewGallery.final_scores) : []
+  const ownFinalScore = participantScores.find(score => score.teamId === context?.team.id)
 
   useEffect(() => {
-    if (!supabase || !context || !['active', 'review', 'completed'].includes(runtimeState)) return
-    const teamId = context.team.id
+    if (!supabase || !currentTeamId || !['active', 'review', 'completed'].includes(runtimeState)) return
+    const teamId = currentTeamId
     let cancelled = false
     async function loadItems() {
       const [itemResult, submissionResult] = await Promise.all([
@@ -212,6 +219,8 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
 
   useEffect(() => {
     if (!['review','completed'].includes(runtimeState)) return
+    // The gallery is an external query and must be refreshed when review mode begins.
+    // eslint-disable-next-line react/set-state-in-effect
     void loadReviewGallery()
     const refresh = window.setInterval(() => void loadReviewGallery(), 20_000)
     const reconcile = () => { if (document.visibilityState === 'visible') void loadReviewGallery() }
@@ -245,6 +254,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     let uploaded = false
     let committed = false
     let uncertain = false
+    const operationId = crypto.randomUUID()
     try {
       const compressed = await optimizePhoto(file)
       storagePath = `${huntId}/${context.team.id}/selfie/${crypto.randomUUID()}.jpg`
@@ -268,6 +278,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       }
       if (!result) throw new Error('The team selfie save could not be confirmed.')
       committed = true
+      void reportOperation(huntId, operationId, 'selfie_accepted', 'success')
       setContext(current => current ? { ...current, team: { ...current.team, selfie: { storage_path: storagePath, submitted_by: result.submitted_by, submitted_at: result.submitted_at } } } : current)
       if (result.previous_storage_path) {
         const { error: cleanupError } = await supabase.storage.from('hunt-photos').remove([result.previous_storage_path])
@@ -276,11 +287,13 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       try {
         const { data: signed, error: signedError } = await supabase.storage.from('hunt-photos').createSignedUrl(storagePath, 300)
         setSelfieUrl(signed?.signedUrl ?? '')
-        if (signedError || !signed?.signedUrl) setTeamIdentityError('Team selfie saved. Its preview is temporarily unavailable; refresh to try again.')
+        if (signedError || !signed?.signedUrl) { setTeamIdentityError('Team selfie saved. Its preview is temporarily unavailable; refresh to try again.'); void reportOperation(huntId, operationId, 'selfie_preview_unavailable') }
       } catch {
         setTeamIdentityError('Team selfie saved. Its preview is temporarily unavailable; refresh to try again.')
+        void reportOperation(huntId, operationId, 'selfie_preview_unavailable')
       }
     } catch (uploadError) {
+      void reportOperation(huntId, operationId, uncertain ? 'selfie_reconciliation_uncertain' : uploaded ? 'selfie_acceptance_failed' : 'selfie_upload_failed', 'failure')
       if (uploaded && !committed && !uncertain) {
         const { error: cleanupError } = await supabase.storage.from('hunt-photos').remove([storagePath])
         if (cleanupError && typeof window !== 'undefined') queuePhotoCleanup(window.localStorage, huntId, context.team.id, storagePath)
@@ -296,6 +309,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     let storagePath = ''
     let accepted = false
     let uncertain = false
+    const operationId = crypto.randomUUID()
     try {
       const compressed = await optimizePhoto(file)
       storagePath = `${huntId}/${context.team.id}/${item.id}/${crypto.randomUUID()}.jpg`
@@ -349,6 +363,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       }
       if (!result) throw new Error('The photo submission could not be confirmed.')
       accepted = true
+      void reportOperation(huntId, operationId, 'photo_accepted', 'success')
       if (result.previous_storage_path) {
         const { error: cleanupError } = await supabase.storage.from('hunt-photos').remove([result.previous_storage_path])
         if (cleanupError && typeof window !== 'undefined') queuePhotoCleanup(window.localStorage, huntId, context.team.id, result.previous_storage_path)
@@ -366,8 +381,9 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
         participant_id: reconciledRow?.participant_id ?? context.participant.id, storage_path: displayPath, submitted_at: result.submitted_at,
         approval_status: reconciledRow?.approval_status ?? 'pending', photoUrl: previewUrl,
       } }))
-      if (previewUnavailable) setUploadErrors(current => ({ ...current, [item.id]: 'Submitted successfully, but the preview could not load yet.' }))
+      if (previewUnavailable) { setUploadErrors(current => ({ ...current, [item.id]: 'Submitted successfully, but the preview could not load yet.' })); void reportOperation(huntId, operationId, 'photo_preview_unavailable') }
     } catch (uploadError) {
+      void reportOperation(huntId, operationId, uncertain ? 'photo_reconciliation_uncertain' : storagePath ? 'photo_acceptance_failed' : 'photo_upload_failed', 'failure')
       if (storagePath && !accepted && !uncertain) await supabase.storage.from('hunt-photos').remove([storagePath])
       const detail = uploadError instanceof Error ? uploadError.message : 'The photo could not be submitted.'
       setUploadErrors(current => ({ ...current, [item.id]: detail }))
@@ -378,8 +394,36 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     if (!supabase) return
     setError('')
     const { error: voteError } = await supabase.rpc('cast_hunt_vote', { p_hunt_id: huntId, p_hunt_item_id: itemId, p_selected_team_id: selectedTeamId })
-    if (voteError) setError(voteError.message)
+    if (voteError) { setError(voteError.message); void reportOperation(huntId, crypto.randomUUID(), 'vote_failed', 'failure') }
     else await loadReviewGallery()
+  }
+
+  async function buildTeamCard() {
+    if (!context || !ownFinalScore || ownFinalScore.total <= 0 || ownFinalScore.rank !== 1) return null
+    return renderWinnerCelebrationCard({ title: context.title, venue: context.venue, teamName: context.team.name, teamColor: context.team.display_color, score: ownFinalScore.total, rank: ownFinalScore.rank, selfieUrl: selfieUrl || undefined })
+  }
+
+  async function shareTeamCard() {
+    if (!context || !ownFinalScore) return
+    setCelebrationBusy(true); setCelebrationError('')
+    try {
+      const blob = await buildTeamCard()
+      if (!blob) return
+      const file = new File([blob], celebrationFilename(context.team.name), { type: 'image/png' })
+      if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] })) ) await navigator.share({ title: `${context.team.name} won ${context.title}`, text: winnerCaption({ title: context.title, teamName: context.team.name, score: ownFinalScore.total }), files: [file] })
+      else { const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = file.name; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000) }
+    } catch (shareError) {
+      if (shareError instanceof DOMException && shareError.name === 'AbortError') return
+      setCelebrationError(shareError instanceof Error ? shareError.message : 'The team card could not be shared.')
+    } finally { setCelebrationBusy(false) }
+  }
+
+  async function downloadTeamCard() {
+    if (!context) return
+    setCelebrationBusy(true); setCelebrationError('')
+    try { const blob = await buildTeamCard(); if (blob) { const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = celebrationFilename(context.team.name); link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000) } }
+    catch (cardError) { setCelebrationError(cardError instanceof Error ? cardError.message : 'The team card could not be downloaded.') }
+    finally { setCelebrationBusy(false) }
   }
 
   return <main className={`participant-shell game-shell ${!context?.start_at && runtimeState === 'waiting' ? 'manual-start-lobby' : ''}`}>
@@ -389,9 +433,13 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       {runtimeState === 'active' && <section className="participant-live-status" aria-label="Live hunt progress"><div className="live-time-progress"><div className="live-status-heading"><b>Time remaining</b><span>{clockLabel(remainingSeconds)}</span></div><div className="live-progress-track" role="progressbar" aria-label="Time remaining" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, Math.min(100, remainingSeconds / (context.duration_minutes * 60) * 100)))}><span className="live-time-fill" style={{width: `${Math.max(0, Math.min(100, remainingSeconds / (context.duration_minutes * 60) * 100))}%`}}/></div></div>{teamProgress.length > 0 && <div className="live-team-progress"><div className="live-status-heading"><b>Team progress</b><span>Accepted photos</span></div>{teamProgress.map(team => <div className="live-team-row" key={team.team_id}><span className="team-swatch" style={{backgroundColor: team.display_color}}/><b>{team.team_name}</b><span>{team.accepted_count}/{team.total_items}</span><div className="live-progress-track" role="progressbar" aria-label={`${team.team_name} accepted photos`} aria-valuemin={0} aria-valuemax={team.total_items} aria-valuenow={team.accepted_count}><span style={{width: `${team.total_items ? Math.min(100, team.accepted_count / team.total_items * 100) : 0}%`}}/></div></div>)}</div>}</section>}
       {error && <div className="participant-error game-error"><CircleHelp size={15}/>{error}{['review','completed'].includes(runtimeState) && <button className="outline-button" onClick={() => void loadReviewGallery()}>Retry gallery</button>}</div>}
       {runtimeState === 'waiting' && context.team.selfie && selfiePreviewUnavailable && <div className="participant-error" role="status">Team selfie saved, but its preview is unavailable. <button className="outline-button" onClick={() => setSelfiePreviewRetry(value => value + 1)}>Retry preview</button></div>}
-      {['waiting','active'].includes(runtimeState) && <HuntChat huntId={huntId} />}
+      {runtimeState === 'waiting' && !context.start_at && <div className="manual-start-message" role="status"><Clock3 size={18}/><span><b>Waiting for the organizer</b><small>Your team is checked in. The hunt begins when the organizer starts the timer.</small></span></div>}
       {runtimeState === 'waiting' ? <section className="waiting-card"><span className="waiting-icon"><Clock3 size={26}/></span><p className="card-kicker">GET READY, {context.team.name.toUpperCase()}</p><h2>The hunt starts in</h2><div className="waiting-countdown">{clockLabel(untilStart)}</div><p className="waiting-copy">Your photo list will appear when the countdown reaches zero. Stay with your team and get ready to explore <b>{context.venue}</b>.</p><div className="teammate-panel"><div><Users size={17}/><b>{context.team.name}</b><span>{context.teammates.length} {context.teammates.length === 1 ? 'player' : 'players'}</span></div><ul>{context.teammates.map(person => <li key={person.id}><span className="participant-avatar">{person.display_name.slice(0,1).toUpperCase()}</span>{person.display_name}</li>)}</ul></div><section className="team-identity-panel" aria-label="Team identity"><b>Make your team yours</b><p>Choose a team name and add one private team selfie before the hunt starts.</p><form onSubmit={event => void saveTeamName(event)}><label>Team name<input maxLength={40} value={teamNameDraft} onChange={event => { setTeamNameDirty(true); setTeamNameDraft(event.target.value) }}/></label><button className="outline-button" disabled={teamIdentityBusy || !teamNameDraft.trim()}>Save name</button></form>{selfieUrl && <img className="team-selfie-preview" src={selfieUrl} alt={`${context.team.name} team selfie`}/>}<label className={`photo-upload-button ${teamIdentityBusy ? 'uploading' : ''}`}><input type="file" accept="image/*" capture="environment" disabled={teamIdentityBusy} onChange={event => { const file = event.currentTarget.files?.[0]; void submitTeamSelfie(file); event.currentTarget.value = '' }}/>{teamIdentityBusy ? <><LoaderCircle className="spin" size={16}/> Saving team identity…</> : <><Camera size={16}/> {selfieUrl ? 'Replace team selfie' : 'Add team selfie'}</>}</label>{teamIdentityError && <p className="photo-upload-error" role="alert">{teamIdentityError}</p>}</section>{context.rules?.length > 0 && <div className="waiting-rules"><b>Remember</b>{context.rules.map(rule => <span key={rule}><Check size={14}/>{rule}</span>)}</div>}</section> : runtimeState === 'active' ? <section className="active-game-content">{teamProgress.length > 0 && <section className="team-progress-panel" aria-label="All team photo progress"><div className="active-game-intro"><div><b>Team progress</b><p>Accepted photo slots · team photos remain private.</p></div></div><div className="team-progress-list">{teamProgress.map(team => <div className="team-progress-row" key={team.team_id}><div className="team-progress-label"><span className="team-swatch" style={{backgroundColor: team.display_color}}/><b>{team.team_name}</b><span>{team.accepted_count}/{team.total_items}</span></div><div className="team-progress-track" role="progressbar" aria-label={`${team.team_name} photo progress`} aria-valuemin={0} aria-valuemax={team.total_items} aria-valuenow={team.accepted_count}><span style={{width: `${team.total_items ? Math.min(100, team.accepted_count / team.total_items * 100) : 0}%`}}/></div></div>)}</div></section>}<div className="active-game-intro"><div><b>Your photo list</b><p>Find each item and take a photo with your team.</p></div><span>{Object.keys(submissions).length}/{items.length} complete</span></div>{items.length ? <div className="participant-item-list">{items.map((item,index) => { const submission = submissions[item.id]; return <article className={`participant-item-card ${submission ? 'has-submission' : ''}`} key={item.id}><span className="participant-item-number">{index+1}</span><div className="participant-item-detail"><h2>{item.title_snapshot}</h2>{item.description_snapshot && <p>{item.description_snapshot}</p>}<small><Trophy size={12}/> {item.point_value} {item.point_value === 1 ? 'point' : 'points'}</small>{submission?.photoUrl && <img className="submission-preview" src={submission.photoUrl} alt={`Team photo for ${item.title_snapshot}`}/>}<div className="photo-submission-status">{submission ? <><Check size={13}/> Photo submitted · {submission.approval_status === 'pending' ? 'awaiting review' : submission.approval_status}</> : <><ImageIcon size={13}/> No photo yet</>}</div>{uploadErrors[item.id] && <p className="photo-upload-error" role="status">{uploadErrors[item.id]}</p>}<label className={`photo-upload-button ${uploading[item.id] ? 'uploading' : ''}`}><input type="file" accept="image/*" capture="environment" disabled={uploading[item.id] || remainingSeconds <= 0} onChange={event => { const file = event.currentTarget.files?.[0]; void submitPhoto(item,file); event.currentTarget.value = '' }}/>{uploading[item.id] ? <><LoaderCircle className="spin" size={16}/> Preparing photo…</> : submission ? <><RefreshCw size={15}/> Replace photo</> : <><Camera size={16}/> Take or choose photo</>}</label></div></article>})}</div> : <div className="waiting-card"><LoaderCircle className="spin" size={22}/> Loading the photo list…</div>}<p className="photo-next-note"><ShieldCheck size={14}/> Photos are private to your team until the hunt ends. Stay together and within the venue.</p></section> : <section className="waiting-card ended-card"><span className="waiting-icon"><Check size={26}/></span><p className="card-kicker">NICE WORK, {context.team.name.toUpperCase()}</p><h2>{runtimeState === 'completed' ? 'The results are in!' : runtimeState === 'review' ? 'Photo review time!' : 'Time’s up!'}</h2><p className="waiting-copy">The hunt has ended. Your team’s photos are ready for the organizer to review.</p><div className="teammate-panel"><div><Users size={17}/><b>{context.team.name}</b><span>{context.teammates.length} {context.teammates.length === 1 ? 'player' : 'players'}</span></div><ul>{context.teammates.map(person => <li key={person.id}><span className="participant-avatar">{person.display_name.slice(0,1).toUpperCase()}</span>{person.display_name}</li>)}</ul></div></section>}
       {['review','completed'].includes(runtimeState) && reviewGallery && <section className="participant-gallery"><div className="active-game-intro"><div><b>{runtimeState === 'completed' ? 'Final results' : 'Team photo gallery'}</b><p>{runtimeState === 'completed' ? 'See how every team placed.' : reviewGallery.voting_enabled ? `Vote for a different team’s photo. A winning vote earns ${reviewGallery.voting_bonus_points} bonus points.` : 'The organizer is reviewing all team photos.'}</p></div></div>{runtimeState === 'completed' && <div className="scoreboard participant-scoreboard">{reviewGallery.final_scores.map(score => <div className="score-row" key={score.team_id}><b>#{score.rank} {score.team_name}</b><span>{score.base_points} points{score.voting_bonus ? ` + ${score.voting_bonus} voting bonus` : ''}</span><strong>{score.total}</strong></div>)}</div>}<div className="review-item-list">{reviewGallery.items.map(item => <section className="review-item" key={item.id}><header><div><span>CHALLENGE</span><h2>{item.title}</h2></div><b>{item.points} pts</b></header><div className="review-photos">{reviewGallery.teams.map(team => { const photo = reviewGallery.submissions.find(row => row.item_id === item.id && row.team_id === team.id); const selected = reviewGallery.votes.find(row => row.item_id === item.id && row.voting_team_id === context.team.id)?.selected_team_id; return <article className="review-photo-card" key={team.id}><div className="review-photo-team"><span className="team-swatch" style={{backgroundColor:team.display_color}}/><b>{team.name}</b></div>{photo?.photo_url ? <img src={photo.photo_url} alt={`${team.name} photo for ${item.title}`}/> : <div className="review-photo-empty">No approved photo</div>}{photo?.status === 'approved' && reviewGallery.status === 'review' && reviewGallery.voting_enabled && team.id !== context.team.id && <button className={`vote-button ${selected === team.id ? 'voted' : ''}`} onClick={() => void vote(item.id,team.id)}>{selected === team.id ? 'Your vote' : 'Vote for this photo'}</button>}{photo?.status === 'approved' && runtimeState === 'completed' && <span className="review-status status-approved"><Check size={13}/> Approved</span>}</article>})}</div></section>)}</div></section>}
+      {runtimeState === 'completed' && ownFinalScore && ownFinalScore.rank === 1 && ownFinalScore.total > 0 && <section className="celebration-card-panel"><div className="eyebrow"><Trophy size={14}/> {participantScores.filter(score => score.rank === 1 && score.total > 0).length > 1 ? 'TIED WINNER' : 'YOUR TEAM WON'}</div><h2>Share your team’s result</h2><p>{context.team.name} finished with {ownFinalScore.total} points. Make a celebration card with your team photo.</p><div className="celebration-card-actions"><button className="primary-button" disabled={celebrationBusy} onClick={() => void shareTeamCard()}><Users size={15}/> Share team card</button><button className="outline-button" disabled={celebrationBusy} onClick={() => void downloadTeamCard()}><ImageIcon size={15}/> Download card</button></div>{celebrationError && <p className="photo-upload-error" role="alert">{celebrationError}</p>}</section>}
+      {runtimeState === 'completed' && ownFinalScore && ownFinalScore.rank !== 1 && <div className="locked-note"><Trophy size={15}/> {context.team.name} finished #{ownFinalScore.rank}. Thanks for playing!</div>}
+      {runtimeState === 'completed' && ownFinalScore && ownFinalScore.total === 0 && <div className="locked-note"><Trophy size={15}/> No team scored points this hunt. Thanks for being part of the game!</div>}
+      {['waiting','active'].includes(runtimeState) && <HuntChat huntId={huntId} compact />}
       <footer className="participant-footer">SnapQuest <i>•</i> {session.user.is_anonymous ? 'Your participant session is saved on this device.' : 'Welcome to the hunt.'}</footer>
     </> : null}
   </main>

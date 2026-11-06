@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, Check, CircleHelp, Clock3, Download, LoaderCircle, Medal, Share2, Trophy, X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
-import { calculateTeamScores, normalizeFinalScores, normalizeScoringVotes, type ScoringSubmission } from '../../lib/scoring'
+import { calculateTeamScores, normalizeFinalScores, normalizeScoringVotes, winningTeams as findWinningTeams, type ScoringSubmission } from '../../lib/scoring'
 import { celebrationFilename, renderWinnerCelebrationCard, winnerCaption } from '../../lib/celebrationCard'
+import { reportOperation } from '../../lib/operationLog'
 
 type HuntReviewProps = { huntId: string; title: string; status: string; onBack: () => void; onChanged: () => void }
 type ReviewData = {
@@ -23,21 +24,28 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
   const [celebrationBusy, setCelebrationBusy] = useState(false)
   const [celebrationError, setCelebrationError] = useState('')
   const [celebrationPreviewUrl, setCelebrationPreviewUrl] = useState('')
+  const [celebrationTeamId, setCelebrationTeamId] = useState('')
+  const galleryRequestId = useRef(0)
+  const signedUrlCache = useRef(new Map<string, { url: string; expiresAt: number }>())
 
   const load = useCallback(async () => {
     if (!supabase) return
+    const requestId = ++galleryRequestId.current
     const { data: raw, error: loadError } = await supabase.rpc('get_hunt_review_gallery', { p_hunt_id: huntId })
-    if (loadError) { setError(loadError.message); return }
+    if (loadError) { if (requestId === galleryRequestId.current) setError(loadError.message); return }
     const next = raw as Omit<ReviewData, 'submissions'> & { submissions: ReviewData['submissions'] }
-    const photos = await Promise.all(next.submissions.map(async row => {
-      const { data: signed } = await supabase!.storage.from('hunt-photos').createSignedUrl(row.storage_path, 300)
-      return { ...row, photo_url: signed?.signedUrl }
-    }))
+    async function signedUrl(path: string) {
+      const cached = signedUrlCache.current.get(path)
+      if (cached && cached.expiresAt > Date.now() + 30_000) return cached.url
+      const { data: signed } = await supabase!.storage.from('hunt-photos').createSignedUrl(path, 300)
+      if (signed?.signedUrl) signedUrlCache.current.set(path, { url: signed.signedUrl, expiresAt: Date.now() + 270_000 })
+      return signed?.signedUrl
+    }
+    const photos = await Promise.all(next.submissions.map(async row => ({ ...row, photo_url: await signedUrl(row.storage_path) })))
+    if (requestId !== galleryRequestId.current) return
     const { data: selfies } = await supabase.from('team_selfies').select('team_id,storage_path').eq('hunt_id', huntId)
-    const teamSelfies = await Promise.all((selfies ?? []).map(async row => {
-      const { data: signed } = await supabase!.storage.from('hunt-photos').createSignedUrl(row.storage_path, 300)
-      return { ...row, photo_url: signed?.signedUrl }
-    }))
+    const teamSelfies = await Promise.all((selfies ?? []).map(async row => ({ ...row, photo_url: await signedUrl(row.storage_path) })))
+    if (requestId !== galleryRequestId.current) return
     setData({ ...next, submissions: photos, team_selfies: teamSelfies })
     setError('')
   }, [huntId])
@@ -45,31 +53,41 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
   // Initializing the review screen from its database-backed source is intentional.
   // eslint-disable-next-line react/set-state-in-effect
   useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    const requestCounter = galleryRequestId
+    const refresh = window.setInterval(() => { if (document.visibilityState === 'visible') void load() }, 20_000)
+    const reconcile = () => { if (document.visibilityState === 'visible') void load() }
+    window.addEventListener('focus', reconcile); window.addEventListener('online', reconcile)
+    return () => { ++requestCounter.current; window.clearInterval(refresh); window.removeEventListener('focus', reconcile); window.removeEventListener('online', reconcile) }
+  }, [load])
 
   async function decide(id: string, decision: 'approved' | 'rejected') {
     if (!supabase) return
+    const operationId = crypto.randomUUID()
     setBusy(id); setError('')
     const { error: actionError } = await supabase.rpc('review_submission', { p_submission_id: id, p_decision: decision })
-    if (actionError) setError(actionError.message)
-    else { await load(); onChanged() }
+    if (actionError) { setError(actionError.message); void reportOperation(huntId, operationId, 'review_decision_failed', 'failure') }
+    else { void reportOperation(huntId, operationId, `review_${decision}_confirmed`, 'success'); await load(); onChanged() }
     setBusy('')
   }
 
   async function startReview() {
     if (!supabase) return
+    const operationId = crypto.randomUUID()
     setBusy('review'); setError('')
     const { error: actionError } = await supabase.rpc('begin_hunt_review', { p_hunt_id: huntId })
-    if (actionError) setError(actionError.message)
-    else { await load(); onChanged() }
+    if (actionError) { setError(actionError.message); void reportOperation(huntId, operationId, 'begin_review_failed', 'failure') }
+    else { void reportOperation(huntId, operationId, 'review_opened', 'success'); await load(); onChanged() }
     setBusy('')
   }
 
   async function finalize() {
     if (!supabase) return
+    const operationId = crypto.randomUUID()
     setBusy('finalize'); setError('')
     const { error: actionError } = await supabase.rpc('finalize_hunt', { p_hunt_id: huntId })
-    if (actionError) setError(actionError.message)
-    else { setConfirmFinalize(false); await load(); onChanged() }
+    if (actionError) { setError(actionError.message); void reportOperation(huntId, operationId, 'finalization_failed', 'failure') }
+    else { void reportOperation(huntId, operationId, 'finalization_confirmed', 'success'); setConfirmFinalize(false); await load(); onChanged() }
     setBusy('')
   }
 
@@ -88,18 +106,20 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
   const reviewStarted = ['review', 'completed'].includes(data?.status ?? '')
   const canBeginReview = Boolean(data?.can_begin_review)
   const ended = ['ended', 'review', 'completed'].includes(status) || reviewStarted || canBeginReview
-  const winner = scores[0]
+  const winningTeams = findWinningTeams(scores)
+  const winner = winningTeams.find(score => score.teamId === celebrationTeamId) ?? winningTeams[0]
 
   useEffect(() => {
     // The card is an external canvas/blob resource; its preview state belongs in this effect.
     // eslint-disable-next-line react/set-state-in-effect
     if (!data || data.status !== 'completed' || !winner) { setCelebrationPreviewUrl(''); return }
     let cancelled = false
+    let objectUrl = ''
     const selfie = data.team_selfies.find(row => row.team_id === winner.teamId)
     void renderWinnerCelebrationCard({ title, teamName: winner.teamName, teamColor: data.teams.find(team => team.id === winner.teamId)?.display_color ?? '#ef766f', score: winner.total, rank: winner.rank, selfieUrl: selfie?.photo_url }).then(blob => {
-      if (!cancelled) setCelebrationPreviewUrl(URL.createObjectURL(blob))
+      if (!cancelled) { objectUrl = URL.createObjectURL(blob); setCelebrationPreviewUrl(objectUrl) }
     }).catch(() => { if (!cancelled) setCelebrationPreviewUrl('') })
-    return () => { cancelled = true }
+    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, title, winner?.teamId, winner?.teamName, winner?.total, winner?.rank])
 
@@ -124,10 +144,10 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
       if (!blob) return
       const file = new File([blob], celebrationFilename(winner.teamName), { type: 'image/png' })
       if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
-        await navigator.share({ title: `${winner.teamName} won ${title}`, text: winnerCaption({ title, teamName: winner.teamName, score: winner.total }), files: [file] })
+        await navigator.share({ title: `${winner.teamName} ${winningTeams.length > 1 ? 'tied for first in' : 'won'} ${title}`, text: winningTeams.length > 1 ? `${winner.teamName} tied for first in ${title} with ${winner.total} points! #SnapQuest` : winnerCaption({ title, teamName: winner.teamName, score: winner.total }), files: [file] })
       } else {
         const url = URL.createObjectURL(blob)
-        const link = document.createElement('a'); link.href = url; link.download = file.name; link.click(); URL.revokeObjectURL(url)
+        const link = document.createElement('a'); link.href = url; link.download = file.name; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000)
       }
     } catch (cardError) {
       if (cardError instanceof DOMException && cardError.name === 'AbortError') return
@@ -171,7 +191,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
           {confirmFinalize ? <><button className="outline-button" onClick={() => setConfirmFinalize(false)}>Cancel</button><button className="primary-button" disabled={!!pendingCount || busy === 'finalize'} onClick={() => void finalize()}>{busy === 'finalize' ? 'Finalizing…' : 'Confirm final results'}</button></> : <button className="primary-button" disabled={!!pendingCount} onClick={() => setConfirmFinalize(true)}>Finalize results</button>}
         </div>
       ) : null}
-      {data.status === 'completed' && winner && <section className="celebration-card-panel"><div className="eyebrow"><Trophy size={14}/> WINNER CELEBRATION</div><h2>Make the win shareable</h2>{celebrationPreviewUrl && <img className="celebration-card-preview" src={celebrationPreviewUrl} alt={`Winner celebration card for ${winner.teamName}`}/>}<p>Create a branded winner card using {winner.teamName}’s team selfie. If no selfie was submitted, the card uses the team color as a placeholder.</p><div className="celebration-card-actions"><button className="primary-button" disabled={celebrationBusy} onClick={() => void shareCelebrationCard()}><Share2 size={15}/> {celebrationBusy ? 'Preparing card…' : 'Share winner card'}</button><button className="outline-button" disabled={celebrationBusy} onClick={() => void downloadCelebrationCard()}><Download size={15}/> Download card</button></div>{celebrationError && <p className="photo-upload-error" role="alert">{celebrationError}</p>}<small className="celebration-card-note">The image is created in this browser and is not uploaded to SnapQuest.</small></section>}
+      {data.status === 'completed' && (winner ? <section className="celebration-card-panel"><div className="eyebrow"><Trophy size={14}/> {winningTeams.length > 1 ? 'TIED WINNERS' : 'WINNER CELEBRATION'}</div><h2>{winningTeams.length > 1 ? `${winningTeams.length} teams share first place` : 'Make the win shareable'}</h2>{winningTeams.length > 1 && <label>Choose a team card<select value={winner.teamId} onChange={event => setCelebrationTeamId(event.target.value)}>{winningTeams.map(team => <option key={team.teamId} value={team.teamId}>{team.teamName}</option>)}</select></label>}{celebrationPreviewUrl && <img className="celebration-card-preview" src={celebrationPreviewUrl} alt={`Winner celebration card for ${winner.teamName}`}/>}<p>Create a branded winner card using {winner.teamName}’s team selfie. If no selfie was submitted, the card uses the team color as a placeholder.</p><div className="celebration-card-actions"><button className="primary-button" disabled={celebrationBusy} onClick={() => void shareCelebrationCard()}><Share2 size={15}/> {celebrationBusy ? 'Preparing card…' : 'Share winner card'}</button><button className="outline-button" disabled={celebrationBusy} onClick={() => void downloadCelebrationCard()}><Download size={15}/> Download card</button></div>{celebrationError && <p className="photo-upload-error" role="alert">{celebrationError}</p>}<small className="celebration-card-note">The image is created in this browser and is not uploaded to SnapQuest.</small></section> : <section className="celebration-card-panel"><div className="eyebrow"><Trophy size={14}/> RESULTS</div><h2>No winning team this time</h2><p>Every team finished with zero points. Celebrate the teams’ effort and try another hunt.</p></section>)}
     </>}
   </section>
 }
