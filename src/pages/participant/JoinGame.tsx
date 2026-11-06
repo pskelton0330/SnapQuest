@@ -33,7 +33,9 @@ export default function JoinGame({ token, session }: JoinGameProps) {
         if (!supabase) throw new Error('The game connection is not configured.')
         const result = await resumeInvitation(supabase, token)
         if (cancelled) return
-        if (result) window.location.hash = `/play/${result.hunt_id}`
+        // Replace the stale invite entry so browser Back does not immediately
+        // reopen this route and push the participant forward into another loop.
+        if (result) window.location.replace(`${window.location.pathname}${window.location.search}#/play/${result.hunt_id}`)
       } catch (error) {
         if (!cancelled) {
           setResumeFailed(true)
@@ -51,7 +53,7 @@ export default function JoinGame({ token, session }: JoinGameProps) {
     setJoining(true); setMessage('')
     try {
       const result = await joinInvitation(supabase, token, displayName)
-      window.location.hash = `/play/${result.hunt_id}`
+      window.location.replace(`${window.location.pathname}${window.location.search}#/play/${result.hunt_id}`)
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Could not join this hunt.'
       setMessage(detail.toLowerCase().includes('anonymous') || detail.toLowerCase().includes('provider')

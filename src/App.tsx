@@ -72,8 +72,6 @@ function App() {
   const demoPlayerMatch = routeHash.match(/^#\/dev\/player\/([a-zA-Z0-9-]+)\/([a-zA-Z0-9-]+)$/)
   if (import.meta.env.DEV && demoPlayerMatch) return <Suspense fallback={<RouteLoading/>}><LocalPlayerPreview key={`${demoPlayerMatch[1]}-${demoPlayerMatch[2]}`} gameId={demoPlayerMatch[1]} token={demoPlayerMatch[2]}/></Suspense>
   if (import.meta.env.DEV && routeHash.startsWith('#/dev/')) return <Suspense fallback={<RouteLoading/>}><LocalDemoWorkspace routeHash={routeHash} /></Suspense>
-  if (session?.user.is_anonymous) return <main className="participant-shell"><section className="participant-message"><Camera size={25}/><h1>Open your hunt invite</h1><p>Use the team QR code or invitation link again to return to your participant session.</p><a className="outline-button" href={window.location.pathname}>Return home</a></section></main>
-
   async function signIn(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!supabase) return

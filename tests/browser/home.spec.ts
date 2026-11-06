@@ -309,6 +309,21 @@ test('participant can return through the original invite after reloading the bro
   await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
 })
 
+test('browser Back from a resumed participant session returns to the previous screen', async ({ page }) => {
+  await page.goto('/#/')
+  await page.getByRole('button', { name: /I.?m a Player/ }).click()
+  await page.getByRole('textbox', { name: 'Team invitation' }).fill('a'.repeat(64))
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByRole('status')).toContainText('Waiting for the organizer', { timeout: 10_000 })
+
+  await page.goBack()
+  await expect(page.getByRole('textbox', { name: 'Team invitation' })).toBeVisible()
+  await page.goForward()
+  await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
+})
+
 test('active participant game exposes the timer, team progress, and photo list', async ({ page }) => {
   participantRuntimeState = 'active'
   const progressResponses: string[] = []
