@@ -6,6 +6,8 @@ Use an isolated test hunt and test email accounts. Never paste invitation tokens
 
 Open `https://pskelton0330.github.io/SnapQuest/` on desktop and on the test phone.
 
+After a GitHub Pages deployment, verify the workflow is successful and open a cache-busting URL such as `https://pskelton0330.github.io/SnapQuest/?v=COMMIT_SHA#/` before judging the UI. A normal refresh may continue to use the previous HTML asset manifest. Confirm the signed-in screen contains the expected new text or controls, not only that the public landing page loads.
+
 Expected:
 
 - The SnapQuest home screen loads.
