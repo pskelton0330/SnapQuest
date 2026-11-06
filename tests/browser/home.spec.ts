@@ -419,6 +419,21 @@ test('participant gallery explains pending approval and an unavailable approved 
   await expect(page.getByText('Photo preview unavailable')).toBeVisible()
 })
 
+test('participant gallery picks up an organizer approval through its refresh fallback', async ({ page }) => {
+  participantRuntimeState = 'review'
+  participantReviewPhotoStatus = 'pending'
+  await page.clock.install()
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText('Awaiting organizer approval')).toBeVisible()
+
+  participantReviewPhotoStatus = 'approved'
+  signedPreviewMode = true
+  await page.clock.fastForward(20_000)
+  await expect(page.getByRole('img', { name: 'Team Cedar photo for A red leaf' })).toBeVisible()
+})
+
 test('participant sees final standings and winner celebration after results publish', async ({ page }) => {
   participantRuntimeState = 'completed'
   await page.goto(`/#/join/${'a'.repeat(64)}`)
