@@ -31,6 +31,20 @@ function huntActionLabel(status: string) {
   return ({ draft: 'Continue setup', scheduled: 'Open lobby', active: 'Manage live hunt', ended: 'Review photos', review: 'Review photos', completed: 'View results' } as Record<string, string>)[status] ?? 'Open hunt'
 }
 
+function inviteStorageKey(huntId: string) { return `snapquest-invites-${huntId}` }
+
+function readSavedInvites(huntId: string): InviteCode[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(inviteStorageKey(huntId)) ?? '[]')
+    return Array.isArray(parsed) && parsed.every(row => row && typeof row.invite_token === 'string' && typeof row.team_name === 'string') ? parsed as InviteCode[] : []
+  } catch { return [] }
+}
+
+function saveInvites(huntId: string, invites: InviteCode[]) {
+  if (typeof window !== 'undefined') window.localStorage.setItem(inviteStorageKey(huntId), JSON.stringify(invites))
+}
+
 const SUGGESTED_RULES = [
   { id: 'participant-in-frame', text: 'Every photo should show at least one team participant together with the item.', recommended: true },
   { id: 'stay-in-venue', text: 'Stay within the event venue and areas open to your group.', recommended: false },
@@ -193,7 +207,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     setStartAtLocal(localDateTimeValue(hunt.start_at))
     setVotingEnabled(hunt.voting_enabled)
     setVotingBonusPoints(hunt.voting_bonus_points)
-    setInviteCodes([])
+    setInviteCodes(readSavedInvites(hunt.id))
     setManagedTeams([])
     setManagedParticipants([])
     setManageMessage('')
@@ -252,6 +266,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       if (error) { setManageMessage(error.message); return }
       const codes = (data ?? []) as InviteCode[]
       setInviteCodes(codes)
+      saveInvites(managedHunt.id, codes)
       setManagedHunt({ ...managedHunt, status: 'scheduled', start_at: startTime?.toISOString() ?? null, team_assignment_mode: assignmentMode, voting_enabled: votingEnabled, voting_bonus_points: votingBonusPoints })
       await loadWorkspace()
       await loadManagedLobby(managedHunt.id)
@@ -267,7 +282,12 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     setManageSaving(true); setManageMessage('')
     const { data, error } = await supabase.rpc('regenerate_hunt_invites', { p_hunt_id: managedHunt.id })
     if (error) setManageMessage(error.message)
-    else { setInviteCodes((data ?? []) as InviteCode[]); setCopiedInvite('') }
+    else {
+      const codes = (data ?? []) as InviteCode[]
+      setInviteCodes(codes)
+      saveInvites(managedHunt.id, codes)
+      setCopiedInvite('')
+    }
     setManageSaving(false)
   }
 
