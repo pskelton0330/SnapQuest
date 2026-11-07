@@ -1,18 +1,195 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 
 const url = process.env.API_URL
 const serviceRoleKey = process.env.SERVICE_ROLE_KEY
+const anonKey = process.env.ANON_KEY
 assert.ok(url, 'Supabase CLI did not export API_URL')
 assert.ok(serviceRoleKey, 'Supabase CLI did not export SERVICE_ROLE_KEY')
+assert.ok(anonKey, 'Supabase CLI did not export ANON_KEY')
 
-const admin = createClient(url, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } })
+const authOptions = { auth: { persistSession: false, autoRefreshToken: false } }
+const admin = createClient(url, serviceRoleKey, authOptions)
+const anonymous = createClient(url, anonKey, authOptions)
+
 const { data: bucket, error: bucketError } = await admin.storage.getBucket('hunt-photos')
 assert.ifError(bucketError)
 assert.equal(bucket?.public, false, 'hunt-photos must remain private')
 console.log('Private hunt-photos bucket is available through Storage HTTP.')
 
-const { error: startError } = await admin.rpc('start_game_now', { p_game_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' })
-assert.ok(startError, 'start_game_now must reject a service-role request without an organizer session')
-assert.match(startError.message, /Organizer access required/)
-console.log('start_game_now is installed and enforces its organizer boundary through PostgREST.')
+const identities = []
+const objectPaths = []
+
+async function createIdentity(label) {
+  const email = `snapquest-${label}-${randomUUID()}@example.test`
+  const password = `${randomUUID()}Aa1!`
+  const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true })
+  assert.ifError(error)
+  identities.push(data.user.id)
+  const client = createClient(url, anonKey, authOptions)
+  const { data: session, error: loginError } = await client.auth.signInWithPassword({ email, password })
+  assert.ifError(loginError)
+  assert.ok(session.session, `${label} should receive an authenticated session`)
+  return client
+}
+
+async function expectDenied(operation, message) {
+  const { error } = await operation()
+  assert.ok(error, message)
+}
+
+try {
+  const organizer = await createIdentity('organizer')
+  const outsider = await createIdentity('outsider')
+  const { error: organizerProvisionError } = await admin.from('organizers').insert({ auth_user_id: (await organizer.auth.getUser()).data.user.id })
+  assert.ifError(organizerProvisionError)
+
+  const { data: templateId, error: templateError } = await organizer.rpc('save_hunt_template', {
+    p_title: 'Local Storage authorization test',
+    p_venue: 'Isolated CI',
+    p_description: '',
+    p_rules: [],
+    p_items: [
+      { title: 'First challenge', description: '', points: 10 },
+      { title: 'Second challenge', description: '', points: 5 },
+    ],
+    p_duration: 30,
+    p_visibility: 'personal',
+    p_template_id: null,
+  })
+  assert.ifError(templateError)
+
+  const { data: huntId, error: gameError } = await organizer.rpc('create_game_from_template', {
+    p_template_id: templateId,
+    p_game_name: 'Local Storage authorization test',
+    p_duration: 30,
+  })
+  assert.ifError(gameError)
+
+  const { data: configuredTeams, error: configureError } = await organizer.rpc('configure_game', {
+    p_game_id: huntId,
+    p_name: 'Local Storage authorization test',
+    p_duration: 30,
+    p_team_names: ['CI Team One', 'CI Team Two'],
+    p_assignment_mode: 'organizer',
+    p_start_at: null,
+    p_start_now: false,
+    p_voting_enabled: false,
+    p_bonus: 0,
+  })
+  assert.ifError(configureError)
+  assert.equal(configuredTeams?.length, 2)
+
+  const teamOne = configuredTeams[0]
+  const teamTwo = configuredTeams[1]
+  const participantOne = await createIdentity('participant-one')
+  const participantTwo = await createIdentity('participant-two')
+  const outsiderClient = outsider
+  const { error: joinOneError } = await participantOne.rpc('redeem_invitation', {
+    p_token: teamOne.invite_token,
+    p_display_name: 'CI Player One',
+  })
+  assert.ifError(joinOneError)
+  const { error: joinTwoError } = await participantTwo.rpc('redeem_invitation', {
+    p_token: teamTwo.invite_token,
+    p_display_name: 'CI Player Two',
+  })
+  assert.ifError(joinTwoError)
+
+  const { data: huntItems, error: itemsError } = await admin.from('hunt_items').select('id,display_order').eq('hunt_id', huntId).order('display_order')
+  assert.ifError(itemsError)
+  assert.equal(huntItems?.length, 2)
+  const [firstItem, secondItem] = huntItems
+  const jpeg = Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/AP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAT8Af//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQIBAT8Af//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQMBAT8Af//Z', 'base64')
+  const photoPath = `${huntId}/${teamOne.team_id}/${firstItem.id}/${randomUUID()}.jpg`
+  const replacePath = `${huntId}/${teamOne.team_id}/${firstItem.id}/${randomUUID()}.jpg`
+  const cleanupPath = `${huntId}/${teamOne.team_id}/${secondItem.id}/${randomUUID()}.jpg`
+  const crossTeamPath = `${huntId}/${teamTwo.team_id}/${firstItem.id}/${randomUUID()}.jpg`
+
+  await expectDenied(
+    () => participantOne.storage.from('hunt-photos').upload(photoPath, jpeg, { contentType: 'image/jpeg' }),
+    'A participant must not upload before a manual-start hunt begins',
+  )
+  await expectDenied(
+    () => anonymous.storage.from('hunt-photos').upload(photoPath, jpeg, { contentType: 'image/jpeg' }),
+    'Anonymous users must not upload hunt photos',
+  )
+  console.log('Manual-start pre-start and anonymous Storage uploads are denied.')
+
+  const { error: startError } = await outsiderClient.rpc('start_game_now', { p_game_id: huntId })
+  assert.ok(startError, 'A non-organizer must not start a hunt')
+  assert.match(startError.message, /Organizer access required/)
+  await expectDenied(
+    () => organizer.storage.from('hunt-photos').upload(photoPath, jpeg, { contentType: 'image/jpeg' }),
+    'Organizers must not upload into participant photo paths',
+  )
+
+  const { error: startNowError } = await organizer.rpc('start_game_now', { p_game_id: huntId })
+  assert.ifError(startNowError)
+  console.log('Only the organizer can manually start the hunt.')
+
+  const { error: uploadError } = await participantOne.storage.from('hunt-photos').upload(photoPath, jpeg, { contentType: 'image/jpeg' })
+  assert.ifError(uploadError)
+  objectPaths.push(photoPath)
+  await expectDenied(
+    () => participantOne.storage.from('hunt-photos').upload(crossTeamPath, jpeg, { contentType: 'image/jpeg' }),
+    'A participant must not upload into another team path',
+  )
+  await expectDenied(
+    () => participantTwo.storage.from('hunt-photos').download(photoPath),
+    'A different team must not read another team photo during active play',
+  )
+  const { data: organizerPhoto, error: organizerReadError } = await organizer.storage.from('hunt-photos').download(photoPath)
+  assert.ifError(organizerReadError)
+  assert.ok(organizerPhoto, 'The organizer should be able to review a team photo')
+  console.log('Active-hunt upload succeeds for the assigned team; cross-team upload/read are denied and organizer read succeeds.')
+
+  const { data: submitted, error: submitError } = await participantOne.rpc('submit_hunt_photo', {
+    p_hunt_item_id: firstItem.id,
+    p_storage_path: photoPath,
+    p_expected_storage_path: null,
+  })
+  assert.ifError(submitError)
+  assert.equal(submitted?.accepted, true)
+  objectPaths.push(photoPath)
+  await expectDenied(
+    () => participantOne.storage.from('hunt-photos').remove([photoPath]),
+    'A participant must not delete an object referenced by a submission',
+  )
+
+  const { error: replaceUploadError } = await participantOne.storage.from('hunt-photos').upload(replacePath, jpeg, { contentType: 'image/jpeg' })
+  assert.ifError(replaceUploadError)
+  objectPaths.push(replacePath)
+  const { error: replaceSubmitError } = await participantOne.rpc('submit_hunt_photo', {
+    p_hunt_item_id: firstItem.id,
+    p_storage_path: replacePath,
+    p_expected_storage_path: photoPath,
+  })
+  assert.ifError(replaceSubmitError)
+  const { error: oldPhotoCleanupError } = await participantOne.storage.from('hunt-photos').remove([photoPath])
+  assert.ifError(oldPhotoCleanupError)
+  console.log('Submitted objects cannot be deleted while referenced; replacement updates the reference and then permits old-object cleanup.')
+
+  const { error: cleanupUploadError } = await participantOne.storage.from('hunt-photos').upload(cleanupPath, jpeg, { contentType: 'image/jpeg' })
+  assert.ifError(cleanupUploadError)
+  objectPaths.push(cleanupPath)
+  const { error: cleanupError } = await participantOne.storage.from('hunt-photos').remove([cleanupPath])
+  assert.ifError(cleanupError)
+  objectPaths.splice(objectPaths.indexOf(cleanupPath), 1)
+  console.log('Unreferenced same-team object cleanup succeeds.')
+
+  const { error: outsiderRowsError, count: outsiderRowCount } = await outsider.from('submissions').select('id', { count: 'exact', head: true }).eq('hunt_id', huntId)
+  assert.ifError(outsiderRowsError)
+  assert.equal(outsiderRowCount, 0, 'An outsider must not read hunt submissions')
+  console.log('Outsider submission-table reads return no rows.')
+} finally {
+  for (const objectPath of new Set(objectPaths)) {
+    await admin.storage.from('hunt-photos').remove([objectPath])
+  }
+  if (identities.length) {
+    for (const identity of identities) {
+      await admin.auth.admin.deleteUser(identity)
+    }
+  }
+}
