@@ -1425,6 +1425,10 @@ test('organizer can join an assigned team and return to hunt management', async 
   await expect(organizerMenu).toBeVisible()
   await organizerMenu.click()
   await expect(page.getByRole('heading', { name: 'Team lobby' })).toBeVisible()
+  await page.goBack()
+  await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
+  await page.goForward()
+  await expect(page.getByRole('heading', { name: 'Team lobby' })).toBeVisible()
 })
 
 test('organizer winner card picker offers each team tied for first', async ({ page }) => {
