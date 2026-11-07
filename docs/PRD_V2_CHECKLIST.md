@@ -4,7 +4,7 @@ Updated November 7, 2026. These labels describe the whole requirement, not just 
 
 ## Current verification snapshot (November 7)
 
-- The latest deployed revision is `eeb8418`; [GitHub Actions run `42332258443`](https://github.com/pskelton0330/SnapQuest/actions/runs/42332258443) passed build and deploy. The [live build manifest](https://pskelton0330.github.io/SnapQuest/build-info.json) matched the full revision when checked. The preceding application-code release `fa12ed6` includes chat fallback to the production legacy RPC until stable-cursor migration 024 is applied.
+- The latest deployed revision is `b6cb749`; [GitHub Actions run `42333687980`](https://github.com/pskelton0330/SnapQuest/actions/runs/42333687980) passed unit/database tests, desktop/mobile browser tests, lint, build, and deploy. The [live build manifest](https://pskelton0330.github.io/SnapQuest/build-info.json) matched the full revision when checked. It includes accurate organizer operation logging and chat fallback to the production legacy RPC until migration 024 is applied.
 - The current checkout passed 80 unit/database tests and 94 desktop/mobile browser cases, plus lint and the production build. The JavaScript entry is 135.05 KiB gzip against the enforced 150 KiB budget. The automated suite covers legacy chat RPC fallback, gallery foreground refresh, and per-photo signed-preview retry; live Storage, concurrent PostgreSQL sessions, and physical-device acceptance remain separate gates.
 - Physical-device, screen-reader, hosted Storage HTTP, multi-session concurrency, and full authorization acceptance are still separate gates. The historical AT-01 through AT-36 table remains NOT RUN for physical-device acceptance; mock-browser and PGlite evidence does not satisfy those rows.
 
