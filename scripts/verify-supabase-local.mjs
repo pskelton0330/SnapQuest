@@ -22,7 +22,7 @@ assert.ifError(bucketError)
 assert.equal(bucket?.public, false, 'hunt-photos must remain private')
 console.log('Private hunt-photos bucket is available through Storage HTTP.')
 
-async function verifyAuditRetention() {
+async function verifyAuditEventsAreRetained() {
   const marker = randomUUID()
   const recentId = randomUUID()
   const expiredId = randomUUID()
@@ -34,14 +34,14 @@ async function verifyAuditRetention() {
       created_at: new Date(now - 364 * 24 * hour).toISOString(),
       event_type: 'retention_test',
       outcome: 'notice',
-      details: { retention_test_id: marker, age: 'recent' },
+      details: { retention_test_id: marker, age: '364-day' },
     },
     {
       id: expiredId,
       created_at: new Date(now - 366 * 24 * hour).toISOString(),
       event_type: 'retention_test',
       outcome: 'notice',
-      details: { retention_test_id: marker, age: 'expired' },
+      details: { retention_test_id: marker, age: '366-day' },
     },
   ]
 
@@ -51,15 +51,15 @@ async function verifyAuditRetention() {
 
     const { data, error } = await admin.from('audit_events').select('id').in('id', [recentId, expiredId])
     assert.ifError(error)
-    assert.deepEqual(data.map(({ id }) => id), [recentId], 'Retention must prune expired audit rows and preserve recent rows')
-    console.log('Audit retention prunes a synthetic 366-day-old row and preserves a recent row in the isolated database.')
+    assert.deepEqual(data.map(({ id }) => id).sort(), [recentId, expiredId].sort(), 'Audit events older than 365 days must remain available')
+    console.log('Audit events aged 364 and 366 days are both retained in the isolated database.')
   } finally {
     const { error: cleanupError } = await admin.from('audit_events').delete().in('id', [recentId, expiredId])
     assert.ifError(cleanupError, 'Synthetic retention rows should be cleaned up')
   }
 }
 
-await verifyAuditRetention()
+await verifyAuditEventsAreRetained()
 
 const identities = []
 const testCredentials = new Map()

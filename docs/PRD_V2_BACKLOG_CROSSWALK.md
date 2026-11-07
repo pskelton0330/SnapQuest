@@ -59,9 +59,9 @@ Status evidence is maintained in the [checklist](PRD_V2_CHECKLIST.md), [improvem
 | PRIV-01 | IMP-03, IMP-15, IMP-22 | Data inventory exists; owner decisions, deletion controls, device checks, and assistive-technology review remain. |
 | A11Y-01 | IMP-03, IMP-19 | Automated scans cover tested routes; keyboard navigation and 200% text-size browser checks now cover home, participant lobby/play/review/results, and organizer lobby/review/results. Physical screen-reader and device acceptance remain. |
 | MIG-01 | IMP-21 | PRD v2 was reviewed; requirement traceability is now indexed here. |
-| MIG-02 | IMP-05, IMP-13, IMP-14, IMP-22, IMP-25, IMP-26 | Production history records 001–024 and targeted 026–028 applied; 025 needs retention approval. |
+| MIG-02 | IMP-05, IMP-13, IMP-14, IMP-22, IMP-25, IMP-26 | Production history records 001–024 and targeted 026–028 applied; 025 is a no-op; 029 disables prior pruning. |
 | MIG-03 | IMP-05, IMP-06, IMP-13, IMP-15, IMP-25 | Migration source and local coverage exist; legacy-data mapping, forward repair, rollback, and hosted acceptance remain. Migrations 026 and 027 close the selfie-policy and anon RPC gaps; migration 028 history now reflects Realtime publication membership that was already present. |
-| MIG-04 | IMP-05, IMP-13, IMP-14, IMP-22, IMP-25 | Additive migrations are locally repeatable; production history has 001–024 and targeted 026–028, 025 remains owner-gated, and hosted Storage acceptance is outstanding. |
+| MIG-04 | IMP-05, IMP-13, IMP-14, IMP-22, IMP-25 | Additive migrations are locally repeatable; production history has 001–024 and targeted 026–028, 025 is a no-op and 029 disables prior pruning, and hosted Storage acceptance is outstanding. |
 | MIG-05 | IMP-05, IMP-06, IMP-15, IMP-25 | Production has 001–024 and targeted 026–028 recorded; read-only catalog checks pass, while hosted role-specific authorization and Storage behavior remain. |
 
 ## Release interpretation

@@ -2,7 +2,7 @@
 
 Use an isolated test hunt and test email accounts. Never paste invitation tokens, email magic links, service-role keys, or private photo URLs into notes or bug reports.
 
-> **Migration status (November 7, 2026):** Production history records migrations 001–024 and targeted 026–028. Read-only checks confirm all public tables have RLS and anon function grants match the approved public RPC allowlist. Migration 025 (365-day audit-event pruning) remains unapplied pending explicit owner approval because it deletes older diagnostic rows. Do not use production for role-specific row/Storage or concurrent destructive tests; those still require an isolated test project. The historical setup instructions below apply to an isolated test project only.
+> **Migration status (November 7, 2026):** Production history records migrations 001–024 and targeted 026–028. Read-only checks confirm all public tables have RLS and anon function grants match the approved public RPC allowlist. The owner chose to retain diagnostic events beyond 365 days, with no maximum duration set. Migration 025 is a no-op and 029 removes any earlier pruning implementation. Development verification uses only the ephemeral Supabase stack in GitHub Actions; do not create a paid hosted branch. Do not use production for role-specific row/Storage or concurrent destructive tests.
 
 ## 1. Public deployment smoke test
 
@@ -41,7 +41,7 @@ The result must be `true` before testing progress bars.
 
 Use a dedicated Supabase project or a data-less preview branch with synthetic accounts and hunts for hosted Auth, Storage HTTP, PostgreSQL concurrency, RLS, and Realtime tests. Confirm the project name and reference in the dashboard before running SQL. Do not use the production project for destructive, race, or migration experiments. Supabase currently bills preview branches by service usage; its [branching usage guide](https://supabase.com/docs/guides/platform/manage-your-usage/branching) lists Micro compute starting at $0.01344/hour and says branching compute is not covered by the spend cap. Check current pricing and delete the test branch when the acceptance run is complete.
 
-For a new test project, apply migrations through 024 in filename order using that project’s SQL Editor. Open the [Supabase projects dashboard](https://supabase.com/dashboard/projects), select the test project, and choose **SQL Editor**. Do not use `supabase db push` or `supabase migration up --remote` while 025 is pending: both apply all pending migrations. In the isolated test project, apply 025 to synthetic expired audit rows and verify the prune behavior before deciding whether to adopt this policy. Explicit owner approval is required before applying 025 to production. For an existing project, compare its migration history and schema first; never rerun migrations blindly.
+Development tests run in the repository's ephemeral Supabase CI stack and incur no hosted branch usage. The local verifier confirms audit events older than 365 days remain present. Do not apply development migrations to production as part of this workflow. For any separately approved production change, compare its migration history and schema first; never rerun migrations blindly.
 
 Migrations 023, 024, 026, and 027 issue `NOTIFY pgrst, 'reload schema'` when they commit. They are applied in production; for a future isolated environment, confirm expected RPC signatures and ACLs after application:
 

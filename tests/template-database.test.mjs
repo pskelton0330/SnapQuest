@@ -8,7 +8,7 @@ import { calculateTeamScores, normalizeFinalScores, winningTeams } from '../src/
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222', outsider='12345678-1234-4234-9234-123456789abc'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration
+let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -50,6 +50,7 @@ before(async () => {
     if(file.includes('0023')) { auditSafetyMigration=sql; continue }
     if(file.includes('0024')) { chatCursorMigration=sql; continue }
     if(file.includes('0025')) { auditRetentionMigration=sql; continue }
+    if(file.includes('0029')) { disableAuditRetentionMigration=sql; continue }
     if(file.includes('0027')) { rpcPrivilegeMigration=sql; continue }
     await db.exec(sql)
   }
@@ -79,6 +80,7 @@ before(async () => {
   await db.exec(auditSafetyMigration)
   await db.exec(chatCursorMigration)
   await db.exec(auditRetentionMigration)
+  await db.exec(disableAuditRetentionMigration)
   await db.exec(rpcPrivilegeMigration)
 })
 after(async()=> { await db?.close() })
@@ -135,11 +137,14 @@ test('organizer audit events record timing operations and stay owner-scoped',asy
   assert.equal(events[0].details.duration_minutes,60)
   await assert.rejects(as('authenticated',other,"select public.record_audit_event('probe',$1,'notice','{}'::jsonb)",[id]))
 })
-test('client audit events are source-labeled, sanitized, and expire after one year',async()=>{
+test('client audit events are source-labeled, sanitized, and retained beyond one year',async()=>{
   assert.doesNotMatch(auditSafetyMigration,/delete\s+from\s+public\.audit_events/i)
   assert.match(auditSafetyMigration,/notify\s+pgrst\s*,\s*'reload schema'/i)
-  assert.match(auditRetentionMigration,/delete\s+from\s+public\.audit_events[\s\S]*interval '365 days'/i)
-  assert.match(auditRetentionMigration,/notify\s+pgrst\s*,\s*'reload schema'/i)
+  assert.doesNotMatch(auditRetentionMigration,/delete\s+from\s+public\.audit_events/i)
+  assert.match(disableAuditRetentionMigration,/drop\s+trigger\s+if\s+exists\s+audit_events_retention/i)
+  assert.match(disableAuditRetentionMigration,/drop\s+function\s+if\s+exists\s+public\.prune_expired_audit_events/i)
+  const readAuditFunction=(await db.query("select pg_get_functiondef('public.list_hunt_audit_events(uuid,integer)'::regprocedure) definition")).rows[0].definition
+  assert.doesNotMatch(readAuditFunction,/prune_expired_audit_events/i)
   const legacy=(await db.query("select id from public.hunt_templates where legacy_game_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'")).rows[0].id
   const id=(await as('authenticated',owner,'select public.create_game_from_template($1) id',[legacy])).rows[0].id
   await as('authenticated',owner,"select * from public.configure_game($1,'Audit privacy',60,array['Red','Blue'],'organizer',clock_timestamp()+interval '1 hour')",[id])
@@ -153,7 +158,7 @@ test('client audit events are source-labeled, sanitized, and expire after one ye
   await assert.rejects(as('authenticated',owner,"select public.record_audit_event('forged_server_event',$1,'success','{}'::jsonb)",[id]),/Only client operation reports are accepted/)
   await assert.rejects(as('authenticated',owner,"select public.record_audit_event('client_operation',$1,'failure',$2::jsonb)",[id,JSON.stringify({client_report:true,operation_id:operationId,stage:'photo_upload_failed',app:'participant_web',email:'private@example.test'})]),/Unsupported client audit detail/)
   const expired=(await db.query("select count(*)::int count from public.audit_events where event_type='old_test_event'")).rows[0].count
-  assert.equal(expired,0)
+  assert.equal(expired,1)
 })
 test('timing transitions create owner-scoped audit events with authoritative details',async()=>{
   const localTemplate=(await as('authenticated',owner,"select public.save_hunt_template('Timing source','Shop','',array[]::text[],$1::jsonb,60,'personal') id",[JSON.stringify([{title:'Timing item'}])])).rows[0].id
