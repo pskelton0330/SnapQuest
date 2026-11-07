@@ -750,3 +750,4 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .production-challenge-import>p{color:#626570;font-size:11px;line-height:1.5}
 .production-challenge-import textarea{width:100%;min-height:100px;border:1px solid var(--sq-line);border-radius:8px;padding:10px;color:var(--sq-ink);font:inherit;resize:vertical}
 .production-challenge-import>.outline-button{margin-top:8px}
+.progress-update-status{margin:0;color:#525866;font-size:12px;line-height:1.4}

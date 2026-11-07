@@ -676,6 +676,40 @@ test('browser Back from a resumed participant session returns to the previous sc
   await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
 })
 
+test('team progress retains the last counts and recovers after a failed refresh', async ({ page }) => {
+  participantRuntimeState = 'active'
+  let failProgress = false
+  let accepted = 1
+  await page.route('**/rest/v1/rpc/get_hunt_progress', async route => {
+    if (failProgress) await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'Unavailable' }) })
+    else await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', display_color: '#15967a', accepted_count: accepted, total_items: 2 }]) })
+  })
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  const bar = page.getByRole('progressbar', { name: 'Team Cedar accepted photos' })
+  await expect(bar).toHaveAttribute('aria-valuenow', '1')
+  failProgress = true
+  await page.evaluate(() => window.dispatchEvent(new Event('online')))
+  await expect(page.getByText('Team progress may be out of date. Reconnecting...')).toBeVisible()
+  await expect(bar).toHaveAttribute('aria-valuenow', '1')
+  failProgress = false
+  accepted = 2
+  await page.evaluate(() => window.dispatchEvent(new Event('online')))
+  await expect(bar).toHaveAttribute('aria-valuenow', '2')
+  await expect(page.getByText('Team progress is up to date.')).toBeVisible()
+})
+
+test('an initial team progress failure does not imply zero photos', async ({ page }) => {
+  participantRuntimeState = 'active'
+  await page.route('**/rest/v1/rpc/get_hunt_progress', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'Unavailable' }) }))
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText('Team progress may be out of date. Reconnecting...')).toBeVisible()
+  await expect(page.getByRole('progressbar', { name: 'Team Cedar accepted photos' })).toHaveCount(0)
+})
+
 test('active participant game exposes the timer, team progress, and photo list', async ({ page }) => {
   participantRuntimeState = 'active'
   const progressResponses: string[] = []

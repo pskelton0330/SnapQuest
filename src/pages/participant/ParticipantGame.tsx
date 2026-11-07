@@ -49,6 +49,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   const [error, setError] = useState('')
   const [serverNow, setServerNow] = useState(0)
   const [teamProgress, setTeamProgress] = useState<TeamProgress[]>([])
+  const [progressStatus, setProgressStatus] = useState<'loading' | 'current' | 'stale'>('loading')
   const [teamNameDraft, setTeamNameDraft] = useState('')
   const [teamNameDirty, setTeamNameDirty] = useState(false)
   const [teamIdentityBusy, setTeamIdentityBusy] = useState(false)
@@ -80,20 +81,26 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     const requestId = ++contextRequestId.current
     const { data, error: contextError } = await supabase.rpc('get_participant_context', { p_hunt_id: huntId })
     if (requestId !== contextRequestId.current) return
-    if (contextError) { setError(contextError.message); setLoading(false); return }
+    if (contextError) { setProgressStatus('stale'); setError(contextError.message); setLoading(false); return }
     const next = data as HuntContext
     setContext(next)
     if (!teamNameDirty) setTeamNameDraft(next.team.name)
     setServerNow(new Date(next.server_now).getTime())
     if (next.runtime_state === 'active') setSubmissionRefreshTick(value => value + 1)
-    else setTeamProgress([])
+    else { setTeamProgress([]); setProgressStatus('loading') }
     if (next.runtime_state !== 'active') {
       setLoading(false)
       return
     }
-    const { data: progress, error: progressError } = await supabase.rpc('get_hunt_progress', { p_hunt_id: huntId })
-    if (requestId !== contextRequestId.current) return
-    if (!progressError && Array.isArray(progress)) setTeamProgress(progress as TeamProgress[])
+    try {
+      const { data: progress, error: progressError } = await supabase.rpc('get_hunt_progress', { p_hunt_id: huntId })
+      if (requestId !== contextRequestId.current) return
+      if (!progressError && Array.isArray(progress)) { setTeamProgress(progress as TeamProgress[]); setProgressStatus('current') }
+      else setProgressStatus('stale')
+    } catch {
+      if (requestId !== contextRequestId.current) return
+      setProgressStatus('stale')
+    }
     setLoading(false)
   }, [huntId, teamNameDirty])
 
@@ -539,7 +546,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     <header className="participant-topbar"><a className="brand" href="#"><span className="brand-icon"><Camera size={19}/></span> SnapQuest</a><span className="nav-note"><ShieldCheck size={15}/> {context ? context.team.name : 'Participant space'} {canManageCurrentHunt && <a className="outline-button" href={`#/manage/${huntId}`}><Settings2 size={14}/> Organizer menu</a>}</span></header>
     {loading ? <div className="participant-loading"><LoaderCircle className="spin" size={24}/> Loading your hunt…</div> : error && !context ? <section className="participant-message"><CircleHelp size={24}/><h1>We couldn’t open this hunt</h1><p>{error}</p><button className="outline-button" onClick={() => { setLoading(true); setError(''); void loadContext() }}>Try again</button></section> : context ? <>
       <section className="participant-game-heading"><div><div className="eyebrow"><MapPin size={14}/> {context.venue}</div><h1>{context.title}</h1><p>You’re playing as <b>{context.participant.display_name}</b> on <span className="team-name-pill">{context.team.name}</span></p></div>{runtimeState === 'active' && <div className="game-clock"><Clock3 size={19}/><span>{clockLabel(remainingSeconds)}</span><small>TIME LEFT</small></div>}</section>
-      {runtimeState === 'active' && <section className="participant-live-status" aria-label="Live hunt progress"><div className="live-time-progress"><div className="live-status-heading"><b>Time remaining</b><span>{clockLabel(remainingSeconds)}</span></div><div className="live-progress-track" role="progressbar" aria-label="Time remaining" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, Math.min(100, remainingSeconds / (context.duration_minutes * 60) * 100)))}><span className="live-time-fill" style={{width: `${Math.max(0, Math.min(100, remainingSeconds / (context.duration_minutes * 60) * 100))}%`}}/></div></div>{teamProgress.length > 0 && <div className="live-team-progress"><div className="live-status-heading"><b>Team progress</b><span>Accepted photos</span></div>{teamProgress.map(team => <div className="live-team-row" key={team.team_id}><span className="team-swatch" style={{backgroundColor: team.display_color}}/><b>{team.team_name}</b><span>{team.accepted_count}/{team.total_items}</span><div className="live-progress-track" role="progressbar" aria-label={`${team.team_name} accepted photos`} aria-valuemin={0} aria-valuemax={team.total_items} aria-valuenow={team.accepted_count}><span style={{width: `${team.total_items ? Math.min(100, team.accepted_count / team.total_items * 100) : 0}%`}}/></div></div>)}</div>}</section>}
+      {runtimeState === 'active' && <section className="participant-live-status" aria-label="Live hunt progress"><div className="live-time-progress"><div className="live-status-heading"><b>Time remaining</b><span>{clockLabel(remainingSeconds)}</span></div><div className="live-progress-track" role="progressbar" aria-label="Time remaining" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, Math.min(100, remainingSeconds / (context.duration_minutes * 60) * 100)))}><span className="live-time-fill" style={{width: `${Math.max(0, Math.min(100, remainingSeconds / (context.duration_minutes * 60) * 100))}%`}}/></div></div>{<div className="live-team-progress"><div className="live-status-heading"><b>Team progress</b><span>Accepted photos</span></div><p className="progress-update-status" role="status">{progressStatus === 'loading' ? 'Updating team progress...' : progressStatus === 'stale' ? 'Team progress may be out of date. Reconnecting...' : 'Team progress is up to date.'}</p>{teamProgress.map(team => <div className="live-team-row" key={team.team_id}><span className="team-swatch" style={{backgroundColor: team.display_color}}/><b>{team.team_name}</b><span>{team.accepted_count}/{team.total_items}</span><div className="live-progress-track" role="progressbar" aria-label={`${team.team_name} accepted photos`} aria-valuemin={0} aria-valuemax={team.total_items} aria-valuenow={team.accepted_count}><span style={{width: `${team.total_items ? Math.min(100, team.accepted_count / team.total_items * 100) : 0}%`}}/></div></div>)}</div>}</section>}
       {error && <div className="participant-error game-error"><CircleHelp size={15}/>{error}{['review','completed'].includes(runtimeState) && <button className="outline-button" onClick={() => void loadReviewGallery()}>Retry gallery</button>}</div>}
       {runtimeState === 'waiting' && context.team.selfie && selfiePreviewUnavailable && <div className="participant-error" role="status">Team selfie saved, but its preview is unavailable. <button className="outline-button" onClick={() => setSelfiePreviewRetry(value => value + 1)}>Retry preview</button></div>}
       {runtimeState === 'waiting' && !context.start_at && <div className="manual-start-message" role="status"><Clock3 size={18}/><span><b>Waiting for the organizer</b><small>Your team is checked in. The hunt begins when the organizer starts the timer.</small></span></div>}
