@@ -233,7 +233,13 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     const reconcile = () => { if (document.visibilityState === 'visible') void loadReviewGallery() }
     window.addEventListener('focus', reconcile)
     window.addEventListener('online', reconcile)
-    return () => { window.clearInterval(refresh); window.removeEventListener('focus', reconcile); window.removeEventListener('online', reconcile) }
+    document.addEventListener('visibilitychange', reconcile)
+    return () => {
+      window.clearInterval(refresh)
+      window.removeEventListener('focus', reconcile)
+      window.removeEventListener('online', reconcile)
+      document.removeEventListener('visibilitychange', reconcile)
+    }
   }, [loadReviewGallery, runtimeState])
 
   const remainingSeconds = context?.ends_at ? Math.ceil((new Date(context.ends_at).getTime() - serverNow) / 1000) : 0

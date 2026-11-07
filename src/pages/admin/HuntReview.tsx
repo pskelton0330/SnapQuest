@@ -58,7 +58,14 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     const refresh = window.setInterval(() => { if (document.visibilityState === 'visible') void load() }, 20_000)
     const reconcile = () => { if (document.visibilityState === 'visible') void load() }
     window.addEventListener('focus', reconcile); window.addEventListener('online', reconcile)
-    return () => { ++requestCounter.current; window.clearInterval(refresh); window.removeEventListener('focus', reconcile); window.removeEventListener('online', reconcile) }
+    document.addEventListener('visibilitychange', reconcile)
+    return () => {
+      ++requestCounter.current
+      window.clearInterval(refresh)
+      window.removeEventListener('focus', reconcile)
+      window.removeEventListener('online', reconcile)
+      document.removeEventListener('visibilitychange', reconcile)
+    }
   }, [load])
 
   async function decide(id: string, decision: 'approved' | 'rejected') {

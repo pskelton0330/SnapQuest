@@ -693,6 +693,27 @@ test('participant renews signed review-photo previews before their URLs expire',
   await expect(galleryImage).toBeVisible()
 })
 
+test('participant review gallery refreshes signed previews when the page returns to the foreground', async ({ page }) => {
+  participantRuntimeState = 'completed'
+  signedPreviewMode = true
+  await page.clock.install()
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText('Final results')).toBeVisible()
+  const galleryImage = page.getByRole('img', { name: 'Team Cedar photo for A red leaf' })
+  await expect(galleryImage).toBeVisible()
+  await expect.poll(() => signedPreviewRequests).toBeGreaterThan(0)
+  const initialRequests = signedPreviewRequests
+  await page.clock.setSystemTime(Date.now() + 300_000)
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await expect.poll(() => signedPreviewRequests).toBeGreaterThan(initialRequests)
+  await expect(galleryImage).toBeVisible()
+})
+
 test('organizer reviews a photo, changes its decision, and finalizes results', async ({ page }) => {
   organizerReviewMode = true
   await restoreOrganizerSession(page)
@@ -722,6 +743,28 @@ test('organizer reviews a photo, changes its decision, and finalizes results', a
   }
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, targets }) => ({ id, impact, help, targets })), null, 2)).toEqual([])
+})
+
+test('organizer review refreshes signed previews when the page returns to the foreground', async ({ page }) => {
+  organizerReviewMode = true
+  signedPreviewMode = true
+  await page.clock.install()
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  const hunt = page.getByRole('article').filter({ hasText: 'Spring Photo Hunt' })
+  await hunt.getByRole('button', { name: 'Review photos' }).click()
+  const galleryImage = page.getByRole('img', { name: 'Team Cedar photo for A red leaf' })
+  await expect(galleryImage).toBeVisible()
+  await expect.poll(() => signedPreviewRequests).toBeGreaterThan(0)
+  const initialRequests = signedPreviewRequests
+  await page.clock.setSystemTime(Date.now() + 300_000)
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await expect.poll(() => signedPreviewRequests).toBeGreaterThan(initialRequests)
+  await expect(galleryImage).toBeVisible()
 })
 
 test('organizer login confirms that the email link was requested', async ({ page }) => {
