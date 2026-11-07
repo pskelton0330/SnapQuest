@@ -1078,6 +1078,11 @@ test('organizer chat falls back to the legacy RPC until stable cursor migration 
   await expect(page.getByRole('alert')).toHaveCount(0)
   expect(chatStableCursorCalls).toBe(1)
   expect(chatLegacyCursorCalls).toBe(1)
+  await page.getByRole('textbox', { name: 'Message' }).fill('Chat still works on the deployed schema')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(messages).toHaveCount(3)
+  await expect(messages.last()).toContainText('Chat still works on the deployed schema')
+  expect(chatLegacyCursorCalls).toBeGreaterThanOrEqual(2)
 })
 
 test('organizer chat pages more than 200 messages with identical timestamps without gaps', async ({ page }) => {
