@@ -51,6 +51,8 @@ async function expectNoHorizontalOverflowAt200Percent(page: import('@playwright/
 let organizerStartCalls = 0
 let organizerInviteRecoveryCalls = 0
 let organizerInviteRotated = false
+let organizerLegacyInvites = false
+let organizerInviteRotationCalls = 0
 let organizerTimingFailure: 'start' | 'end' | 'add' | 'reschedule' | null = null
 let organizerMessages: { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }[] = []
 let chatLoadFailures = 0
@@ -98,6 +100,8 @@ test.beforeEach(async ({ page }) => {
   organizerStartCalls = 0
   organizerInviteRecoveryCalls = 0
   organizerInviteRotated = false
+  organizerLegacyInvites = false
+  organizerInviteRotationCalls = 0
   organizerTimingFailure = null
   organizerMessages = []
   chatLoadFailures = 0
@@ -347,12 +351,17 @@ test.beforeEach(async ({ page }) => {
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/get_hunt_invites')) {
       organizerInviteRecoveryCalls++
+      if (organizerLegacyInvites) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ has_active_invites: true, recoverable: false, invite_codes: [] }) })
+        return
+      }
       const firstToken = organizerInviteRotated ? 'c'.repeat(64) : 'a'.repeat(64)
       const secondToken = organizerInviteRotated ? 'd'.repeat(64) : 'b'.repeat(64)
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ has_active_invites: true, recoverable: true, invite_codes: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', invite_token: firstToken }, { team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', invite_token: secondToken }] }) })
       return
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/regenerate_hunt_invites')) {
+      organizerInviteRotationCalls++
       organizerInviteRotated = true
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', invite_token: 'c'.repeat(64) }, { team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', invite_token: 'd'.repeat(64) }]) })
       return
@@ -1411,6 +1420,24 @@ test('organizer replacement refreshes each displayed team link', async ({ page }
 
   await expect(page.locator('.invite-card').filter({ hasText: 'Team Cedar' }).locator('input')).toHaveValue(/c{64}$/)
   await expect(page.locator('.invite-card').filter({ hasText: 'Team Maple' }).locator('input')).toHaveValue(/d{64}$/)
+})
+
+test('legacy active invitations are not replaced without explicit confirmation', async ({ page }) => {
+  organizerLobbyMode = true
+  organizerLegacyInvites = true
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  await page.getByRole('button', { name: 'Open lobby' }).click()
+  await expect(page.locator('.locked-note')).toContainText('Existing invitation links are still active')
+  await expect(page.locator('.locked-note')).toContainText('Replace codes only when you are ready to invalidate every older QR code and link')
+  await expect(page.locator('.invite-card')).toHaveCount(0)
+
+  page.once('dialog', dialog => dialog.dismiss())
+  await page.getByRole('button', { name: 'Replace codes' }).click()
+
+  await expect.poll(() => organizerInviteRotationCalls).toBe(0)
+  await expect(page.locator('.locked-note')).toContainText('Existing invitation links are still active')
 })
 
 test('organizer can join an assigned team and return to hunt management', async ({ page }) => {
