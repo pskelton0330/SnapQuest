@@ -14,6 +14,8 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
     { name: 'mobile-chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    { name: 'mobile-webkit', use: { ...devices['iPhone 13'] } },
   ],
   webServer: {
     command: 'npm run build && npm run preview -- --host 127.0.0.1 --port 4173 --strictPort',

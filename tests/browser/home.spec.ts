@@ -40,6 +40,27 @@ async function expectKeyboardCanReach(page: import('@playwright/test').Page, tar
   throw new Error('Keyboard navigation did not reach the expected control within 100 Tab presses')
 }
 
+async function grantClipboardAccess(page: import('@playwright/test').Page) {
+  const browserName = page.context().browser()?.browserType().name()
+  if (browserName === 'webkit') {
+    const installClipboard = () => {
+      let clipboardText = ''
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          writeText: async (text: string) => { clipboardText = text },
+          readText: async () => clipboardText,
+        },
+      })
+    }
+    await page.addInitScript(installClipboard)
+    if (page.url() !== 'about:blank') await page.evaluate(installClipboard)
+    return
+  }
+
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+}
+
 async function expectNoHorizontalOverflowAt200Percent(page: import('@playwright/test').Page, route: string) {
   await page.setViewportSize({ width: 320, height: 844 })
   await page.evaluate(() => { document.documentElement.style.fontSize = '200%' })
@@ -912,7 +933,7 @@ test('participant sees final standings and winner celebration after results publ
   await expect(caption).toBeVisible()
   await expect(caption).toContainText('Team Cedar won Spring Photo Hunt with 15 points')
   const captionText = (await caption.textContent())?.trim()
-  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await grantClipboardAccess(page)
   await page.getByRole('button', { name: 'Copy caption' }).click()
   await expect(page.getByRole('button', { name: 'Caption copied' })).toBeVisible()
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(captionText)
@@ -1602,7 +1623,7 @@ test('organizer can reschedule a hunt from its lobby', async ({ page }) => {
 
 test('organizer can copy a team invitation from the QR code card', async ({ page }) => {
   organizerLobbyMode = true
-  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await grantClipboardAccess(page)
   await restoreOrganizerSession(page)
   await page.goto('/#/')
   await page.getByRole('button', { name: 'My hunts' }).click()
@@ -1710,7 +1731,7 @@ test('organizer winner card picker offers each team tied for first', async ({ pa
   await expect(page.getByRole('img', { name: 'Winner celebration card for Team Maple' })).toBeVisible()
   const caption = page.locator('.celebration-caption')
   await expect(caption).toContainText('Team Maple')
-  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await grantClipboardAccess(page)
   await page.getByRole('button', { name: 'Copy caption' }).click()
   await expect(page.getByRole('button', { name: 'Caption copied' })).toBeVisible()
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe((await caption.textContent())?.trim())
