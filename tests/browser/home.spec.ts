@@ -723,6 +723,28 @@ test('organizer can start a scheduled hunt immediately, end it, and open photo r
   await expect(page.getByRole('button', { name: 'Finalize results' })).toBeDisabled()
 })
 
+test('organizer can reschedule a hunt from its lobby', async ({ page }) => {
+  organizerLobbyMode = true
+  await restoreOrganizerSession(page)
+  await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
+  const { localStart, expectedStart } = await page.evaluate(() => {
+    const date = new Date(Date.now() + 2 * 60 * 60_000)
+    date.setSeconds(0, 0)
+    const pad = (value: number) => String(value).padStart(2, '0')
+    return {
+      localStart: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`,
+      expectedStart: date.toISOString(),
+    }
+  })
+  const requestPromise = page.waitForRequest(request => request.url().includes('/rest/v1/rpc/reschedule_game'))
+  await page.getByLabel('New start time').fill(localStart)
+  await page.getByRole('button', { name: 'Save new time' }).click()
+  const request = await requestPromise
+  const body = request.postDataJSON() as { p_game_id: string; p_start_at: string }
+  expect(body.p_game_id).toBe('33333333-3333-4333-8333-333333333333')
+  expect(new Date(body.p_start_at).toISOString()).toBe(expectedStart)
+})
+
 test('organizer can copy a team invitation from the QR code card', async ({ page }) => {
   organizerLobbyMode = true
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])

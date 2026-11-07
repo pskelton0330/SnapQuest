@@ -5,9 +5,9 @@ Historical environment snapshot: November 3, 2026. Environment: managed Windows 
 ## Current automated evidence (November 6, 2026)
 
 - Local `npm.cmd test`: 79/79 unit and PGlite tests passed.
-- Local `npm.cmd run test:e2e`: 78/78 Chromium desktop and mobile browser cases passed, including invite/session recovery, organizer start/end/review, photo and selfie failure handling, chat retry/paging/offline feedback, gallery approval/vote refresh, and tied/zero-score celebration behavior.
+- Local `npm.cmd run test:e2e`: 80/80 Chromium desktop and mobile browser cases passed, including invite/session recovery, organizer rescheduling/start/end/review, photo and selfie failure handling, chat retry/paging/offline feedback, gallery approval/vote refresh, and tied/zero-score celebration behavior.
 - Local `npm.cmd run lint` and `npm.cmd run build` passed. The production JS entry is 135.04 KiB gzip against the 150 KiB budget.
-- The latest application-code release verified on Pages is `73516f1`; GitHub Actions run `42317791859` passed, all 78 desktop/mobile browser cases passed in CI, and live `build-info.json` matched that commit. This build preserves loaded chat history during periodic/realtime message refresh.
+- The latest application-code release verified on Pages is `73516f1`; GitHub Actions run `42317791859` passed with 78 browser cases, and live `build-info.json` matched that commit. A newly added organizer rescheduling test brings the local suite to 80 cases; the two added desktop/mobile runs are awaiting CI.
 - A read-only `supabase migration list --linked` against production project `ykfkwczcomkhxaraqpuq` confirms migrations `202610280001` through `202611060022` are applied. `202611060023` (audit retention/pruning) and `202611060024` (stable chat pagination) are unapplied. A separate read-only impact query found one audit event total and zero older than 365 days, so 023 would prune no existing rows if applied now; its ongoing 365-day deletion rule still awaits explicit authorization.
 - These checks use mocked browser service responses and local PGlite; they do not prove live Storage HTTP policies, multi-connection PostgreSQL races, physical-device behavior, screen-reader usability, or real email delivery.
 
