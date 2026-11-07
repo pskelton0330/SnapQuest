@@ -37,18 +37,26 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     const { data: raw, error: loadError } = await supabase.rpc('get_hunt_review_gallery', { p_hunt_id: huntId })
     if (loadError) { if (requestId === galleryRequestId.current) setError(loadError.message); return }
     const next = raw as Omit<ReviewData, 'submissions'> & { submissions: ReviewData['submissions'] }
+    let previewUnavailable = false
     async function signedUrl(path: string) {
       const cached = signedUrlCache.current.get(path)
       if (cached && cached.expiresAt > Date.now() + 30_000) return cached.url
-      const { data: signed } = await supabase!.storage.from('hunt-photos').createSignedUrl(path, 300)
-      if (signed?.signedUrl) signedUrlCache.current.set(path, { url: signed.signedUrl, expiresAt: Date.now() + 270_000 })
-      return signed?.signedUrl
+      try {
+        const { data: signed, error: signError } = await supabase!.storage.from('hunt-photos').createSignedUrl(path, 300)
+        if (signError || !signed?.signedUrl) { previewUnavailable = true; return undefined }
+        signedUrlCache.current.set(path, { url: signed.signedUrl, expiresAt: Date.now() + 270_000 })
+        return signed.signedUrl
+      } catch {
+        previewUnavailable = true
+        return undefined
+      }
     }
     const photos = await Promise.all(next.submissions.map(async row => ({ ...row, photo_url: await signedUrl(row.storage_path) })))
     if (requestId !== galleryRequestId.current) return
     const { data: selfies } = await supabase.from('team_selfies').select('team_id,storage_path').eq('hunt_id', huntId)
     const teamSelfies = await Promise.all((selfies ?? []).map(async row => ({ ...row, photo_url: await signedUrl(row.storage_path) })))
     if (requestId !== galleryRequestId.current) return
+    if (previewUnavailable) void reportOperation(huntId, crypto.randomUUID(), 'review_preview_unavailable', 'failure', 'organizer_web')
     setData({ ...next, submissions: photos, team_selfies: teamSelfies })
     setError('')
   }, [huntId])

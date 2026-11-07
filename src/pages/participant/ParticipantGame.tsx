@@ -103,13 +103,21 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     if (galleryError) { setError(galleryError.message); return }
     const result = data as ReviewGallery
     const previous = reviewGalleryRef.current
+    let previewUnavailable = false
     const signed = await Promise.all(result.submissions.map(async photo => {
       const cached = previous?.submissions.find(row => row.storage_path === photo.storage_path && row.photo_url && (row.signed_until ?? 0) > Date.now() + 30_000)
       if (cached) return { ...photo, photo_url: cached.photo_url, signed_until: cached.signed_until }
-      const { data: url, error: signError } = await supabase!.storage.from('hunt-photos').createSignedUrl(photo.storage_path, 300)
-      return { ...photo, photo_url: signError ? undefined : url?.signedUrl, signed_until: url?.signedUrl ? Date.now() + 270_000 : undefined }
+      try {
+        const { data: url, error: signError } = await supabase!.storage.from('hunt-photos').createSignedUrl(photo.storage_path, 300)
+        if (signError || !url?.signedUrl) { previewUnavailable = true; return { ...photo, photo_url: undefined, signed_until: undefined } }
+        return { ...photo, photo_url: url.signedUrl, signed_until: Date.now() + 270_000 }
+      } catch {
+        previewUnavailable = true
+        return { ...photo, photo_url: undefined, signed_until: undefined }
+      }
     }))
     if (requestId !== galleryRequestId.current) return
+    if (previewUnavailable) void reportOperation(huntId, crypto.randomUUID(), 'review_preview_unavailable', 'failure')
     const next = { ...result, submissions: signed }
     reviewGalleryRef.current = next
     setReviewGallery(next)

@@ -64,6 +64,7 @@ let chatStableCursorCalls = 0
 let chatLegacyCursorCalls = 0
 let auditReports: Record<string, unknown>[] = []
 let signedPreviewMode = false
+let signedPreviewFailure = false
 let signedPreviewRequests = 0
 let participantReviewPhotoStatus: 'pending' | 'approved' | 'rejected' | null = null
 let participantReviewVotingMode = false
@@ -115,6 +116,7 @@ test.beforeEach(async ({ page }) => {
   chatLegacyCursorCalls = 0
   auditReports = []
   signedPreviewMode = false
+  signedPreviewFailure = false
   signedPreviewRequests = 0
   participantReviewPhotoStatus = null
   participantReviewVotingMode = false
@@ -179,6 +181,10 @@ test.beforeEach(async ({ page }) => {
         return
       }
       if (signedPreviewMode) {
+        if (signedPreviewFailure) {
+          await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'simulated signed URL authorization failure' }) })
+          return
+        }
         signedPreviewRequests++
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ signedURL: `/storage/v1/object/sign/hunt-photos/test/photo.jpg?token=preview-${signedPreviewRequests}` }) })
         return
@@ -1036,6 +1042,22 @@ test('participant review gallery refreshes signed previews when the page returns
   }
 })
 
+test('participant signed-preview failures create a privacy-safe diagnostic event', async ({ page }) => {
+  participantRuntimeState = 'completed'
+  signedPreviewMode = true
+  signedPreviewFailure = true
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText('Final results')).toBeVisible()
+  await expect(page.getByText('Photo preview unavailable')).toBeVisible()
+  await expect.poll(() => auditReports.some(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'review_preview_unavailable')).toBe(true)
+  const report = auditReports.find(entry => (entry.p_details as Record<string, unknown> | undefined)?.stage === 'review_preview_unavailable')
+  expect(report?.p_outcome).toBe('failure')
+  expect((report?.p_details as Record<string, unknown> | undefined)?.app).toBe('participant_web')
+  expect(Object.keys(report?.p_details as Record<string, unknown>).sort()).toEqual(['app', 'client_report', 'operation_id', 'stage'])
+})
+
 test('organizer reviews a photo, changes its decision, and finalizes results', async ({ page }) => {
   organizerReviewMode = true
   await restoreOrganizerSession(page)
@@ -1127,6 +1149,23 @@ test('organizer review refreshes signed previews when the page returns to the fo
     await expect(galleryImage).toBeVisible()
     previousRequests = signedPreviewRequests
   }
+})
+
+test('organizer signed-preview failures create a privacy-safe diagnostic event', async ({ page }) => {
+  organizerReviewMode = true
+  signedPreviewMode = true
+  signedPreviewFailure = true
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  const hunt = page.getByRole('article').filter({ hasText: 'Spring Photo Hunt' })
+  await hunt.getByRole('button', { name: 'Review photos' }).click()
+  await expect(page.getByText('Preview unavailable')).toBeVisible()
+  await expect.poll(() => auditReports.some(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'review_preview_unavailable')).toBe(true)
+  const report = auditReports.find(entry => (entry.p_details as Record<string, unknown> | undefined)?.stage === 'review_preview_unavailable')
+  expect(report?.p_outcome).toBe('failure')
+  expect((report?.p_details as Record<string, unknown> | undefined)?.app).toBe('organizer_web')
+  expect(Object.keys(report?.p_details as Record<string, unknown>).sort()).toEqual(['app', 'client_report', 'operation_id', 'stage'])
 })
 
 test('organizer can retry a photo whose signed preview failed', async ({ page }) => {
