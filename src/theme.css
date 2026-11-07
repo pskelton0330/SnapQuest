@@ -737,3 +737,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .builder-main>p{color:#626570}
 .optional,.builder-field .optional{color:#696565}
 .locked-note{color:#615d66}
+.production-challenge-import{margin-top:12px;padding:12px;border:1px solid var(--sq-line);border-radius:10px;background:#fffefa}
+.production-challenge-import summary{color:var(--sq-blue);font-size:12px;font-weight:700;cursor:pointer}
+.production-challenge-import>p{color:#626570;font-size:11px;line-height:1.5}
+.production-challenge-import textarea{width:100%;min-height:100px;border:1px solid var(--sq-line);border-radius:8px;padding:10px;color:var(--sq-ink);font:inherit;resize:vertical}
+.production-challenge-import>.outline-button{margin-top:8px}
