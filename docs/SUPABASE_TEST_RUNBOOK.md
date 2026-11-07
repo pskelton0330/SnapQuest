@@ -2,7 +2,7 @@
 
 Use an isolated test hunt and test email accounts. Never paste invitation tokens, email magic links, service-role keys, or private photo URLs into notes or bug reports.
 
-> **Migration status (November 6, 2026):** The linked production project was checked read-only and has migrations `202610280001` through `202611060022` applied. Source migrations `202611060023` and `202611060024` are not applied there. Migration 023 prunes diagnostic rows older than 365 days; do not apply either pending migration to production without a reviewed change plan and explicit operator approval. The historical setup instructions below apply to an isolated test project only.
+> **Migration status (November 7, 2026):** The linked production project was checked read-only and has migrations `202610280001` through `202611060022` applied. Source migrations `202611060023` (non-destructive audit validation), `202611060024` (chat pagination), and `202611070025` (365-day audit-event pruning) are not applied there. Test 023/024 on an isolated project before production; 025 also requires explicit owner approval because it deletes older diagnostic rows. The historical setup instructions below apply to an isolated test project only.
 
 ## 1. Public deployment smoke test
 
@@ -41,7 +41,7 @@ The result must be `true` before testing progress bars.
 
 Use a dedicated Supabase project with synthetic accounts and hunts for hosted Auth, Storage HTTP, PostgreSQL concurrency, RLS, and Realtime tests. Confirm the project name and reference in the dashboard before running SQL. Do not use the production project for destructive, race, or migration experiments.
 
-For a new test project, apply every file in `supabase/migrations/` in filename order through that project’s SQL Editor or the Supabase CLI. Open the [Supabase projects dashboard](https://supabase.com/dashboard/projects), select the test project, and choose **SQL Editor**. For an existing project, compare its migration history and schema first; never rerun migrations blindly. Validate 023’s exact prune behavior with synthetic expired audit rows in the test project before requesting production approval.
+For a new test project, apply migrations through 024 in filename order through that project’s SQL Editor or the Supabase CLI. Open the [Supabase projects dashboard](https://supabase.com/dashboard/projects), select the test project, and choose **SQL Editor**. For an existing project, compare its migration history and schema first; never rerun migrations blindly. Apply migration 025 only after the owner approves the 365-day policy, then validate its exact prune behavior with synthetic expired audit rows in the test project before any production application.
 
 ## 4. Verify the game-management RPCs
 

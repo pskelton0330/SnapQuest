@@ -13,7 +13,7 @@
 | Challenge photos | Private Storage; accepted submissions are tied to team/challenge slots. Participants may replace a slot under server-enforced timing/version rules; organizers review and score. | Failed unreferenced uploads can be cleaned up and retry failures are queued locally. Referenced media is protected from ordinary cleanup. There is no coordinated user-requested or scheduled deletion process. |
 | Votes, review decisions, and finalized scores | Stored in Postgres; final results use an immutable server-side score snapshot. | Finalized results remain available to existing members. No approved duration, removal request workflow, or retention field is configured. |
 | Hunt chat | Hunt members can read and send while the hunt is open; closed hunts are read-only. Message content is not included in diagnostic events. | No chat-specific deletion or retention schedule is configured. Migration `202611060024` is not yet applied to production as of the November 6, 2026 read-only audit. |
-| Diagnostic events | Operation/stage/outcome metadata; client reports use an allowlist and omit photo bytes, invitation tokens, signed URLs, and chat bodies. | Migration `202611060023` proposes pruning events older than 365 days on log reads/writes. It is not applied to production and requires explicit operator authorization. No 365-day production promise should be made yet. |
+| Diagnostic events | Operation/stage/outcome metadata; client reports use an allowlist and omit photo bytes, invitation tokens, signed URLs, and chat bodies. | Migration `202611060023` hardens client event validation without deletion. Separate migration `202611070025` proposes pruning events older than 365 days on log reads/writes. It is not applied to production and requires explicit operator authorization. No 365-day production promise should be made yet. |
 
 ## Proposed product rules
 
@@ -30,9 +30,9 @@
 - How long should finalized results and chat remain available to members? Should closing an account remove results, anonymize names, or preserve event history?
 - What deletion controls should organizers and participants have, and what proof/confirmation is required before removing shared hunt data?
 - What are the actual Supabase backup, Auth, and Storage deletion/restore periods for the selected plan and configuration?
-- Should diagnostic-event expiry remain 365 days? Approve migration 023 only after reviewing its exact affected-row scope and test-project behavior.
+- Should diagnostic-event expiry remain 365 days? Approve migration 025 only after reviewing its exact affected-row scope and test-project behavior.
 - Should invitation recovery secrets expire automatically after hunt completion, and when should encrypted values be removed?
 
 ## Release gate
 
-Before publishing retention or deletion claims, approve these decisions, implement and test the relevant database and Storage workflows in an isolated Supabase project, document partial-failure recovery, then update the user-facing privacy notice. Do not apply migration 023 or perform bulk deletion as part of this proposal.
+Before publishing retention or deletion claims, approve these decisions, implement and test the relevant database and Storage workflows in an isolated Supabase project, document partial-failure recovery, then update the user-facing privacy notice. Do not apply migration 025 or perform bulk deletion as part of this proposal.

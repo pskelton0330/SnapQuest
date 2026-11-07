@@ -8,7 +8,7 @@ import { calculateTeamScores, normalizeFinalScores, winningTeams } from '../src/
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, auditSafetyMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration
+let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -47,6 +47,7 @@ before(async () => {
     if(file.includes('0022')) { inviteClosedMigration=sql; continue }
     if(file.includes('0023')) { auditSafetyMigration=sql; continue }
     if(file.includes('0024')) { chatCursorMigration=sql; continue }
+    if(file.includes('0025')) { auditRetentionMigration=sql; continue }
     await db.exec(sql)
   }
   await db.query('insert into auth.users(id) values ($1),($2)',[owner,other])
@@ -74,6 +75,7 @@ before(async () => {
   await db.query("insert into public.audit_events(actor_user_id,hunt_id,event_type,outcome,details,created_at) values($1,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','old_test_event','notice','{}'::jsonb,clock_timestamp()-interval '366 days')",[owner])
   await db.exec(auditSafetyMigration)
   await db.exec(chatCursorMigration)
+  await db.exec(auditRetentionMigration)
 })
 after(async()=> { await db?.close() })
 async function snapshot() {
@@ -114,6 +116,8 @@ test('organizer audit events record timing operations and stay owner-scoped',asy
   await assert.rejects(as('authenticated',other,"select public.record_audit_event('probe',$1,'notice','{}'::jsonb)",[id]))
 })
 test('client audit events are source-labeled, sanitized, and expire after one year',async()=>{
+  assert.doesNotMatch(auditSafetyMigration,/delete\s+from\s+public\.audit_events/i)
+  assert.match(auditRetentionMigration,/delete\s+from\s+public\.audit_events[\s\S]*interval '365 days'/i)
   const legacy=(await db.query("select id from public.hunt_templates where legacy_game_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'")).rows[0].id
   const id=(await as('authenticated',owner,'select public.create_game_from_template($1) id',[legacy])).rows[0].id
   await as('authenticated',owner,"select * from public.configure_game($1,'Audit privacy',60,array['Red','Blue'],'organizer',clock_timestamp()+interval '1 hour')",[id])

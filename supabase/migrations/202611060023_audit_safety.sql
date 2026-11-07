@@ -1,35 +1,5 @@
 begin;
 
--- A small time index makes the bounded retention cleanup cheap as the log grows.
-create index if not exists audit_events_created_idx on public.audit_events(created_at);
-
--- Retention is applied on all audit writes and when an organizer opens the log.
--- This avoids relying on pg_cron being enabled in the Supabase project.
-create or replace function public.prune_expired_audit_events()
-returns void
-language plpgsql security definer set search_path = '' as $$
-begin
-  delete from public.audit_events
-  where created_at < clock_timestamp() - interval '365 days';
-end;
-$$;
-revoke all on function public.prune_expired_audit_events() from public, anon, authenticated;
-
-create or replace function public.audit_events_retention_trigger()
-returns trigger
-language plpgsql security definer set search_path = '' as $$
-begin
-  perform public.prune_expired_audit_events();
-  return null;
-end;
-$$;
-revoke all on function public.audit_events_retention_trigger() from public, anon, authenticated;
-
-drop trigger if exists audit_events_retention on public.audit_events;
-create trigger audit_events_retention
-after insert on public.audit_events
-for each statement execute function public.audit_events_retention_trigger();
-
 create or replace function public.record_audit_event(
   p_event_type text,
   p_hunt_id uuid default null,
@@ -88,7 +58,6 @@ returns jsonb
 language plpgsql security definer set search_path = '' as $$
 begin
   if auth.uid() is null or not public.is_hunt_organizer(p_hunt_id) then raise exception 'Organizer access required'; end if;
-  perform public.prune_expired_audit_events();
   return coalesce((select jsonb_agg(jsonb_build_object(
     'id',a.id,'created_at',a.created_at,'actor_user_id',a.actor_user_id,
     'event_type',a.event_type,'outcome',a.outcome,'details',a.details,
