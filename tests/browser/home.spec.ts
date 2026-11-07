@@ -1624,6 +1624,9 @@ test('organizer can start a scheduled hunt immediately, end it, and open photo r
   await expect(page.getByRole('region', { name: 'Hunt status' })).toContainText('joined across')
   await expect(page.getByRole('region', { name: 'Hunt status' }).locator('[aria-current="step"]')).toHaveText('Waiting')
   await expect(page.getByText('More hunt controls')).toBeVisible()
+  const sectionNav = page.getByRole('navigation', { name: 'Hunt sections' })
+  await expect(sectionNav.getByRole('button', { name: 'Teams & invitations' })).toBeVisible()
+  await expect(sectionNav.getByRole('button', { name: 'Hunt chat' })).toBeVisible()
   const controls = page.getByRole('region', { name: 'Hunt controls' })
   await expect(controls.getByRole('button', { name: 'Start hunt now' })).toBeVisible()
   expect(await controls.evaluate(element => {
@@ -1654,6 +1657,31 @@ test('organizer lobby follows the server when a scheduled hunt starts', async ({
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
   await expect(page.getByRole('region', { name: 'Hunt status' }).locator('[aria-current="step"]')).toHaveText('Review')
   await expect(page.getByRole('region', { name: 'Hunt status' }).getByRole('button', { name: 'Review photos' })).toBeVisible()
+})
+
+test('organizer sees when hunt status could not be refreshed and can retry', async ({ page }) => {
+  organizerLobbyMode = true
+  let fail = true
+  await page.route('**/rest/v1/rpc/get_game_lobby', route => fail
+    ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'Unavailable' }) })
+    : route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ runtime_state: 'active' }) }))
+  await restoreOrganizerSession(page)
+  await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
+  await expect(page.getByText('Hunt status may be out of date.')).toBeVisible()
+  fail = false
+  await page.getByRole('region', { name: 'Hunt status' }).getByRole('button', { name: 'Retry' }).click()
+  await expect(page.getByRole('heading', { name: 'Hunt in progress' })).toBeVisible()
+  await expect(page.getByText('Hunt status may be out of date.')).toHaveCount(0)
+})
+
+test('organizer lobby updates timing from the server', async ({ page }) => {
+  organizerLobbyMode = true
+  const start = new Date(Date.now() + 60 * 60_000)
+  const end = new Date(start.getTime() + 90 * 60_000)
+  await page.route('**/rest/v1/rpc/get_game_lobby', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ runtime_state: 'scheduled', start_at: start.toISOString(), ends_at: end.toISOString() }) }))
+  await restoreOrganizerSession(page)
+  await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
+  await expect(page.getByText('90 minute time limit')).toBeVisible()
 })
 
 test('organizer start failure is recorded with an organizer operation trace', async ({ page }) => {
