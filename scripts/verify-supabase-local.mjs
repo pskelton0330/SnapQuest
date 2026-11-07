@@ -237,6 +237,14 @@ try {
       p_body: realtimeMessageBody,
     })
     assert.ifError(realtimeSendError)
+    for (const [client, audience] of [[organizer, 'organizer'], [participantOne, 'participant']]) {
+      const { data: visibleRows, error: visibleRowsError } = await client
+        .from('hunt_messages')
+        .select('id')
+        .eq('id', realtimeSentMessage.id)
+      assert.ifError(visibleRowsError)
+      assert.equal(visibleRows?.length, 1, `${audience} RLS must allow reading the inserted chat row`)
+    }
     const [organizerReceived, organizerUnfilteredReceived, participantReceived] = await Promise.all([
       withTimeout(organizerRealtime.message, 'Organizer chat Realtime delivery'),
       withTimeout(organizerUnfilteredRealtime.message, 'Unfiltered organizer chat Realtime delivery'),
