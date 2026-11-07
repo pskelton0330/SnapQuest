@@ -202,47 +202,53 @@ try {
   objectPaths.splice(objectPaths.indexOf(cleanupPath), 1)
   console.log('Unreferenced same-team object cleanup succeeds.')
 
-  const concurrentPathOne = `${huntId}/${teamOne.team_id}/${firstItem.id}/${randomUUID()}.jpg`
-  const concurrentPathTwo = `${huntId}/${teamOne.team_id}/${firstItem.id}/${randomUUID()}.jpg`
-  for (const [client, path] of [[participantOne, concurrentPathOne], [participantOneConcurrent, concurrentPathTwo]]) {
-    const { error } = await client.storage.from('hunt-photos').upload(path, jpeg, { contentType: 'image/jpeg' })
+  let currentPath = replacePath
+  let savedSubmission
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const candidateOne = `${huntId}/${teamOne.team_id}/${firstItem.id}/${randomUUID()}.jpg`
+    const candidateTwo = `${huntId}/${teamOne.team_id}/${firstItem.id}/${randomUUID()}.jpg`
+    for (const [client, path] of [[participantOne, candidateOne], [participantOneConcurrent, candidateTwo]]) {
+      const { error } = await client.storage.from('hunt-photos').upload(path, jpeg, { contentType: 'image/jpeg' })
+      assert.ifError(error)
+      objectPaths.push(path)
+    }
+    const [resultOne, resultTwo] = await Promise.all([
+      participantOne.rpc('submit_hunt_photo', {
+        p_hunt_item_id: firstItem.id,
+        p_storage_path: candidateOne,
+        p_expected_storage_path: currentPath,
+      }),
+      participantOneConcurrent.rpc('submit_hunt_photo', {
+        p_hunt_item_id: firstItem.id,
+        p_storage_path: candidateTwo,
+        p_expected_storage_path: currentPath,
+      }),
+    ])
+    const raceResults = [resultOne, resultTwo]
+    assert.equal(raceResults.filter((result) => !result.error).length, 1, `Exactly one concurrent replacement should win in attempt ${attempt}`)
+    assert.equal(raceResults.filter((result) => result.error).length, 1, `The stale concurrent replacement should be rejected in attempt ${attempt}`)
+    assert.equal(raceResults.find((result) => !result.error).data?.accepted, true)
+    const { data, error } = await admin
+      .from('submissions')
+      .select('id,storage_path')
+      .eq('hunt_id', huntId)
+      .single()
     assert.ifError(error)
-    objectPaths.push(path)
+    savedSubmission = data
+    const winningPath = resultOne.error ? candidateTwo : candidateOne
+    const losingPath = resultOne.error ? candidateOne : candidateTwo
+    assert.equal(savedSubmission.storage_path, winningPath, `Attempt ${attempt} must leave the accepted path referenced`)
+    const { error: staleCleanupError } = await participantOne.storage.from('hunt-photos').remove([losingPath])
+    assert.ifError(staleCleanupError)
+    await assertObjectMissing(losingPath, `Attempt ${attempt} rejected upload should be removable as unreferenced`)
+    objectPaths.splice(objectPaths.indexOf(losingPath), 1)
+    const { error: replacedCleanupError } = await participantOne.storage.from('hunt-photos').remove([currentPath])
+    assert.ifError(replacedCleanupError)
+    await assertObjectMissing(currentPath, `Attempt ${attempt} prior version should be removable after replacement`)
+    objectPaths.splice(objectPaths.indexOf(currentPath), 1)
+    currentPath = winningPath
   }
-  const [raceOne, raceTwo] = await Promise.all([
-    participantOne.rpc('submit_hunt_photo', {
-      p_hunt_item_id: firstItem.id,
-      p_storage_path: concurrentPathOne,
-      p_expected_storage_path: replacePath,
-    }),
-    participantOneConcurrent.rpc('submit_hunt_photo', {
-      p_hunt_item_id: firstItem.id,
-      p_storage_path: concurrentPathTwo,
-      p_expected_storage_path: replacePath,
-    }),
-  ])
-  const raceResults = [raceOne, raceTwo]
-  assert.equal(raceResults.filter((result) => !result.error).length, 1, 'Exactly one concurrent replacement should win')
-  assert.equal(raceResults.filter((result) => result.error).length, 1, 'The stale concurrent replacement should be rejected')
-  assert.equal(raceResults.find((result) => !result.error).data?.accepted, true)
-  const { data: savedSubmission, error: savedSubmissionError } = await admin
-    .from('submissions')
-    .select('id,storage_path')
-    .eq('hunt_id', huntId)
-    .single()
-  assert.ifError(savedSubmissionError)
-  const winningPath = raceOne.error ? concurrentPathTwo : concurrentPathOne
-  const losingPath = raceOne.error ? concurrentPathOne : concurrentPathTwo
-  assert.equal(savedSubmission.storage_path, winningPath, 'The stored submission must match the one accepted replacement')
-  const { error: staleCleanupError } = await participantOne.storage.from('hunt-photos').remove([losingPath])
-  assert.ifError(staleCleanupError)
-  await assertObjectMissing(losingPath, 'The rejected concurrent upload should be removable as unreferenced')
-  objectPaths.splice(objectPaths.indexOf(losingPath), 1)
-  const { error: replacedCleanupError } = await participantOne.storage.from('hunt-photos').remove([replacePath])
-  assert.ifError(replacedCleanupError)
-  await assertObjectMissing(replacePath, 'The prior version should be removable after concurrent replacement')
-  objectPaths.splice(objectPaths.indexOf(replacePath), 1)
-  console.log('Concurrent same-slot photo replacements serialize: exactly one succeeds, and only its path is referenced.')
+  console.log('Five concurrent same-slot photo replacement races each select one winner and leave only that path referenced.')
 
   const { error: endHuntError } = await organizer.rpc('end_hunt_early', { p_hunt_id: huntId })
   assert.ifError(endHuntError)
