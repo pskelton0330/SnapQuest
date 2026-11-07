@@ -246,11 +246,18 @@ try {
 
   const { error: endHuntError } = await organizer.rpc('end_hunt_early', { p_hunt_id: huntId })
   assert.ifError(endHuntError)
-  const { error: reviewError } = await organizer.rpc('review_submission', {
-    p_submission_id: savedSubmission.id,
-    p_decision: 'approved',
-  })
-  assert.ifError(reviewError)
+  const [reviewRace, finalizeRace] = await Promise.all([
+    organizer.rpc('review_submission', {
+      p_submission_id: savedSubmission.id,
+      p_decision: 'approved',
+    }),
+    organizerConcurrent.rpc('finalize_hunt', { p_hunt_id: huntId }),
+  ])
+  assert.ifError(reviewRace.error)
+  if (finalizeRace.error) {
+    assert.match(finalizeRace.error.message, /Review or reject every submitted photo before finalizing/)
+  }
+  console.log('Concurrent review/finalize preserves the pending-review guard and allows the decision to complete.')
   const [finalizeOne, finalizeTwo] = await Promise.all([
     organizer.rpc('finalize_hunt', { p_hunt_id: huntId }),
     organizerConcurrent.rpc('finalize_hunt', { p_hunt_id: huntId }),
