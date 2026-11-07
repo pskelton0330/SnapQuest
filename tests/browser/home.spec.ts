@@ -30,6 +30,7 @@ let chatSendFailures = 0
 let chatLegacyRpcMode = false
 let chatStableCursorCalls = 0
 let chatLegacyCursorCalls = 0
+let auditReports: Record<string, unknown>[] = []
 let signedPreviewMode = false
 let signedPreviewRequests = 0
 let participantReviewPhotoStatus: 'pending' | 'approved' | 'rejected' | null = null
@@ -67,6 +68,7 @@ test.beforeEach(async ({ page }) => {
   chatLegacyRpcMode = false
   chatStableCursorCalls = 0
   chatLegacyCursorCalls = 0
+  auditReports = []
   signedPreviewMode = false
   signedPreviewRequests = 0
   participantReviewPhotoStatus = null
@@ -76,6 +78,18 @@ test.beforeEach(async ({ page }) => {
   participantZeroScoreMode = false
   await page.context().route('https://test-project.supabase.co/**', async route => {
     const request = route.request()
+    if (request.url().includes('/rest/v1/rpc/record_audit_event')) {
+      auditReports.push(request.postDataJSON() as Record<string, unknown>)
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('00000000-0000-4000-8000-000000000001') })
+      return
+    }
+    if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/list_hunt_audit_events')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
+        { id: 'client-event', created_at: '2026-11-01T17:10:00Z', event_type: 'client_operation', outcome: 'failure', details: { client_report: true, operation_id: '12121212-1212-4121-8121-121212121212', stage: 'chat_send_failed', app: 'organizer_web' } },
+        { id: 'server-event', created_at: '2026-11-01T17:09:00Z', event_type: 'game_start_now', outcome: 'success', details: {}, source: 'server-authoritative' },
+      ]) })
+      return
+    }
     if (request.method() === 'GET' && request.url().includes('/storage/v1/object/sign/hunt-photos/') && (signedPreviewMode || photoReplacementRaceMode)) {
       const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
       await route.fulfill({ status: 200, contentType: 'image/png', body: png })
@@ -764,6 +778,10 @@ test('organizer reviews a photo, changes its decision, and finalizes results', a
   await expect(page.getByText('Preview unavailable')).toBeVisible()
   await page.getByRole('button', { name: 'Approve' }).click()
   await expect(page.getByRole('button', { name: 'Change decision to rejected' })).toBeVisible()
+  await expect.poll(() => auditReports.some(report => {
+    const details = report.p_details as Record<string, unknown> | undefined
+    return details?.app === 'organizer_web' && details?.stage === 'review_approved_confirmed'
+  })).toBe(true)
   await page.getByRole('button', { name: 'Change decision to rejected' }).click()
   await expect(page.getByRole('button', { name: 'Change decision to approved' })).toBeVisible()
   await page.getByRole('button', { name: 'Change decision to approved' }).click()
@@ -961,6 +979,16 @@ test('hunt chat offers retry after read failure and keeps a message after send f
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect(chatError).toContainText('simulated chat send failure')
   await expect(message).toHaveValue('Please meet by the fountain')
+  await expect.poll(() => auditReports.some(report => {
+    const details = report.p_details as Record<string, unknown> | undefined
+    return details?.stage === 'chat_send_failed' && details?.app === 'organizer_web'
+  })).toBe(true)
+  const diagnostics = page.locator('.hunt-diagnostics')
+  await diagnostics.locator('summary').click()
+  await expect(diagnostics).toContainText('Client reported')
+  await expect(diagnostics).toContainText('Server authoritative')
+  await expect(diagnostics).toContainText('The log is visible to the hunt organizer')
+  await expect(diagnostics).not.toContainText('365 days')
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect(message).toHaveValue('')
   await expect(page.locator('.hunt-chat-messages').getByText('Please meet by the fountain')).toBeVisible()

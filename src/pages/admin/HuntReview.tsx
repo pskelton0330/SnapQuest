@@ -87,8 +87,8 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     const operationId = crypto.randomUUID()
     setBusy(id); setError('')
     const { error: actionError } = await supabase.rpc('review_submission', { p_submission_id: id, p_decision: decision })
-    if (actionError) { setError(actionError.message); void reportOperation(huntId, operationId, 'review_decision_failed', 'failure') }
-    else { void reportOperation(huntId, operationId, `review_${decision}_confirmed`, 'success'); await load(); onChanged() }
+    if (actionError) { setError(actionError.message); void reportOperation(huntId, operationId, 'review_decision_failed', 'failure', 'organizer_web') }
+    else { void reportOperation(huntId, operationId, `review_${decision}_confirmed`, 'success', 'organizer_web'); await load(); onChanged() }
     setBusy('')
   }
 
@@ -97,8 +97,8 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     const operationId = crypto.randomUUID()
     setBusy('review'); setError('')
     const { error: actionError } = await supabase.rpc('begin_hunt_review', { p_hunt_id: huntId })
-    if (actionError) { setError(actionError.message); void reportOperation(huntId, operationId, 'begin_review_failed', 'failure') }
-    else { void reportOperation(huntId, operationId, 'review_opened', 'success'); await load(); onChanged() }
+    if (actionError) { setError(actionError.message); void reportOperation(huntId, operationId, 'begin_review_failed', 'failure', 'organizer_web') }
+    else { void reportOperation(huntId, operationId, 'review_opened', 'success', 'organizer_web'); await load(); onChanged() }
     setBusy('')
   }
 
@@ -107,8 +107,8 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     const operationId = crypto.randomUUID()
     setBusy('finalize'); setError('')
     const { error: actionError } = await supabase.rpc('finalize_hunt', { p_hunt_id: huntId })
-    if (actionError) { setError(actionError.message); void reportOperation(huntId, operationId, 'finalization_failed', 'failure') }
-    else { void reportOperation(huntId, operationId, 'finalization_confirmed', 'success'); setConfirmFinalize(false); await load(); onChanged() }
+    if (actionError) { setError(actionError.message); void reportOperation(huntId, operationId, 'finalization_failed', 'failure', 'organizer_web') }
+    else { void reportOperation(huntId, operationId, 'finalization_confirmed', 'success', 'organizer_web'); setConfirmFinalize(false); await load(); onChanged() }
     setBusy('')
   }
 

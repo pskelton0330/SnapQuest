@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { LoaderCircle, MessageCircle, Send } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { reportOperation } from '../lib/operationLog'
+import type { OperationApp } from '../lib/operationLog'
 import { countNewMessages } from '../lib/chatMessages'
 
 type HuntMessage = { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }
 
-export default function HuntChat({ huntId, compact = false, readOnly = false }: { huntId: string; compact?: boolean; readOnly?: boolean }) {
+export default function HuntChat({ huntId, compact = false, readOnly = false, app = 'participant_web' }: { huntId: string; compact?: boolean; readOnly?: boolean; app?: OperationApp }) {
   const [messages, setMessages] = useState<HuntMessage[]>([])
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(true)
@@ -41,7 +42,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
     }
     const { data, error: loadError } = result
     if (id !== requestId.current) return
-    if (loadError) { void reportOperation(huntId, crypto.randomUUID(), 'chat_load_failed', 'failure'); setError('Messages could not be refreshed. Check your connection and retry.'); setLoading(false); setLoadingOlder(false); return }
+    if (loadError) { void reportOperation(huntId, crypto.randomUUID(), 'chat_load_failed', 'failure', app); setError('Messages could not be refreshed. Check your connection and retry.'); setLoading(false); setLoadingOlder(false); return }
     const rows = Array.isArray(data) ? data as HuntMessage[] : []
     const page = older ? (rows.length > 100 ? rows.slice(1) : rows) : rows.slice(-100)
     const newHunt = !older && loadedHuntId.current !== huntId
@@ -63,7 +64,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
     if (older || newHunt) setHasOlder(usingLegacyPaging ? rows.length === 100 : rows.length > 100)
     if (!older) loadedHuntId.current = huntId
     setError(''); setLoading(false); setLoadingOlder(false)
-  }, [huntId])
+  }, [app, huntId])
 
   // Chat loads from its database-backed source on mount and when the user returns online.
   // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
@@ -96,7 +97,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
     const operationId = crypto.randomUUID()
     setSending(true); setError('')
     const { error: sendError } = await supabase.rpc('send_hunt_message', { p_hunt_id: huntId, p_body: body })
-    if (sendError) { setError(sendError.message); void reportOperation(huntId, operationId, 'chat_send_failed', 'failure') }
+    if (sendError) { setError(sendError.message); void reportOperation(huntId, operationId, 'chat_send_failed', 'failure', app) }
     else { setDraft(''); await loadMessages() }
     setSending(false)
   }
