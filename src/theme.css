@@ -734,3 +734,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .draft-item-reorder{display:flex;flex-direction:column;gap:4px;margin-top:20px}
 .draft-item-reorder .icon-button{padding:4px}
 @media(max-width:600px){.draft-item{grid-template-columns:22px minmax(0,1fr) 55px 25px 25px;gap:6px;padding:8px}}
+.builder-main>p{color:#626570}
+.optional,.builder-field .optional{color:#696565}
+.locked-note{color:#615d66}

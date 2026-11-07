@@ -646,11 +646,16 @@ test('restored organizer session opens the production organizer workspace', asyn
   await expect(returnToTeam).toHaveAttribute('href', '#/play/33333333-3333-4333-8333-333333333333')
 })
 
-test('organizer can reorder production hunt challenges before saving', async ({ page }) => {
+test('organizer hunt editor fits phone widths, passes axe, and reorders challenges', async ({ page }) => {
   await restoreOrganizerSession(page)
   await page.goto('/#/')
   await page.getByRole('button', { name: 'Create a hunt' }).first().click()
   await expect(page.getByRole('heading', { name: 'Create a venue hunt' })).toBeVisible()
+  for (const width of [320, 375, 390]) {
+    await page.setViewportSize({ width, height: 844 })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+  }
+  expect((await new AxeBuilder({ page }).analyze()).violations.map(violation => violation.id)).toEqual([])
   await page.getByLabel('Venue name').fill('Town Park')
   await page.getByRole('button', { name: 'Add item' }).click()
   await page.getByRole('button', { name: 'Add item' }).click()
