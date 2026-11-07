@@ -23,6 +23,31 @@ let savedDraftPayloads: Record<string, unknown>[] = []
 let organizerReviewStatus: 'review' | 'completed' = 'review'
 let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
 let organizerLobbyStatus: 'scheduled' | 'active' | 'review' = 'scheduled'
+
+async function expectKeyboardCanReach(page: import('@playwright/test').Page, target: import('@playwright/test').Locator) {
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+  })
+  for (let index = 0; index < 100; index++) {
+    await page.keyboard.press('Tab')
+    if (await target.evaluate(element => element === document.activeElement)) return
+  }
+  throw new Error('Keyboard navigation did not reach the expected control within 100 Tab presses')
+}
+
+async function expectNoHorizontalOverflowAt200Percent(page: import('@playwright/test').Page, route: string) {
+  await page.setViewportSize({ width: 320, height: 844 })
+  await page.evaluate(() => { document.documentElement.style.fontSize = '200%' })
+  const dimensions = await page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    content: document.documentElement.scrollWidth,
+    offenders: [...document.querySelectorAll<HTMLElement>('*')]
+      .map(element => ({ tag: element.tagName, className: typeof element.className === 'string' ? element.className : '', text: element.innerText?.slice(0, 70) ?? '', left: Math.round(element.getBoundingClientRect().left), right: Math.round(element.getBoundingClientRect().right), scroll: element.scrollWidth, client: element.clientWidth }))
+      .filter(element => element.right > document.documentElement.clientWidth + 1 || element.left < -1 || element.scroll > element.client + 2)
+      .slice(0, 12),
+  }))
+  expect(dimensions.content, `${route} horizontal overflow at 200% text size: ${JSON.stringify(dimensions.offenders)}`).toBeLessThanOrEqual(dimensions.viewport)
+}
 let organizerStartCalls = 0
 let organizerTimingFailure: 'start' | 'end' | 'add' | 'reschedule' | null = null
 let organizerMessages: { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }[] = []
@@ -466,6 +491,8 @@ test('player can join an invited team and reach the waiting lobby', async ({ pag
   }
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, nodes }) => ({ id, impact, help, nodes: nodes.map(node => ({ target: node.target, ...node.any[0]?.data })) })), null, 2)).toEqual([])
+  await expectKeyboardCanReach(page, page.getByLabel('Team name'))
+  await expectNoHorizontalOverflowAt200Percent(page, 'participant lobby')
 })
 
 test('saved team selfie stays saved when signing its preview fails', async ({ page }) => {
@@ -541,6 +568,8 @@ test('active participant game exposes the timer, team progress, and photo list',
   }
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, nodes }) => ({ id, impact, help, targets: nodes.map(node => node.target) })), null, 2)).toEqual([])
+  await expectKeyboardCanReach(page, page.getByRole('textbox', { name: 'Message' }))
+  await expectNoHorizontalOverflowAt200Percent(page, 'participant gameplay')
 })
 
 test('participant gameplay follows server time when the device clock is years behind', async ({ page }) => {
@@ -647,6 +676,7 @@ test('participant can see the post-hunt review gallery while the organizer revie
   }
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, targets }) => ({ id, impact, help, targets })), null, 2)).toEqual([])
+  await expectNoHorizontalOverflowAt200Percent(page, 'participant review gallery')
 })
 
 test('participant gallery explains pending approval and an unavailable approved photo preview', async ({ page }) => {
@@ -666,6 +696,8 @@ test('participant gallery explains pending approval and an unavailable approved 
   await expect(page.getByText('Photo preview unavailable')).toBeVisible()
   const retryPreview = page.getByRole('button', { name: 'Retry Team Cedar photo preview for A red leaf' })
   await expect(retryPreview).toBeVisible()
+  await expectKeyboardCanReach(page, retryPreview)
+  await expectNoHorizontalOverflowAt200Percent(page, 'participant review')
   signedPreviewMode = true
   await retryPreview.click()
   await expect(page.getByRole('img', { name: 'Team Cedar photo for A red leaf' })).toBeVisible()
@@ -711,6 +743,9 @@ test('participant sees final standings and winner celebration after results publ
   await expect(page.getByText('Final results')).toBeVisible()
   await expect(page.getByText('#1 Team Cedar')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Share team card' })).toBeVisible()
+  const shareButton = page.getByRole('button', { name: 'Share team card' })
+  await expectKeyboardCanReach(page, shareButton)
+  await expectNoHorizontalOverflowAt200Percent(page, 'participant results')
   await page.evaluate(() => Object.defineProperty(navigator, 'share', { configurable: true, value: undefined }))
   const cardDownloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Share team card' }).click()
@@ -803,7 +838,9 @@ test('organizer reviews a photo, changes its decision, and finalizes results', a
   await hunt.getByRole('button', { name: 'Review photos' }).click()
   await expect(page.getByRole('heading', { name: 'Spring Photo Hunt' })).toBeVisible()
   await expect(page.getByText('Preview unavailable')).toBeVisible()
-  await page.getByRole('button', { name: 'Approve' }).click()
+  const approveButton = page.getByRole('button', { name: 'Approve' })
+  await expectKeyboardCanReach(page, approveButton)
+  await approveButton.click()
   await expect(page.getByRole('button', { name: 'Change decision to rejected' })).toBeVisible()
   await expect.poll(() => auditReports.some(report => {
     const details = report.p_details as Record<string, unknown> | undefined
@@ -817,12 +854,15 @@ test('organizer reviews a photo, changes its decision, and finalizes results', a
   await page.getByRole('button', { name: 'Confirm final results' }).click()
   await expect(page.getByRole('heading', { name: 'Hunt complete' })).toBeVisible()
   await expect(page.getByText('#1 Team Cedar')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Share winner card' })).toBeVisible()
+  const shareWinnerButton = page.getByRole('button', { name: 'Share winner card' })
+  await expect(shareWinnerButton).toBeVisible()
+  await expectKeyboardCanReach(page, shareWinnerButton)
   for (const width of [320, 375, 390]) {
     await page.setViewportSize({ width, height: 844 })
     const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
     expect(dimensions.content, `organizer review/results horizontal overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewport)
   }
+  await expectNoHorizontalOverflowAt200Percent(page, 'organizer review and results')
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, targets }) => ({ id, impact, help, targets })), null, 2)).toEqual([])
 })
@@ -987,6 +1027,8 @@ test('organizer lobby shows the team roster and unread chat count without moving
   expect(await chatMessages.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeGreaterThan(48)
   await jumpButton.click()
   await expect(page.getByText('One more update')).toBeVisible()
+  await expectKeyboardCanReach(page, page.getByRole('button', { name: 'Start hunt now' }))
+  await expectNoHorizontalOverflowAt200Percent(page, 'organizer lobby')
 })
 
 test('hunt chat offers retry after read failure and keeps a message after send failure', async ({ page }) => {

@@ -57,7 +57,7 @@ Status evidence is maintained in the [checklist](PRD_V2_CHECKLIST.md), [improvem
 | SEC-03 | IMP-14, IMP-15, IMP-24 | SQL validation exists; public abuse controls and expensive-output rate limits need a threat/cost design. |
 | SEC-04 | IMP-05, IMP-15 | Local role-boundary checks pass; confirm live permissions and progress-data exposure. |
 | PRIV-01 | IMP-03, IMP-15, IMP-22 | Data inventory exists; owner decisions, deletion controls, device checks, and assistive-technology review remain. |
-| A11Y-01 | IMP-03, IMP-19 | Automated scans and home keyboard/text-size checks pass; physical screen reader and device acceptance remain. |
+| A11Y-01 | IMP-03, IMP-19 | Automated scans cover tested routes; keyboard navigation and 200% text-size browser checks now cover home, participant lobby/play/review/results, and organizer lobby/review/results. Physical screen-reader and device acceptance remain. |
 | MIG-01 | IMP-21 | PRD v2 was reviewed; requirement traceability is now indexed here. |
 | MIG-02 | IMP-05, IMP-13, IMP-14, IMP-22 | Production history is verified through migration 022; 023/024 need isolated acceptance and 025 additionally needs explicit retention approval. |
 | MIG-03 | IMP-05, IMP-06, IMP-13, IMP-15 | Migration source and local coverage exist; legacy-data mapping, forward repair, rollback, and hosted acceptance remain. |
