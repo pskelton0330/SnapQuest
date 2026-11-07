@@ -27,6 +27,9 @@ let organizerStartCalls = 0
 let organizerMessages: { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }[] = []
 let chatLoadFailures = 0
 let chatSendFailures = 0
+let chatLegacyRpcMode = false
+let chatStableCursorCalls = 0
+let chatLegacyCursorCalls = 0
 let signedPreviewMode = false
 let signedPreviewRequests = 0
 let participantReviewPhotoStatus: 'pending' | 'approved' | 'rejected' | null = null
@@ -61,6 +64,9 @@ test.beforeEach(async ({ page }) => {
   organizerMessages = []
   chatLoadFailures = 0
   chatSendFailures = 0
+  chatLegacyRpcMode = false
+  chatStableCursorCalls = 0
+  chatLegacyCursorCalls = 0
   signedPreviewMode = false
   signedPreviewRequests = 0
   participantReviewPhotoStatus = null
@@ -262,13 +268,21 @@ test.beforeEach(async ({ page }) => {
       return
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/get_hunt_messages')) {
+      const body = request.postDataJSON() as { p_limit?: number; p_before?: string | null; p_before_id?: string | null }
+      if (Object.hasOwn(body, 'p_before_id')) {
+        chatStableCursorCalls++
+        if (chatLegacyRpcMode) {
+          await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ code: 'PGRST202', message: 'Could not find the function public.get_hunt_messages(p_before_id, p_before, p_hunt_id, p_limit) in the schema cache' }) })
+          return
+        }
+      } else chatLegacyCursorCalls++
       if (chatLoadFailures > 0) {
         chatLoadFailures--
         await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'simulated chat connection failure' }) })
         return
       }
-      const { p_limit = 101, p_before = null, p_before_id = null } = request.postDataJSON() as { p_limit?: number; p_before?: string | null; p_before_id?: string | null }
-      const eligible = organizerMessages.filter(message => !p_before || message.created_at < p_before || (message.created_at === p_before && message.id < p_before_id!))
+      const { p_limit = 101, p_before = null, p_before_id = null } = body
+      const eligible = organizerMessages.filter(message => !p_before || (p_before_id ? message.created_at < p_before || (message.created_at === p_before && message.id < p_before_id) : message.created_at < p_before))
       const page = eligible.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)).slice(0, p_limit).reverse()
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(page) })
       return
@@ -1046,6 +1060,24 @@ test('organizer winner card picker offers each team tied for first', async ({ pa
   await expect(chooser.locator('option')).toHaveText(['Team Cedar', 'Team Maple'])
   await chooser.selectOption('55555555-5555-4555-8555-555555555555')
   await expect(page.getByRole('img', { name: 'Winner celebration card for Team Maple' })).toBeVisible()
+})
+
+test('organizer chat falls back to the legacy RPC until stable cursor migration is installed', async ({ page }) => {
+  organizerLobbyMode = true
+  chatLegacyRpcMode = true
+  organizerMessages = [
+    { id: 'legacy-1', sender_name: 'Taylor', sender_role: 'participant', body: 'Earlier message', created_at: '2026-11-06T17:00:00.000Z' },
+    { id: 'legacy-2', sender_name: 'Organizer', sender_role: 'organizer', body: 'Welcome, teams', created_at: '2026-11-06T17:01:00.000Z' },
+  ]
+  await restoreOrganizerSession(page)
+  await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
+  const messages = page.locator('.hunt-chat-message')
+  await expect(messages).toHaveCount(2)
+  await expect(messages.first()).toContainText('Earlier message')
+  await expect(messages.last()).toContainText('Welcome, teams')
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  expect(chatStableCursorCalls).toBe(1)
+  expect(chatLegacyCursorCalls).toBe(1)
 })
 
 test('organizer chat pages more than 200 messages with identical timestamps without gaps', async ({ page }) => {

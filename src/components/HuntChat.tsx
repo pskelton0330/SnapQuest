@@ -23,12 +23,23 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
   const requestId = useRef(0)
   const preserveScroll = useRef(false)
   const loadedHuntId = useRef<string | null>(null)
+  const legacyPagingHuntId = useRef<string | null>(null)
 
   const loadMessages = useCallback(async (before?: Pick<HuntMessage, 'created_at' | 'id'>, older = false) => {
     if (!supabase) return
     const id = ++requestId.current
     if (older) setLoadingOlder(true)
-    const { data, error: loadError } = await supabase.rpc('get_hunt_messages', { p_hunt_id: huntId, p_limit: 101, p_before: before?.created_at ?? null, p_before_id: before?.id ?? null })
+    let usingLegacyPaging = legacyPagingHuntId.current === huntId
+    let result = usingLegacyPaging
+      ? await supabase.rpc('get_hunt_messages', { p_hunt_id: huntId, p_limit: 100, p_before: before?.created_at ?? null })
+      : await supabase.rpc('get_hunt_messages', { p_hunt_id: huntId, p_limit: 101, p_before: before?.created_at ?? null, p_before_id: before?.id ?? null })
+    if (!usingLegacyPaging && result.error?.code === 'PGRST202') {
+      // Production may still have the timestamp-only RPC until migration 024 is applied.
+      legacyPagingHuntId.current = huntId
+      usingLegacyPaging = true
+      result = await supabase.rpc('get_hunt_messages', { p_hunt_id: huntId, p_limit: 100, p_before: before?.created_at ?? null })
+    }
+    const { data, error: loadError } = result
     if (id !== requestId.current) return
     if (loadError) { void reportOperation(huntId, crypto.randomUUID(), 'chat_load_failed', 'failure'); setError('Messages could not be refreshed. Check your connection and retry.'); setLoading(false); setLoadingOlder(false); return }
     const rows = Array.isArray(data) ? data as HuntMessage[] : []
@@ -49,7 +60,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
         return [...merged.values()].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
       })
     }
-    if (older || newHunt) setHasOlder(rows.length > 100)
+    if (older || newHunt) setHasOlder(usingLegacyPaging ? rows.length === 100 : rows.length > 100)
     if (!older) loadedHuntId.current = huntId
     setError(''); setLoading(false); setLoadingOlder(false)
   }, [huntId])
