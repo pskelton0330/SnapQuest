@@ -84,6 +84,11 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     if (!teamNameDirty) setTeamNameDraft(next.team.name)
     setServerNow(new Date(next.server_now).getTime())
     if (next.runtime_state === 'active') setSubmissionRefreshTick(value => value + 1)
+    else setTeamProgress([])
+    if (next.runtime_state !== 'active') {
+      setLoading(false)
+      return
+    }
     const { data: progress, error: progressError } = await supabase.rpc('get_hunt_progress', { p_hunt_id: huntId })
     if (requestId !== contextRequestId.current) return
     if (!progressError && Array.isArray(progress)) setTeamProgress(progress as TeamProgress[])
@@ -221,19 +226,29 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   const ownTeamIsTied = participantScores.filter(score => score.rank === 1 && score.total > 0).length > 1
 
   useEffect(() => {
-    if (!supabase || !currentTeamId || !['active', 'review', 'completed'].includes(runtimeState)) return
-    const teamId = currentTeamId
+    if (!supabase || !['active', 'review', 'completed'].includes(runtimeState)) return
     let cancelled = false
     async function loadItems() {
-      const [itemResult, submissionResult] = await Promise.all([
-        supabase!.from('hunt_items').select('id,title_snapshot,description_snapshot,point_value,display_order').eq('hunt_id', huntId).order('display_order'),
-        supabase!.from('submissions').select('id,hunt_item_id,team_id,participant_id,storage_path,submitted_at,approval_status').eq('hunt_id', huntId).eq('team_id', teamId),
-      ])
+      const { data, error: itemError } = await supabase!.from('hunt_items')
+        .select('id,title_snapshot,description_snapshot,point_value,display_order').eq('hunt_id', huntId).order('display_order')
       if (cancelled) return
-      if (itemResult.error) { setError(itemResult.error.message); return }
-      if (submissionResult.error) { setError(submissionResult.error.message); return }
-      setItems(itemResult.data ?? [])
-      const photoRows = (submissionResult.data ?? []) as Omit<PhotoSubmission, 'photoUrl'>[]
+      if (itemError) { setError(itemError.message); return }
+      setItems(data ?? [])
+    }
+    void loadItems()
+    return () => { cancelled = true }
+  }, [huntId, runtimeState])
+
+  useEffect(() => {
+    if (!supabase || !currentTeamId || runtimeState !== 'active') return
+    let cancelled = false
+    async function loadSubmissions() {
+      const { data, error: submissionError } = await supabase!.from('submissions')
+        .select('id,hunt_item_id,team_id,participant_id,storage_path,submitted_at,approval_status')
+        .eq('hunt_id', huntId).eq('team_id', currentTeamId!)
+      if (cancelled) return
+      if (submissionError) { setError(submissionError.message); return }
+      const photoRows = (data ?? []) as Omit<PhotoSubmission, 'photoUrl'>[]
       const activePaths = new Set(photoRows.map(row => row.storage_path))
       for (const path of submissionUrlCache.current.keys()) if (!activePaths.has(path)) submissionUrlCache.current.delete(path)
       const signed = await Promise.all(photoRows.map(async row => {
@@ -246,7 +261,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       }))
       if (!cancelled) setSubmissions(Object.fromEntries(signed.filter((row): row is PhotoSubmission => row !== null).map(row => [row.hunt_item_id, row])))
     }
-    void loadItems()
+    void loadSubmissions()
     return () => { cancelled = true }
   }, [currentTeamId, huntId, runtimeState, submissionRefreshTick])
 

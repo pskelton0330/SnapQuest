@@ -455,6 +455,13 @@ test('browser Back from a resumed participant session returns to the previous sc
 test('active participant game exposes the timer, team progress, and photo list', async ({ page }) => {
   participantRuntimeState = 'active'
   const progressResponses: string[] = []
+  let challengeListReads = 0
+  let submissionListReads = 0
+  await page.clock.install()
+  page.on('request', request => {
+    if (request.url().includes('/rest/v1/hunt_items')) challengeListReads++
+    if (request.url().includes('/rest/v1/submissions')) submissionListReads++
+  })
   page.on('response', async response => {
     if (response.url().includes('/rpc/get_hunt_progress')) progressResponses.push(await response.text())
   })
@@ -466,6 +473,12 @@ test('active participant game exposes the timer, team progress, and photo list',
   await expect(page.getByRole('progressbar', { name: 'Time remaining' })).toBeVisible()
   await expect(page.getByRole('progressbar', { name: 'Team Cedar accepted photos' }), `progress RPC responses: ${progressResponses.join(', ')}`).toHaveAttribute('aria-valuenow', '1')
   await expect(page.getByRole('article').filter({ hasText: 'A red leaf' }).getByText('Take or choose photo')).toBeVisible()
+  await expect.poll(() => challengeListReads).toBe(1)
+  await expect.poll(() => submissionListReads).toBeGreaterThan(0)
+  const initialSubmissionReads = submissionListReads
+  await page.clock.fastForward(45_000)
+  await expect.poll(() => submissionListReads).toBeGreaterThan(initialSubmissionReads)
+  expect(challengeListReads).toBe(1)
   for (const width of [320, 375, 390]) {
     await page.setViewportSize({ width, height: 844 })
     const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
