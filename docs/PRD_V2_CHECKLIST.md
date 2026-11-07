@@ -4,11 +4,11 @@ Updated November 7, 2026. These labels describe the whole requirement, not just 
 
 ## Current verification snapshot (November 7)
 
-- The latest verified application-code release is `fa12ed6`; [GitHub Actions run `42330890659`](https://github.com/pskelton0330/SnapQuest/actions/runs/42330890659) passed. The [live build manifest](https://pskelton0330.github.io/SnapQuest/build-info.json) matched this revision when checked. This release includes chat fallback to the production legacy RPC until stable-cursor migration 024 is applied.
-- The current suite has 80 passing unit/database tests and 94 passing desktop/mobile browser cases. Lint and the production build pass; the JavaScript entry is 135.05 KiB gzip against the enforced 150 KiB budget. All 94 browser cases passed in workflow `42330890659` on the deployed source. Coverage includes the legacy chat RPC fallback, gallery foreground refresh, and per-photo signed-preview retry; live Storage, concurrent PostgreSQL sessions, and physical-device acceptance remain separate gates.
+- The latest deployed revision is `eeb8418`; [GitHub Actions run `42332258443`](https://github.com/pskelton0330/SnapQuest/actions/runs/42332258443) passed build and deploy. The [live build manifest](https://pskelton0330.github.io/SnapQuest/build-info.json) matched the full revision when checked. The preceding application-code release `fa12ed6` includes chat fallback to the production legacy RPC until stable-cursor migration 024 is applied.
+- The current checkout passed 80 unit/database tests and 94 desktop/mobile browser cases, plus lint and the production build. The JavaScript entry is 135.05 KiB gzip against the enforced 150 KiB budget. The automated suite covers legacy chat RPC fallback, gallery foreground refresh, and per-photo signed-preview retry; live Storage, concurrent PostgreSQL sessions, and physical-device acceptance remain separate gates.
 - Physical-device, screen-reader, hosted Storage HTTP, multi-session concurrency, and full authorization acceptance are still separate gates. The historical AT-01 through AT-36 table remains NOT RUN for physical-device acceptance; mock-browser and PGlite evidence does not satisfy those rows.
 
-The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. This checklist supersedes the older implementation review where requirements conflict; that review remains historical evidence.
+The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. This checklist supersedes the older implementation review where requirements conflict; that review remains historical evidence. [PRD_V2_BACKLOG_CROSSWALK.md](PRD_V2_BACKLOG_CROSSWALK.md) maps every requirement below to the deep-review remediation backlog, a verification gate, or an explicit deferred/owner-decision item. The mapping is traceability and does not change requirement status.
 
 | PRD ID | Status | Code and verification evidence or gap |
 | --- | --- | --- |
