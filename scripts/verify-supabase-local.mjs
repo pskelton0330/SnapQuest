@@ -195,6 +195,45 @@ try {
   assert.equal(refreshedContext.team.selfie.storage_path, replacementSelfiePath)
   console.log('Team selfie upload, private team visibility, organizer access, context refresh, and safe replacement pass through real Storage HTTP.')
 
+  const realtimeMessageBody = `Realtime CI ${randomUUID()}`
+  let receiveRealtimeMessage
+  const realtimeMessage = new Promise((resolve) => { receiveRealtimeMessage = resolve })
+  let realtimeChannel
+  let receiveRealtimeSubscription
+  const realtimeSubscribed = new Promise((resolve, reject) => {
+    receiveRealtimeSubscription = (status) => {
+      if (status === 'SUBSCRIBED') resolve()
+      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') reject(new Error(`Chat Realtime subscription failed: ${status}`))
+    }
+  })
+  realtimeChannel = participantOne
+    .channel(`ci-hunt-chat-${huntId}-${randomUUID()}`)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'hunt_messages', filter: `hunt_id=eq.${huntId}` }, (payload) => {
+      if (payload.new?.body === realtimeMessageBody) receiveRealtimeMessage(payload.new)
+    })
+    .subscribe(receiveRealtimeSubscription)
+  const withTimeout = (promise, label) => new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(`${label} timed out`)), 15_000)
+    promise.then(
+      (value) => { clearTimeout(timeout); resolve(value) },
+      (error) => { clearTimeout(timeout); reject(error) },
+    )
+  })
+  try {
+    await withTimeout(realtimeSubscribed, 'Chat Realtime subscription')
+    const { data: realtimeSentMessage, error: realtimeSendError } = await organizer.rpc('send_hunt_message', {
+      p_hunt_id: huntId,
+      p_body: realtimeMessageBody,
+    })
+    assert.ifError(realtimeSendError)
+    const receivedMessage = await withTimeout(realtimeMessage, 'Chat Realtime delivery')
+    assert.equal(receivedMessage.id, realtimeSentMessage.id)
+    assert.equal(receivedMessage.sender_role, 'organizer')
+    console.log('An authenticated team member receives a new organizer chat message through Supabase Realtime.')
+  } finally {
+    await participantOne.removeChannel(realtimeChannel)
+  }
+
   const { data: organizerMessage, error: organizerMessageError } = await organizer.rpc('send_hunt_message', {
     p_hunt_id: huntId,
     p_body: 'Organizer CI message',
