@@ -4,6 +4,11 @@ import { readFile } from 'node:fs/promises'
 
 let participantRuntimeState: 'waiting' | 'active' | 'review' | 'completed' = 'waiting'
 let photoFaultMode: 'committed-rpc-response-lost' | 'storage-denied' | 'rpc-rejected' | null = null
+let photoReplacementRaceMode = false
+let raceCurrentPhotoPath = ''
+let raceAcceptedPaths: string[] = []
+let raceSignedPaths: string[] = []
+let photoDeletedPaths: string[] = []
 let uploadedPhotoPath = ''
 let photoSubmissionRpcCalls = 0
 let selfieSubmissionRpcCalls = 0
@@ -33,6 +38,11 @@ let participantZeroScoreMode = false
 test.beforeEach(async ({ page }) => {
   participantRuntimeState = 'waiting'
   photoFaultMode = null
+  photoReplacementRaceMode = false
+  raceCurrentPhotoPath = ''
+  raceAcceptedPaths = []
+  raceSignedPaths = []
+  photoDeletedPaths = []
   uploadedPhotoPath = ''
   photoSubmissionRpcCalls = 0
   selfieSubmissionRpcCalls = 0
@@ -58,9 +68,15 @@ test.beforeEach(async ({ page }) => {
   participantReviewVotes = []
   participantTieMode = false
   participantZeroScoreMode = false
-  await page.route('https://test-project.supabase.co/**', async route => {
+  await page.context().route('https://test-project.supabase.co/**', async route => {
     const request = route.request()
     if (request.url().includes('/storage/v1/object/sign/hunt-photos/')) {
+      if (photoReplacementRaceMode && request.method() === 'POST') {
+        const path = decodeURIComponent(new URL(request.url()).pathname.split('/object/sign/hunt-photos/')[1] ?? '')
+        raceSignedPaths.push(path)
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ signedURL: `/storage/v1/object/sign/hunt-photos/${path}?token=race-${raceSignedPaths.length}` }) })
+        return
+      }
       if (signedPreviewMode) {
         signedPreviewRequests++
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ signedURL: `/storage/v1/object/sign/hunt-photos/test/photo.jpg?token=preview-${signedPreviewRequests}` }) })
@@ -84,13 +100,24 @@ test.beforeEach(async ({ page }) => {
     }
     if (request.url().includes('/storage/v1/object/hunt-photos') && request.method() === 'DELETE') {
       rollbackDeleteRequests++
+      try { photoDeletedPaths.push(...((request.postDataJSON() as { prefixes?: string[] } | null)?.prefixes ?? [])) } catch { /* The cleanup counter still records unexpected request bodies. */ }
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ message: 'Deleted' }) })
       return
     }
     if (request.url().includes('/rest/v1/rpc/submit_hunt_photo')) {
       photoSubmissionRpcCalls++
       uploadedPhotoPath = JSON.parse(request.postData() ?? '{}').p_storage_path ?? ''
-      if (photoFaultMode === 'rpc-rejected') {
+      if (photoReplacementRaceMode) {
+        const { p_expected_storage_path: expectedPath, p_storage_path: attemptedPath } = request.postDataJSON() as { p_expected_storage_path: string | null; p_storage_path: string }
+        if (expectedPath !== raceCurrentPhotoPath) {
+          await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ code: 'P0001', message: 'A teammate changed this photo slot. Refresh before replacing it again' }) })
+        } else {
+          const previousPath = raceCurrentPhotoPath || null
+          raceCurrentPhotoPath = attemptedPath
+          raceAcceptedPaths.push(attemptedPath)
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ accepted: true, submitted_at: new Date().toISOString(), previous_storage_path: previousPath }) })
+        }
+      } else if (photoFaultMode === 'rpc-rejected') {
         await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ code: 'P0001', message: 'simulated submission rejection before commit' }) })
       } else if (photoFaultMode === 'committed-rpc-response-lost') {
         await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ code: 'XX000', message: 'simulated lost response after commit' }) })
@@ -106,6 +133,13 @@ test.beforeEach(async ({ page }) => {
     }
     if (request.url().includes('/rest/v1/submissions')) {
       const requestedPath = new URL(request.url()).searchParams.get('storage_path')?.replace(/^eq\./, '')
+      if (photoReplacementRaceMode) {
+        const row = raceCurrentPhotoPath && (!requestedPath || requestedPath === raceCurrentPhotoPath)
+          ? [{ id: '99999999-9999-4999-8999-999999999999', hunt_item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: raceCurrentPhotoPath, submitted_at: new Date().toISOString(), approval_status: 'pending' }]
+          : []
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(row) })
+        return
+      }
       const row = photoFaultMode === 'committed-rpc-response-lost' && requestedPath === uploadedPhotoPath
         ? [{ id: '99999999-9999-4999-8999-999999999999', hunt_item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: uploadedPhotoPath, submitted_at: new Date().toISOString(), approval_status: 'pending' }]
         : []
@@ -486,6 +520,42 @@ test('photo upload rolls back the unreferenced Storage object after the submissi
   await expect(item.getByRole('status')).toContainText('simulated submission rejection before commit', { timeout: 10_000 })
   expect(photoSubmissionRpcCalls).toBe(1)
   expect(rollbackDeleteRequests).toBe(1)
+})
+
+test('stale device photo replacement reloads the winning photo and cleans only its rejected upload', async ({ page }) => {
+  participantRuntimeState = 'active'
+  photoReplacementRaceMode = true
+  signedPreviewMode = true
+  raceCurrentPhotoPath = '33333333-3333-4333-8333-333333333333/44444444-4444-4444-8444-444444444444/77777777-7777-4777-8777-777777777777/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg'
+  const originalPath = raceCurrentPhotoPath
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
+
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  const firstSlot = page.locator('.participant-item-card').filter({ hasText: 'A red leaf' })
+  await expect(firstSlot.locator('.photo-submission-status')).toContainText('Photo submitted')
+  const staleDevice = await page.context().newPage()
+  await staleDevice.goto('/#/play/33333333-3333-4333-8333-333333333333')
+  const secondSlot = staleDevice.locator('.participant-item-card').filter({ hasText: 'A red leaf' })
+  await expect(secondSlot.locator('.photo-submission-status')).toContainText('Photo submitted')
+
+  await firstSlot.locator('input[type="file"]').setInputFiles({ name: 'first-replacement.png', mimeType: 'image/png', buffer: image })
+  await expect.poll(() => raceAcceptedPaths.length).toBe(1)
+  const winningPath = raceCurrentPhotoPath
+  expect(winningPath).not.toBe(originalPath)
+  await expect(firstSlot.locator('.photo-submission-status')).toContainText('Photo submitted')
+
+  await secondSlot.locator('input[type="file"]').setInputFiles({ name: 'stale-replacement.png', mimeType: 'image/png', buffer: image })
+  await expect(staleDevice.getByRole('status')).toContainText('A teammate replaced this photo first. Their saved photo is now shown; your replacement was not saved.')
+  await expect(secondSlot.locator('.photo-submission-status')).toContainText('Photo submitted')
+  const displayedSource = await secondSlot.locator('.submission-preview').getAttribute('src')
+  expect(decodeURIComponent(displayedSource ?? '')).toContain(winningPath)
+  expect(raceAcceptedPaths).toEqual([winningPath])
+  expect(photoSubmissionRpcCalls).toBe(2)
+  expect(photoDeletedPaths).toHaveLength(2)
+  expect(photoDeletedPaths).not.toContain(winningPath)
+  await staleDevice.close()
 })
 
 test('participant can see the post-hunt review gallery while the organizer reviews', async ({ page }) => {

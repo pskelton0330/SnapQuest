@@ -340,7 +340,24 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       if (firstAttempt.error) {
         // A PostgreSQL exception is a definitive rejection, so retrying it cannot
         // recover a committed write and only duplicates the rejected request.
-        if (firstAttempt.error.code === 'P0001') throw new Error(firstAttempt.error.message)
+        if (firstAttempt.error.code === 'P0001') {
+          if (/photo slot changed|teammate changed this photo slot/i.test(firstAttempt.error.message)) {
+            const latest = await supabase.from('submissions')
+              .select('id,hunt_item_id,team_id,participant_id,storage_path,submitted_at,approval_status')
+              .eq('hunt_id', huntId).eq('hunt_item_id', item.id).eq('team_id', context.team.id).maybeSingle()
+            if (!latest.error && latest.data && latest.data.storage_path !== expectedPath) {
+              const row = latest.data as Omit<PhotoSubmission, 'photoUrl'>
+              let photoUrl = ''
+              try {
+                const { data: signed } = await supabase.storage.from('hunt-photos').createSignedUrl(row.storage_path, 300)
+                photoUrl = signed?.signedUrl ?? ''
+              } catch { /* The saved submission remains visible even if its preview needs a retry. */ }
+              setSubmissions(current => ({ ...current, [item.id]: { ...row, photoUrl } }))
+              throw new Error('A teammate replaced this photo first. Their saved photo is now shown; your replacement was not saved.')
+            }
+          }
+          throw new Error(firstAttempt.error.message)
+        }
         const exact = await supabase.from('submissions')
           .select('id,hunt_item_id,team_id,participant_id,storage_path,submitted_at,approval_status')
           .eq('hunt_id', huntId).eq('hunt_item_id', item.id).eq('team_id', context.team.id).eq('storage_path', storagePath).maybeSingle()
