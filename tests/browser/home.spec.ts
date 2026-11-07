@@ -67,6 +67,7 @@ let participantZeroScoreMode = false
 let participantTeamName = 'Team Cedar'
 let celebrationSelfieMode = false
 let celebrationSelfieSignedRequests = 0
+let celebrationSelfieLoadFailure = false
 
 test.beforeEach(async ({ page }) => {
   participantRuntimeState = 'waiting'
@@ -109,6 +110,7 @@ test.beforeEach(async ({ page }) => {
   participantTeamName = 'Team Cedar'
   celebrationSelfieMode = false
   celebrationSelfieSignedRequests = 0
+  celebrationSelfieLoadFailure = false
   await page.context().route('https://test-project.supabase.co/**', async route => {
     const request = route.request()
     if (request.url().includes('/rest/v1/rpc/record_audit_event')) {
@@ -125,6 +127,10 @@ test.beforeEach(async ({ page }) => {
       return
     }
     if (request.method() === 'GET' && request.url().includes('/storage/v1/object/sign/hunt-photos/') && (signedPreviewMode || photoReplacementRaceMode || celebrationSelfieMode)) {
+      if (celebrationSelfieLoadFailure && request.url().includes('team-selfie.png')) {
+        await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'simulated selfie download failure' }) })
+        return
+      }
       const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
       await route.fulfill({ status: 200, contentType: 'image/png', body: png })
       return
@@ -862,6 +868,38 @@ test('winner card includes the team selfie when one is available', async ({ page
     return Array.from(context.getImageData(540, 600, 1, 1).data).slice(0, 3)
   }, encodedCard)
   expect(sampledColor).not.toEqual([21, 150, 122])
+})
+
+test('winner card falls back to team color when the saved selfie cannot be loaded', async ({ page }) => {
+  participantRuntimeState = 'completed'
+  celebrationSelfieMode = true
+  celebrationSelfieLoadFailure = true
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText('Final results')).toBeVisible()
+  await expect.poll(() => celebrationSelfieSignedRequests).toBeGreaterThan(0)
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  const cardDownloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download card' }).click()
+  const cardPath = await (await cardDownloadPromise).path()
+  expect(cardPath).toBeTruthy()
+  if (!cardPath) throw new Error('Fallback winner card download did not produce a file')
+  const encodedCard = (await readFile(cardPath)).toString('base64')
+  const sampledColor = await page.evaluate(async (encoded: string) => {
+    const image = new Image()
+    image.src = `data:image/png;base64,${encoded}`
+    await image.decode()
+    const canvas = document.createElement('canvas')
+    canvas.width = image.naturalWidth
+    canvas.height = image.naturalHeight
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Canvas context is unavailable')
+    context.drawImage(image, 0, 0)
+    return Array.from(context.getImageData(540, 600, 1, 1).data).slice(0, 3)
+  }, encodedCard)
+  expect(sampledColor).toEqual([21, 150, 122])
+  await expect(page.getByRole('alert')).toHaveCount(0)
 })
 
 test('participant renews signed review-photo previews before their URLs expire', async ({ page }) => {
