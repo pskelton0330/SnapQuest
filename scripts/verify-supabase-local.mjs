@@ -696,8 +696,23 @@ try {
   })
   assert.ifError(secondTeamSubmitError)
 
-  const { error: endHuntError } = await organizer.rpc('end_hunt_early', { p_hunt_id: huntId })
-  assert.ifError(endHuntError)
+  const endRace = await Promise.all([
+    organizer.rpc('end_hunt_early', { p_hunt_id: huntId }),
+    organizerConcurrent.rpc('end_hunt_early', { p_hunt_id: huntId }),
+  ])
+  assert.equal(endRace.filter((result) => !result.error).length, 1, 'Exactly one concurrent End request should close the hunt')
+  const rejectedEnd = endRace.find((result) => result.error)
+  assert.ok(rejectedEnd, 'The losing concurrent End request should be rejected')
+  assert.match(rejectedEnd.error.message, /This hunt cannot be ended from its current state/)
+  const { data: endRaceState, error: endRaceStateError } = await admin
+    .from('hunts')
+    .select('status,ended_at')
+    .eq('id', huntId)
+    .single()
+  assert.ifError(endRaceStateError)
+  assert.equal(endRaceState.status, 'review')
+  assert.ok(endRaceState.ended_at, 'The winning End request should set the review cutoff')
+  console.log('Concurrent End requests serialize: one closes the hunt, and the other is rejected.')
   const { error: closedChatSendError } = await participantOne.rpc('send_hunt_message', {
     p_hunt_id: huntId,
     p_body: 'Chat should be closed with the hunt',
