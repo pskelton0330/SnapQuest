@@ -196,24 +196,28 @@ try {
   console.log('Team selfie upload, private team visibility, organizer access, context refresh, and safe replacement pass through real Storage HTTP.')
 
   const realtimeMessageBody = `Realtime CI ${randomUUID()}`
-  function watchChatRealtime(client, audience) {
+  function watchChatRealtime(client, audience, withHuntFilter = true) {
     let receiveMessage
     const message = new Promise((resolve) => { receiveMessage = resolve })
     let markSubscribed
     let rejectSubscription
     const subscribed = new Promise((resolve, reject) => { markSubscribed = resolve; rejectSubscription = reject })
+    const change = { event: 'INSERT', schema: 'public', table: 'hunt_messages' }
+    if (withHuntFilter) change.filter = `hunt_id=eq.${huntId}`
     const channel = client
       .channel(`ci-hunt-chat-${audience}-${huntId}-${randomUUID()}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'hunt_messages', filter: `hunt_id=eq.${huntId}` }, (payload) => {
+      .on('postgres_changes', change, (payload) => {
         if (payload.new?.body === realtimeMessageBody) receiveMessage(payload.new)
       })
-      .subscribe((status) => {
+      .subscribe((status, error) => {
+        console.log(`Chat Realtime ${audience}${withHuntFilter ? ' filtered' : ' unfiltered'} status: ${status}${error ? ` (${JSON.stringify(error)})` : ''}`)
         if (status === 'SUBSCRIBED') markSubscribed()
         else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') rejectSubscription(new Error(`${audience} chat Realtime subscription failed: ${status}`))
       })
     return { channel, message, subscribed }
   }
   const organizerRealtime = watchChatRealtime(organizer, 'organizer')
+  const organizerUnfilteredRealtime = watchChatRealtime(organizer, 'organizer', false)
   const participantRealtime = watchChatRealtime(participantOne, 'participant')
   const withTimeout = (promise, label) => new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`${label} timed out`)), 15_000)
@@ -225,6 +229,7 @@ try {
   try {
     await Promise.all([
       withTimeout(organizerRealtime.subscribed, 'Organizer chat Realtime subscription'),
+      withTimeout(organizerUnfilteredRealtime.subscribed, 'Unfiltered organizer chat Realtime subscription'),
       withTimeout(participantRealtime.subscribed, 'Participant chat Realtime subscription'),
     ])
     const { data: realtimeSentMessage, error: realtimeSendError } = await organizer.rpc('send_hunt_message', {
@@ -232,11 +237,12 @@ try {
       p_body: realtimeMessageBody,
     })
     assert.ifError(realtimeSendError)
-    const [organizerReceived, participantReceived] = await Promise.all([
+    const [organizerReceived, organizerUnfilteredReceived, participantReceived] = await Promise.all([
       withTimeout(organizerRealtime.message, 'Organizer chat Realtime delivery'),
+      withTimeout(organizerUnfilteredRealtime.message, 'Unfiltered organizer chat Realtime delivery'),
       withTimeout(participantRealtime.message, 'Participant chat Realtime delivery'),
     ])
-    for (const receivedMessage of [organizerReceived, participantReceived]) {
+    for (const receivedMessage of [organizerReceived, organizerUnfilteredReceived, participantReceived]) {
       assert.equal(receivedMessage.id, realtimeSentMessage.id)
       assert.equal(receivedMessage.sender_role, 'organizer')
     }
@@ -244,6 +250,7 @@ try {
   } finally {
     await Promise.all([
       organizer.removeChannel(organizerRealtime.channel),
+      organizer.removeChannel(organizerUnfilteredRealtime.channel),
       participantOne.removeChannel(participantRealtime.channel),
     ])
   }
