@@ -320,7 +320,7 @@ try {
   console.log('Team selfie upload, private team visibility, organizer access, context refresh, and safe replacement pass through real Storage HTTP.')
 
   const realtimeMessageBody = `Realtime CI ${randomUUID()}`
-  function watchChatRealtime(client, audience, withHuntFilter = true) {
+  function watchChatRealtime(client, audience, withHuntFilter = true, expectedBody = realtimeMessageBody) {
     let receiveMessage
     const message = new Promise((resolve) => { receiveMessage = resolve })
     let markSubscribed
@@ -339,7 +339,7 @@ try {
         else if (payload.status === 'error' || payload.status === 'timeout') rejectReplicationReady(new Error(`${audience} chat replication failed: ${payload.message}`))
       })
       .on('postgres_changes', change, (payload) => {
-        if (payload.new?.body === realtimeMessageBody) receiveMessage(payload.new)
+        if (payload.new?.body === expectedBody) receiveMessage(payload.new)
       })
       .subscribe((status, error) => {
         console.log(`Chat Realtime ${audience}${withHuntFilter ? ' filtered' : ' unfiltered'} status: ${status}${error ? ` (${JSON.stringify(error)})` : ''}`)
@@ -469,6 +469,37 @@ try {
       organizer.removeChannel(organizerUnfilteredRealtime.channel),
       participantOne.removeChannel(participantRealtime.channel),
     ])
+  }
+
+  const offlineChatBody = `Offline recovery CI ${randomUUID()}`
+  const { data: offlineChatMessage, error: offlineChatError } = await organizer.rpc('send_hunt_message', {
+    p_hunt_id: huntId,
+    p_body: offlineChatBody,
+  })
+  assert.ifError(offlineChatError)
+  const reconnectedChatBody = `Realtime restored CI ${randomUUID()}`
+  const reconnectedParticipantRealtime = watchChatRealtime(participantOne, 'participant reconnect', true, reconnectedChatBody)
+  try {
+    await withTimeout(reconnectedParticipantRealtime.subscribed, 'Reconnected participant chat subscription')
+    await withTimeout(reconnectedParticipantRealtime.replicationReady, 'Reconnected participant chat replication readiness')
+    const { data: reconciledMessages, error: reconciledMessagesError } = await participantOne.rpc('get_hunt_messages', {
+      p_hunt_id: huntId,
+      p_limit: 100,
+      p_before: null,
+      p_before_id: null,
+    })
+    assert.ifError(reconciledMessagesError)
+    assert.ok(reconciledMessages.some((message) => message.id === offlineChatMessage.id), 'A participant reconnecting after a missed message must recover it from chat history')
+    const { data: reconnectedLiveMessage, error: reconnectedLiveError } = await organizer.rpc('send_hunt_message', {
+      p_hunt_id: huntId,
+      p_body: reconnectedChatBody,
+    })
+    assert.ifError(reconnectedLiveError)
+    const receivedAfterReconnect = await withTimeout(reconnectedParticipantRealtime.message, 'Participant chat delivery after reconnect')
+    assert.equal(receivedAfterReconnect.id, reconnectedLiveMessage.id)
+    console.log('A participant reconnecting after a missed chat message recovers history and receives subsequent messages through Realtime.')
+  } finally {
+    await participantOne.removeChannel(reconnectedParticipantRealtime.channel)
   }
 
   const { data: organizerMessage, error: organizerMessageError } = await organizer.rpc('send_hunt_message', {
