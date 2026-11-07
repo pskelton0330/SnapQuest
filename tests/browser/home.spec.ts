@@ -72,6 +72,9 @@ let signedPreviewRequests = 0
 let participantReviewPhotoStatus: 'pending' | 'approved' | 'rejected' | null = null
 let participantReviewVotingMode = false
 let participantReviewVotes: { item_id: string; voting_team_id: string; selected_team_id: string }[] = []
+let participantReviewGalleryCalls = 0
+let delayNextParticipantGalleryResponse = false
+let releaseDelayedParticipantGalleryResponse: (() => void) | null = null
 let participantTieMode = false
 let participantZeroScoreMode = false
 let participantTeamName = 'Team Cedar'
@@ -127,6 +130,9 @@ test.beforeEach(async ({ page }) => {
   participantReviewPhotoStatus = null
   participantReviewVotingMode = false
   participantReviewVotes = []
+  participantReviewGalleryCalls = 0
+  delayNextParticipantGalleryResponse = false
+  releaseDelayedParticipantGalleryResponse = null
   participantTieMode = false
   participantZeroScoreMode = false
   participantTeamName = 'Team Cedar'
@@ -369,13 +375,19 @@ test.beforeEach(async ({ page }) => {
         ]
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: false, voting_bonus_points: 0, status: organizerReviewStatus, can_begin_review: false, final_scores: finalScores, teams, items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 0 }], submissions: [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: 'test/photo.jpg', status: organizerReviewDecision, submitted_at: '2026-11-01T17:10:00Z' }], votes: [], team_selfies: [] }) })
       } else {
+        participantReviewGalleryCalls++
         const reviewPhotoStatus = participantReviewPhotoStatus ?? (signedPreviewMode ? 'approved' : null)
         const submissions = participantReviewVotingMode
-          ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '55555555-5555-4555-8555-555555555555', storage_path: 'test/maple.jpg', status: 'approved' }]
+          ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '55555555-5555-4555-8555-555555555555', storage_path: 'test/maple.jpg', status: reviewPhotoStatus ?? 'approved' }]
           : reviewPhotoStatus ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', storage_path: 'test/photo.jpg', status: reviewPhotoStatus }] : []
         const teams = [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }, ...(participantReviewVotingMode ? [{ id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : [])]
         const finalScores = [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: participantTeamName, base_points: participantZeroScoreMode ? 0 : 10, voting_bonus: 0, total: participantZeroScoreMode ? 0 : 10, rank: 1 }, ...(participantTieMode ? [{ team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }] : [])]
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: participantReviewVotingMode, voting_bonus_points: 3, status: participantRuntimeState, final_scores: finalScores, teams: participantTieMode ? [...teams, { id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : teams.map(team => ({ ...team, name: participantTeamName })), items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions, votes: participantReviewVotes }) })
+        const body = JSON.stringify({ voting_enabled: participantReviewVotingMode, voting_bonus_points: 3, status: participantRuntimeState, final_scores: finalScores, teams: participantTieMode ? [...teams, { id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : teams.map(team => ({ ...team, name: participantTeamName })), items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions, votes: participantReviewVotes })
+        if (delayNextParticipantGalleryResponse) {
+          delayNextParticipantGalleryResponse = false
+          await new Promise<void>(resolve => { releaseDelayedParticipantGalleryResponse = resolve })
+        }
+        await route.fulfill({ status: 200, contentType: 'application/json', body })
       }
       return
     }
@@ -848,6 +860,37 @@ test('participant gallery picks up a teammate vote through its refresh fallback'
   participantReviewVotes = [{ item_id: '77777777-7777-4777-8777-777777777777', voting_team_id: '44444444-4444-4444-8444-444444444444', selected_team_id: '55555555-5555-4555-8555-555555555555' }]
   await page.clock.fastForward(20_000)
   await expect(page.getByRole('button', { name: 'Your vote' })).toBeVisible()
+})
+
+test('a slow stale participant gallery response cannot replace newer approval state', async ({ page }) => {
+  participantRuntimeState = 'review'
+  participantReviewVotingMode = true
+  participantReviewPhotoStatus = 'pending'
+  signedPreviewMode = true
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  const voteButton = page.getByRole('button', { name: 'Vote for this photo' })
+  await expect(page.getByText('Team photo gallery')).toBeVisible()
+  await expect(voteButton).toHaveCount(0)
+
+  const previousCalls = participantReviewGalleryCalls
+  delayNextParticipantGalleryResponse = true
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await expect.poll(() => participantReviewGalleryCalls).toBeGreaterThan(previousCalls)
+  await expect.poll(() => releaseDelayedParticipantGalleryResponse !== null).toBe(true)
+
+  participantReviewPhotoStatus = 'approved'
+  const freshResponse = page.waitForResponse(response => response.url().includes('/rest/v1/rpc/get_hunt_review_gallery'))
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await freshResponse
+  await expect(voteButton).toBeVisible()
+
+  const staleResponse = page.waitForResponse(response => response.url().includes('/rest/v1/rpc/get_hunt_review_gallery'))
+  releaseDelayedParticipantGalleryResponse?.()
+  releaseDelayedParticipantGalleryResponse = null
+  await staleResponse
+  await expect(voteButton).toBeVisible()
 })
 
 test('participant sees final standings and winner celebration after results publish', async ({ page }) => {
