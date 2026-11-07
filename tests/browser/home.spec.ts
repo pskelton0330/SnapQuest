@@ -694,6 +694,18 @@ test('hunt chat offers retry after read failure and keeps a message after send f
   await expect(page.locator('.hunt-chat-messages').getByText('Please meet by the fountain')).toBeVisible()
 })
 
+test('hunt chat shows offline and reconnecting status', async ({ page }) => {
+  organizerLobbyMode = true
+  await restoreOrganizerSession(page)
+  await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
+  const status = page.locator('.hunt-chat-heading > span[aria-live="polite"]')
+  await page.evaluate(() => { Object.defineProperty(navigator, 'onLine', { configurable: true, value: false }); window.dispatchEvent(new Event('offline')) })
+  await expect(status).toHaveText('Offline')
+  await expect(page.locator('.hunt-chat')).toContainText('New messages will refresh when you reconnect')
+  await page.evaluate(() => { Object.defineProperty(navigator, 'onLine', { configurable: true, value: true }); window.dispatchEvent(new Event('online')) })
+  await expect(status).not.toHaveText('Offline')
+})
+
 test('organizer can start a scheduled hunt immediately, end it, and open photo review', async ({ page }) => {
   organizerLobbyMode = true
   organizerReviewMode = true

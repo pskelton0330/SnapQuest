@@ -14,7 +14,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
   const [hasOlder, setHasOlder] = useState(false)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
-  const [connection, setConnection] = useState<'connecting' | 'live' | 'reconnecting'>('connecting')
+  const [connection, setConnection] = useState<'connecting' | 'live' | 'reconnecting' | 'offline'>(() => navigator.onLine ? 'connecting' : 'offline')
   const [atLatest, setAtLatest] = useState(true)
   const [newMessageCount, setNewMessageCount] = useState(0)
   const messagesRef = useRef<HTMLDivElement>(null)
@@ -52,14 +52,17 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
   useEffect(() => {
     if (!supabase) return
     const requestCounter = requestId
+    const markOffline = () => setConnection('offline')
+    const markOnline = () => { setConnection('reconnecting'); if (document.visibilityState === 'visible') void loadMessages() }
     const channel = supabase.channel(`hunt-chat-${huntId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'hunt_messages', filter: `hunt_id=eq.${huntId}` }, () => void loadMessages())
-      .subscribe(status => setConnection(status === 'SUBSCRIBED' ? 'live' : status === 'CLOSED' ? 'reconnecting' : 'connecting'))
+      .subscribe(status => setConnection(!navigator.onLine ? 'offline' : status === 'SUBSCRIBED' ? 'live' : status === 'CLOSED' ? 'reconnecting' : 'connecting'))
     const fallback = window.setInterval(() => { if (document.visibilityState === 'visible') void loadMessages() }, 15_000)
     const reconcile = () => { if (document.visibilityState === 'visible') void loadMessages() }
-    window.addEventListener('online', reconcile)
+    window.addEventListener('online', markOnline)
+    window.addEventListener('offline', markOffline)
     window.addEventListener('focus', reconcile)
-    return () => { ++requestCounter.current; window.clearInterval(fallback); window.removeEventListener('online', reconcile); window.removeEventListener('focus', reconcile); void supabase?.removeChannel(channel) }
+    return () => { ++requestCounter.current; window.clearInterval(fallback); window.removeEventListener('online', markOnline); window.removeEventListener('offline', markOffline); window.removeEventListener('focus', reconcile); void supabase?.removeChannel(channel) }
   }, [huntId, loadMessages])
   useEffect(() => {
     if (loadingOlder) return
@@ -81,13 +84,14 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
 
   const oldest = messages[0]
   return <section className={`hunt-chat ${compact ? 'hunt-chat-compact' : ''}`} aria-label="Hunt chat">
-    <div className="hunt-chat-heading"><div><span className="eyebrow"><MessageCircle size={14}/> HUNT CHAT</span><h2>Keep everyone in the loop</h2></div><span>{connection === 'live' ? 'Live' : connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span></div>
+    <div className="hunt-chat-heading"><div><span className="eyebrow"><MessageCircle size={14}/> HUNT CHAT</span><h2>Keep everyone in the loop</h2></div><span aria-live="polite">{connection === 'offline' ? 'Offline' : connection === 'live' ? 'Live' : connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span></div>
+    {connection === 'offline' && <p className="hunt-chat-error" role="status">You are offline. New messages will refresh when you reconnect.</p>}
     <div className="hunt-chat-messages" aria-live="polite" ref={messagesRef} onScroll={event => { const element = event.currentTarget; const latest = element.scrollHeight - element.scrollTop - element.clientHeight < 48; atLatestRef.current = latest; setAtLatest(latest); if (latest) setNewMessageCount(0) }}>
       {hasOlder && oldest && <button className="outline-button" type="button" disabled={loadingOlder} onClick={() => { preserveScroll.current = true; void loadMessages(oldest, true) }}>{loadingOlder ? 'Loading…' : 'Load older messages'}</button>}
       {loading ? <div className="hunt-chat-empty"><LoaderCircle className="spin" size={17}/> Loading messages…</div> : messages.length ? messages.map(message => <article className={`hunt-chat-message ${message.sender_role === 'organizer' ? 'organizer-message' : ''}`} key={message.id}><div className="hunt-chat-message-meta"><b>{message.sender_name}</b><time dateTime={message.created_at}>{new Date(message.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div><p>{message.body}</p></article>) : <div className="hunt-chat-empty">No messages yet. Say hello to your teams.</div>}
     </div>
     {!atLatest && <button type="button" className="outline-button" onClick={() => { atLatestRef.current = true; setAtLatest(true); setNewMessageCount(0); messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' }) }}>Jump to latest{newMessageCount > 0 ? ` · ${newMessageCount} new` : ''}</button>}
     {readOnly ? <p className="hunt-chat-empty">This hunt is closed. Messages are available to read.</p> : <form className="hunt-chat-form" onSubmit={send}><input maxLength={500} value={draft} onChange={event => setDraft(event.target.value)} placeholder="Write a message to the hunt…" aria-label="Message"/><button className="primary-button" type="submit" disabled={sending || !draft.trim()}>{sending ? <LoaderCircle className="spin" size={15}/> : <Send size={15}/>}<span className="sr-only">Send message</span></button></form>}
-    {error && <p className="hunt-chat-error" role="alert">{error} <button className="outline-button" type="button" onClick={() => void loadMessages()}>Retry</button></p>}
+    {error && <p className="hunt-chat-error" role="alert">{error}{error.startsWith('Messages could not be refreshed') && <> <button className="outline-button" type="button" onClick={() => void loadMessages()}>Retry</button></>}</p>}
   </section>
 }
