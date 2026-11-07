@@ -362,21 +362,30 @@ try {
     let markSubscribed
     let rejectSubscription
     const subscribed = new Promise((resolve, reject) => { markSubscribed = resolve; rejectSubscription = reject })
+    let markReplicationReady
+    let rejectReplicationReady
+    const replicationReady = new Promise((resolve, reject) => { markReplicationReady = resolve; rejectReplicationReady = reject })
     let receiveUpdate
     const update = new Promise((resolve) => { receiveUpdate = resolve })
     const channel = client
-      .channel(`ci-team-identity-${audience}-${huntId}-${randomUUID()}`)
+      .channel(`ci-team-identity-${audience}-${huntId}-${randomUUID()}`, { config: { broadcast: { replication_ready: true } } })
+      .on('system', {}, (payload) => {
+        console.log(`Team identity Realtime ${audience} ${payload.extension}: ${payload.status} (${payload.message})`)
+        if (payload.extension === 'postgres_changes' && payload.status === 'ok') markReplicationReady()
+        else if (payload.status === 'error' || payload.status === 'timeout') rejectReplicationReady(new Error(`${audience} team identity replication failed: ${payload.message}`))
+      })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'teams', filter: `id=eq.${teamOne.team_id}` }, (payload) => receiveUpdate(payload.new))
       .subscribe((status, error) => {
         console.log(`Team identity Realtime ${audience} status: ${status}${error ? ` (${JSON.stringify(error)})` : ''}`)
         if (status === 'SUBSCRIBED') markSubscribed()
         else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') rejectSubscription(new Error(`${audience} team identity Realtime subscription failed: ${status}`))
       })
-    return { channel, subscribed, update }
+    return { channel, subscribed, replicationReady, update }
   }
   const participantTeamRealtime = watchTeamIdentity(participantOne, 'participant device one')
   try {
     await withTimeout(participantTeamRealtime.subscribed, 'Participant team identity subscription')
+    await withTimeout(participantTeamRealtime.replicationReady, 'Participant team identity replication readiness')
     const firstRealtimeTeamName = `CI Live ${randomUUID().slice(0, 8)}`
     const { error: firstTeamNameError } = await organizer.rpc('set_team_name', {
       p_hunt_id: huntId,
@@ -397,6 +406,7 @@ try {
     const reconnectedTeamRealtime = watchTeamIdentity(participantOneConcurrent, 'participant reconnect')
     try {
       await withTimeout(reconnectedTeamRealtime.subscribed, 'Reconnected participant team identity subscription')
+      await withTimeout(reconnectedTeamRealtime.replicationReady, 'Reconnected participant team identity replication readiness')
       const { data: reconciledTeam, error: reconciledTeamError } = await participantOneConcurrent
         .from('teams')
         .select('id,name')
