@@ -266,7 +266,8 @@ try {
   }
   const stableMessageIdSet = new Set(stableMessageIds)
   const pagedFixtureIds = pagedMessageIds.filter((id) => stableMessageIdSet.has(id))
-  assert.deepEqual(pageSizes, [100, 100, 5])
+  assert.deepEqual(pageSizes, [100, 100, 14])
+  assert.equal(new Set(pagedMessageIds).size, pagedMessageIds.length, 'Chat pagination must not duplicate any rows')
   assert.equal(pagedFixtureIds.length, 205)
   assert.equal(new Set(pagedFixtureIds).size, 205, 'Stable pagination must not skip or duplicate same-timestamp rows')
   console.log('Organizer/participant chat HTTP access, sender identity, send rate limit, and 205-row stable-cursor paging pass.')
