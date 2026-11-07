@@ -28,6 +28,8 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
   const [celebrationTeamId, setCelebrationTeamId] = useState('')
   const galleryRequestId = useRef(0)
   const signedUrlCache = useRef(new Map<string, { url: string; expiresAt: number }>())
+  const finalizationOperationId = useRef<string | null>(null)
+  const finalizationAttempt = useRef(0)
 
   const load = useCallback(async () => {
     if (!supabase) return
@@ -104,12 +106,29 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
 
   async function finalize() {
     if (!supabase) return
-    const operationId = crypto.randomUUID()
+    const operationId = finalizationOperationId.current ?? crypto.randomUUID()
+    finalizationOperationId.current = operationId
+    const attempt = ++finalizationAttempt.current
     setBusy('finalize'); setError('')
-    const { error: actionError } = await supabase.rpc('finalize_hunt', { p_hunt_id: huntId })
-    if (actionError) { setError(actionError.message); void reportOperation(huntId, operationId, 'finalization_failed', 'failure', 'organizer_web') }
-    else { void reportOperation(huntId, operationId, 'finalization_confirmed', 'success', 'organizer_web'); setConfirmFinalize(false); await load(); onChanged() }
-    setBusy('')
+    let actionErrorMessage: string | null = null
+    try {
+      const { error: actionError } = await supabase.rpc('finalize_hunt', { p_hunt_id: huntId })
+      actionErrorMessage = actionError?.message ?? null
+    } catch (finalizeError) {
+      actionErrorMessage = finalizeError instanceof Error ? finalizeError.message : 'Final results could not be confirmed. Please retry.'
+    }
+    if (actionErrorMessage) {
+      setError(actionErrorMessage)
+      void reportOperation(huntId, operationId, attempt === 1 ? 'finalization_failed' : 'finalization_retry_failed', 'failure', 'organizer_web')
+      setBusy('')
+      return
+    }
+    void reportOperation(huntId, operationId, attempt === 1 ? 'finalization_confirmed' : 'finalization_retry_confirmed', 'success', 'organizer_web')
+    finalizationOperationId.current = null
+    finalizationAttempt.current = 0
+    setConfirmFinalize(false)
+    try { await load(); onChanged() }
+    finally { setBusy('') }
   }
 
   const scores = data
@@ -211,7 +230,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
       {data.status === 'completed' ? completedResults : ended ? (
         <div className="review-finish">
           <div><b>Ready to publish the results?</b><span>{pendingCount ? 'Every submitted photo must be approved or rejected first.' : 'This locks the final scores and shows the leaderboard to participants.'}</span></div>
-          {confirmFinalize ? <><button className="outline-button" onClick={() => setConfirmFinalize(false)}>Cancel</button><button className="primary-button" disabled={!!pendingCount || busy === 'finalize'} onClick={() => void finalize()}>{busy === 'finalize' ? 'Finalizing…' : 'Confirm final results'}</button></> : <button className="primary-button" disabled={!!pendingCount} onClick={() => setConfirmFinalize(true)}>Finalize results</button>}
+          {confirmFinalize ? <><button className="outline-button" onClick={() => { setConfirmFinalize(false); finalizationOperationId.current = null; finalizationAttempt.current = 0 }}>Cancel</button><button className="primary-button" disabled={!!pendingCount || busy === 'finalize'} onClick={() => void finalize()}>{busy === 'finalize' ? 'Finalizing…' : 'Confirm final results'}</button></> : <button className="primary-button" disabled={!!pendingCount} onClick={() => setConfirmFinalize(true)}>Finalize results</button>}
         </div>
       ) : null}
       {data.status === 'completed' && (winner ? <section className="celebration-card-panel"><div className="eyebrow"><Trophy size={14}/> {winningTeams.length > 1 ? 'TIED WINNERS' : 'WINNER CELEBRATION'}</div><h2>{winningTeams.length > 1 ? `${winningTeams.length} teams share first place` : 'Make the win shareable'}</h2>{winningTeams.length > 1 && <label>Choose a team card<select value={winner.teamId} onChange={event => setCelebrationTeamId(event.target.value)}>{winningTeams.map(team => <option key={team.teamId} value={team.teamId}>{team.teamName}</option>)}</select></label>}{celebrationPreviewUrl && <img className="celebration-card-preview" src={celebrationPreviewUrl} alt={`Winner celebration card for ${winner.teamName}`}/>}<p>Create a branded winner card using {winner.teamName}’s team selfie. If no selfie was submitted, the card uses the team color as a placeholder.</p><div className="celebration-card-actions"><button className="primary-button" disabled={celebrationBusy} onClick={() => void shareCelebrationCard()}><Share2 size={15}/> {celebrationBusy ? 'Preparing card…' : 'Share winner card'}</button><button className="outline-button" disabled={celebrationBusy} onClick={() => void downloadCelebrationCard()}><Download size={15}/> Download card</button></div>{celebrationError && <p className="photo-upload-error" role="alert">{celebrationError}</p>}<small className="celebration-card-note">The image is created in this browser and is not uploaded to SnapQuest.</small></section> : <section className="celebration-card-panel"><div className="eyebrow"><Trophy size={14}/> RESULTS</div><h2>No winning team this time</h2><p>Every team finished with zero points. Celebrate the teams’ effort and try another hunt.</p></section>)}

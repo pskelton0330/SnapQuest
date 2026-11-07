@@ -14,6 +14,7 @@ let photoSubmissionRpcCalls = 0
 let selfieSubmissionRpcCalls = 0
 let rollbackDeleteRequests = 0
 let organizerReviewMode = false
+let organizerFinalizeLostResponse = false
 let organizerTieMode = false
 let organizerLobbyMode = false
 let organizerDraftMode = false
@@ -89,6 +90,7 @@ test.beforeEach(async ({ page }) => {
   selfieSubmissionRpcCalls = 0
   rollbackDeleteRequests = 0
   organizerReviewMode = false
+  organizerFinalizeLostResponse = false
   organizerTieMode = false
   organizerLobbyMode = false
   organizerDraftMode = false
@@ -442,6 +444,11 @@ test.beforeEach(async ({ page }) => {
     }
     if (organizerReviewMode && request.url().includes('/rest/v1/rpc/finalize_hunt')) {
       organizerReviewStatus = 'completed'
+      if (organizerFinalizeLostResponse) {
+        organizerFinalizeLostResponse = false
+        await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'simulated response lost after commit' }) })
+        return
+      }
       await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
       return
     }
@@ -1060,6 +1067,30 @@ test('organizer reviews a photo, changes its decision, and finalizes results', a
   await expectNoHorizontalOverflowAt200Percent(page, 'organizer review and results')
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, targets }) => ({ id, impact, help, targets })), null, 2)).toEqual([])
+})
+
+test('finalization retry after a lost response is traced to the original operation', async ({ page }) => {
+  organizerReviewMode = true
+  organizerFinalizeLostResponse = true
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  const hunt = page.getByRole('article').filter({ hasText: 'Spring Photo Hunt' })
+  await hunt.getByRole('button', { name: 'Review photos' }).click()
+  await page.getByRole('button', { name: 'Approve' }).click()
+  await expect(page.getByRole('button', { name: 'Change decision to rejected' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Finalize results' }).click()
+  await page.getByRole('button', { name: 'Confirm final results' }).click()
+  await expect(page.getByRole('alert')).toContainText('simulated response lost after commit')
+  await expect.poll(() => auditReports.some(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'finalization_failed')).toBe(true)
+
+  await page.getByRole('button', { name: 'Confirm final results' }).click()
+  await expect(page.getByRole('heading', { name: 'Hunt complete' })).toBeVisible()
+  await expect.poll(() => auditReports.some(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'finalization_retry_confirmed')).toBe(true)
+  const firstAttempt = auditReports.find(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'finalization_failed')
+  const retry = auditReports.find(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'finalization_retry_confirmed')
+  expect((firstAttempt?.p_details as Record<string, unknown> | undefined)?.operation_id).toBe((retry?.p_details as Record<string, unknown> | undefined)?.operation_id)
 })
 
 test('organizer review refreshes signed previews when the page returns to the foreground', async ({ page }) => {
