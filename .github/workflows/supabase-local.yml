@@ -40,11 +40,25 @@ jobs:
       - name: Start isolated local Supabase stack and apply migrations
         run: supabase start -x studio,edge-runtime,logflare,vector,supavisor,postgres-meta
 
+      - name: Verify Realtime publication covers live app subscriptions
+        shell: bash
+        run: |
+          actual=$(docker exec supabase_db_snapquest-local-tests psql -U postgres -Atc "select string_agg(tablename, ',' order by tablename) from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename in ('hunt_messages','hunts','hunt_votes','participants','submissions','team_selfies','teams')")
+          expected='hunt_messages,hunts,hunt_votes,participants,submissions,team_selfies,teams'
+          echo "Published app tables: ${actual:-<none>}"
+          test "$actual" = "$expected"
+
       - name: Export local Supabase connection settings
         run: supabase status --output env | sed -E 's/^([^=]+)="(.*)"$/\1=\2/' >> "$GITHUB_ENV"
 
       - name: Verify app schema and storage bucket
         run: node scripts/verify-supabase-local.mjs
+
+      - name: Capture Realtime service errors after a failed integration check
+        if: failure()
+        shell: bash
+        run: |
+          docker logs --tail 300 supabase_realtime_snapquest-local-tests 2>&1 | grep -iE 'error|postgres_changes|publication|replication|permission|policy' | tail -n 80 || true
 
       - name: Stop isolated local stack
         if: always()
