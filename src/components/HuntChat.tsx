@@ -79,9 +79,8 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
     const channel = supabase.channel(`hunt-chat-${huntId}`, { config: { broadcast: { replication_ready: true } } })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'hunt_messages', filter: `hunt_id=eq.${huntId}` }, () => void loadMessages())
       .on('system', {}, payload => {
-        if (payload.extension !== 'system') return
-        if (payload.status === 'ok') { replicationReady = true; setConnection(navigator.onLine ? 'live' : 'offline') }
-        else if (payload.status === 'error') { replicationReady = false; setConnection(navigator.onLine ? 'reconnecting' : 'offline') }
+        if (payload.extension === 'postgres_changes' && payload.status === 'ok') { replicationReady = true; setConnection(navigator.onLine ? 'live' : 'offline') }
+        else if (payload.status === 'error' || payload.status === 'timeout') { replicationReady = false; setConnection(navigator.onLine ? 'reconnecting' : 'offline') }
       })
       .subscribe(status => {
         if (!navigator.onLine) setConnection('offline')

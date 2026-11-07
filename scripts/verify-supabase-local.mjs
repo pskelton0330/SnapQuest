@@ -210,10 +210,9 @@ try {
     const channel = client
       .channel(`ci-hunt-chat-${audience}-${huntId}-${randomUUID()}`, { config: { broadcast: { replication_ready: true } } })
       .on('system', {}, (payload) => {
-        console.log(`Chat Realtime ${audience}${withHuntFilter ? ' filtered' : ' unfiltered'} replication: ${payload.status} (${payload.message})`)
-        if (payload.extension !== 'system') return
-        if (payload.status === 'ok') markReplicationReady()
-        else if (payload.status === 'error') rejectReplicationReady(new Error(`${audience} chat replication failed: ${payload.message}`))
+        console.log(`Chat Realtime ${audience}${withHuntFilter ? ' filtered' : ' unfiltered'} ${payload.extension}: ${payload.status} (${payload.message})`)
+        if (payload.extension === 'postgres_changes' && payload.status === 'ok') markReplicationReady()
+        else if (payload.status === 'error' || payload.status === 'timeout') rejectReplicationReady(new Error(`${audience} chat replication failed: ${payload.message}`))
       })
       .on('postgres_changes', change, (payload) => {
         if (payload.new?.body === realtimeMessageBody) receiveMessage(payload.new)
