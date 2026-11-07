@@ -54,7 +54,8 @@ async function verifyHuntTableRoleMatrix(huntId, organizer, participant, outside
     'audit_events',
   ]
   for (const table of tables) {
-    const readHuntRows = (client) => client.from(table).select('id').eq('hunt_id', huntId)
+    const huntKey = table === 'hunts' ? 'id' : 'hunt_id'
+    const readHuntRows = (client) => client.from(table).select('id').eq(huntKey, huntId)
     const [organizerResult, participantResult, outsiderResult, anonymousResult] = await Promise.all([
       readHuntRows(organizer),
       readHuntRows(participant),
