@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { importChallenges, moveChallenge, moveItem, validateHuntDraft, discoverHunts, completedPlayCounts } from '../src/lib/huntEditor.ts'
+import { importChallenges, moveChallenge, moveItem, SUGGESTED_RULES, validateHuntDraft, discoverHunts, completedPlayCounts } from '../src/lib/huntEditor.ts'
 import { sampleWorkspace, createLocalWorkspaceRepository, LOCAL_CREATOR } from '../src/lib/workspace.ts'
 
 test('bulk import handles pasted numbered and bullet lists, blanks, CRLF, and preserves meaningful duplicates',()=>{
@@ -27,6 +27,12 @@ test('reordering keeps identity, instructions and points together and respects b
   const production=[{key:'first',libraryItemId:'library-a',pointValue:3},{key:'second',libraryItemId:'library-b',pointValue:8}]
   assert.deepEqual(moveItem(production,0,1),[production[1],production[0]])
   assert.equal(moveItem(production,0,-1),production)
+})
+test('both hunt editors share unique safety rules with one recommended default',()=>{
+  assert.equal(SUGGESTED_RULES.length,4)
+  assert.equal(new Set(SUGGESTED_RULES.map(rule=>rule.id)).size,SUGGESTED_RULES.length)
+  assert.equal(new Set(SUGGESTED_RULES.map(rule=>rule.text)).size,SUGGESTED_RULES.length)
+  assert.equal(SUGGESTED_RULES.filter(rule=>rule.recommended).length,1)
 })
 test('shared hunt validation catches missing or excessive challenges, bad points, rules and duration',()=>{
   const hunt=sampleWorkspace().hunts[0]
