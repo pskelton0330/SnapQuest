@@ -48,6 +48,17 @@ jobs:
           echo "Published app tables: ${actual:-<none>}"
           test "$actual" = "$expected"
 
+      - name: Verify public table RLS and anonymous security-definer grants
+        shell: bash
+        run: |
+          unprotected_tables=$(docker exec supabase_db_snapquest-local-tests psql -U postgres -Atc "select coalesce(string_agg(format('%I.%I', n.nspname, c.relname), ', ' order by c.relname), '') from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind in ('r','p') and not c.relrowsecurity")
+          echo "Public tables without RLS: ${unprotected_tables:-<none>}"
+          test -z "$unprotected_tables"
+
+          anonymous_definer_functions=$(docker exec supabase_db_snapquest-local-tests psql -U postgres -Atc "select coalesce(string_agg(p.oid::regprocedure::text, ', ' order by p.oid::regprocedure::text), '') from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.prosecdef and has_function_privilege('anon', p.oid, 'EXECUTE') and p.oid not in ('public.list_hunt_templates(boolean)'::regprocedure, 'public.preview_invitation(text)'::regprocedure)")
+          echo "Unapproved anon security-definer RPC grants: ${anonymous_definer_functions:-<none>}"
+          test -z "$anonymous_definer_functions"
+
       - name: Export local Supabase connection settings
         run: supabase status --output env | sed -E 's/^([^=]+)="(.*)"$/\1=\2/' >> "$GITHUB_ENV"
 
