@@ -1,11 +1,11 @@
 # PRD v2 requirement and gap checklist
 
-Updated November 6, 2026. These labels describe the whole requirement, not just code existence. Verified means the named behavior passed its stated checks; live smoke evidence is recorded separately below, and does not replace the full acceptance scenarios. The newer [deep review](reviews/2026-11-06-deep-review.md) and [improvement backlog](reviews/2026-11-06-improvement-backlog.md) track the current implementation, deployment, and remaining manual gates.
+Updated November 7, 2026. These labels describe the whole requirement, not just code existence. Verified means the named behavior passed its stated checks; live smoke evidence is recorded separately below, and does not replace the full acceptance scenarios. The newer [deep review](reviews/2026-11-06-deep-review.md) and [improvement backlog](reviews/2026-11-06-improvement-backlog.md) track the current implementation, deployment, and remaining manual gates.
 
-## Current verification snapshot (November 6)
+## Current verification snapshot (November 7)
 
-- The latest fully verified Pages build is `be4510`; GitHub Actions run `42319097855` passed, and live `build-info.json` matched that commit. It verifies organizer scheduled-hunt rescheduling plus the chat offline/reconnect and loaded-history refresh fixes.
-- The current suite has 79 passing unit/database tests and 80 passing desktop/mobile browser cases. Lint and the production build pass; the JavaScript entry remains below the enforced 150 KiB gzip budget. All 80 browser cases passed in workflow `42319097855` on the deployed source.
+- The latest verified application-code release is `8962762`; [GitHub Actions run `42322812373`](https://github.com/pskelton0330/SnapQuest/actions/runs/42322812373) passed. The [live build manifest](https://pskelton0330.github.io/SnapQuest/build-info.json) identifies the currently served revision. This release includes shared hunt-editor validation, challenge reordering, shared suggested rules, and improved editor text contrast.
+- The current suite has 80 passing unit/database tests and 82 passing desktop/mobile browser cases. Lint and the production build pass; the JavaScript entry is 135.05 KiB gzip against the enforced 150 KiB budget. All 82 browser cases passed in workflow `42322812373` on the deployed source.
 - Physical-device, screen-reader, hosted Storage HTTP, multi-session concurrency, and full authorization acceptance are still separate gates. The historical AT-01 through AT-36 table remains NOT RUN for physical-device acceptance; mock-browser and PGlite evidence does not satisfy those rows.
 
 The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. This checklist supersedes the older implementation review where requirements conflict; that review remains historical evidence.
