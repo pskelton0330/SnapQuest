@@ -2,7 +2,7 @@
 
 Use an isolated test hunt and test email accounts. Never paste invitation tokens, email magic links, service-role keys, or private photo URLs into notes or bug reports.
 
-> **Migration status (November 7, 2026):** Production has migrations 001–024 and targeted 026–027 applied. Migration 025 (365-day audit-event pruning) remains unapplied pending explicit owner approval because it deletes older diagnostic rows. Hosted Storage and concurrent PostgreSQL acceptance still require an isolated test project. The historical setup instructions below apply to an isolated test project only.
+> **Migration status (November 7, 2026):** Production history records migrations 001–024 and targeted 026–028. Read-only checks confirm all public tables have RLS and anon function grants match the approved public RPC allowlist. Migration 025 (365-day audit-event pruning) remains unapplied pending explicit owner approval because it deletes older diagnostic rows. Do not use production for role-specific row/Storage or concurrent destructive tests; those still require an isolated test project. The historical setup instructions below apply to an isolated test project only.
 
 ## 1. Public deployment smoke test
 

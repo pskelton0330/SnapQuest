@@ -55,14 +55,14 @@ Status evidence is maintained in the [checklist](PRD_V2_CHECKLIST.md), [improvem
 | SEC-01 | IMP-05, IMP-15, IMP-26 | Local ownership boundaries pass; anon RPC grants are hardened in production; full hosted role matrix remains. |
 | SEC-02 | IMP-05, IMP-09, IMP-15, IMP-25 | The bucket is private and signed URLs are used. Targeted migration 026 is live and excludes selfie paths from the general post-hunt photo helper. Actual Storage HTTP allow/deny, deletion, and revocation tests remain pending. |
 | SEC-03 | IMP-14, IMP-15, IMP-24 | SQL validation exists; public abuse controls and expensive-output rate limits need a threat/cost design. |
-| SEC-04 | IMP-05, IMP-15, IMP-26 | Local role-boundary checks pass; migration 027 is live and only public template listing/invite preview retain anon EXECUTE; hosted progress-data and role-matrix checks remain. |
+| SEC-04 | IMP-05, IMP-15, IMP-26 | Production catalog checks confirm RLS on every public table and anon EXECUTE on only the two approved security-definer RPCs; live role-specific row visibility and Storage behavior remain unverified. |
 | PRIV-01 | IMP-03, IMP-15, IMP-22 | Data inventory exists; owner decisions, deletion controls, device checks, and assistive-technology review remain. |
 | A11Y-01 | IMP-03, IMP-19 | Automated scans cover tested routes; keyboard navigation and 200% text-size browser checks now cover home, participant lobby/play/review/results, and organizer lobby/review/results. Physical screen-reader and device acceptance remain. |
 | MIG-01 | IMP-21 | PRD v2 was reviewed; requirement traceability is now indexed here. |
-| MIG-02 | IMP-05, IMP-13, IMP-14, IMP-22, IMP-25, IMP-26 | Production has 001–024 and targeted 026–027 applied; 025 needs retention approval. |
-| MIG-03 | IMP-05, IMP-06, IMP-13, IMP-15, IMP-25 | Migration source and local coverage exist; legacy-data mapping, forward repair, rollback, and hosted acceptance remain. Migrations 026 and 027 fix and close the production selfie-policy and anon RPC gaps. |
-| MIG-04 | IMP-05, IMP-13, IMP-14, IMP-22, IMP-25 | Additive migrations are locally repeatable; production has 001–024 and targeted 026–027, 025 remains owner-gated, and hosted Storage acceptance is outstanding. |
-| MIG-05 | IMP-05, IMP-06, IMP-15, IMP-25 | Production has 001–024 and targeted 026–027 applied; hosted authorization, Storage, and concurrency tests remain. |
+| MIG-02 | IMP-05, IMP-13, IMP-14, IMP-22, IMP-25, IMP-26 | Production history records 001–024 and targeted 026–028 applied; 025 needs retention approval. |
+| MIG-03 | IMP-05, IMP-06, IMP-13, IMP-15, IMP-25 | Migration source and local coverage exist; legacy-data mapping, forward repair, rollback, and hosted acceptance remain. Migrations 026 and 027 close the selfie-policy and anon RPC gaps; migration 028 history now reflects Realtime publication membership that was already present. |
+| MIG-04 | IMP-05, IMP-13, IMP-14, IMP-22, IMP-25 | Additive migrations are locally repeatable; production history has 001–024 and targeted 026–028, 025 remains owner-gated, and hosted Storage acceptance is outstanding. |
+| MIG-05 | IMP-05, IMP-06, IMP-15, IMP-25 | Production has 001–024 and targeted 026–028 recorded; read-only catalog checks pass, while hosted role-specific authorization and Storage behavior remain. |
 
 ## Release interpretation
 
