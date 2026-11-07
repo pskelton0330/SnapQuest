@@ -479,6 +479,25 @@ try {
   })
   assert.ifError(clientAuditError)
   assert.ok(clientAuditId)
+  const failureTraceCases = [
+    { actor: participantOne, app: 'participant_web', stage: 'photo_preview_unavailable' },
+    { actor: organizer, app: 'organizer_web', stage: 'chat_send_failed' },
+    { actor: organizer, app: 'organizer_web', stage: 'review_decision_failed' },
+    { actor: organizer, app: 'organizer_web', stage: 'finalization_retry_failed' },
+  ]
+  const failureTraceIds = new Map()
+  for (const trace of failureTraceCases) {
+    const operationId = randomUUID()
+    const { data: eventId, error } = await trace.actor.rpc('record_audit_event', {
+      p_event_type: 'client_operation',
+      p_hunt_id: huntId,
+      p_outcome: 'failure',
+      p_details: { client_report: true, operation_id: operationId, stage: trace.stage, app: trace.app },
+    })
+    assert.ifError(error)
+    assert.ok(eventId, `${trace.stage} should produce an audit event`)
+    failureTraceIds.set(trace.stage, eventId)
+  }
   const { error: forgedAuditError } = await participantOne.rpc('record_audit_event', {
     p_event_type: 'client_operation',
     p_hunt_id: huntId,
@@ -750,6 +769,15 @@ try {
   assert.equal(clientOperationEvent?.source, 'client-reported')
   assert.deepEqual(Object.keys(clientOperationEvent.details).sort(), ['app', 'client_report', 'operation_id', 'stage'])
   assert.equal(clientOperationEvent.details.operation_id, operationId)
+  for (const trace of failureTraceCases) {
+    const event = auditEvents.find((candidate) => candidate.id === failureTraceIds.get(trace.stage))
+    assert.ok(event, `${trace.stage} should appear in organizer-visible audit logs`)
+    assert.equal(event.outcome, 'failure')
+    assert.equal(event.source, 'client-reported')
+    assert.deepEqual(Object.keys(event.details).sort(), ['app', 'client_report', 'operation_id', 'stage'])
+    assert.equal(event.details.stage, trace.stage)
+    assert.equal(event.details.app, trace.app)
+  }
   const { error: participantAuditListError } = await participantOne.rpc('list_hunt_audit_events', { p_hunt_id: huntId, p_limit: 100 })
   assert.ok(participantAuditListError, 'Participants must not read organizer audit logs')
   assert.match(participantAuditListError.message, /Organizer access required/)
