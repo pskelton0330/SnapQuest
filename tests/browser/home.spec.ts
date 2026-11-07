@@ -24,7 +24,7 @@ let organizerReviewStatus: 'review' | 'completed' = 'review'
 let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
 let organizerLobbyStatus: 'scheduled' | 'active' | 'review' = 'scheduled'
 let organizerStartCalls = 0
-let organizerTimingFailure: 'start' | null = null
+let organizerTimingFailure: 'start' | 'end' | 'add' | 'reschedule' | null = null
 let organizerMessages: { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }[] = []
 let chatLoadFailures = 0
 let chatSendFailures = 0
@@ -326,10 +326,29 @@ test.beforeEach(async ({ page }) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
       return
     }
+    if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/reschedule_game')) {
+      if (organizerTimingFailure === 'reschedule') {
+        organizerTimingFailure = null
+        await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'simulated reschedule failure' }) })
+      } else await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
+      return
+    }
+    if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/add_game_time')) {
+      if (organizerTimingFailure === 'add') {
+        organizerTimingFailure = null
+        await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'simulated add-time failure' }) })
+      } else await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
+      return
+    }
     if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/end_hunt_early')) {
-      organizerLobbyStatus = 'review'
-      organizerReviewStatus = 'review'
-      await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
+      if (organizerTimingFailure === 'end') {
+        organizerTimingFailure = null
+        await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'simulated end failure' }) })
+      } else {
+        organizerLobbyStatus = 'review'
+        organizerReviewStatus = 'review'
+        await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
+      }
       return
     }
     if (organizerReviewMode && request.url().includes('/rest/v1/rpc/review_submission')) {
@@ -1049,6 +1068,50 @@ test('organizer start failure is recorded with an organizer operation trace', as
   await diagnostics.getByRole('button', { name: 'Refresh' }).click()
   await expect(diagnostics).toContainText('Client reported')
   await expect(diagnostics).toContainText('start game now failed')
+})
+
+test('organizer timing controls record failure traces for reschedule, start, add time, and early end', async ({ page }) => {
+  organizerLobbyMode = true
+  organizerTimingFailure = 'reschedule'
+  page.on('dialog', dialog => dialog.accept())
+  await restoreOrganizerSession(page)
+  await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
+
+  const futureStart = await page.evaluate(() => {
+    const date = new Date(Date.now() + 2 * 60 * 60_000)
+    date.setSeconds(0, 0)
+    const pad = (value: number) => String(value).padStart(2, '0')
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  })
+  await page.getByLabel('New start time').fill(futureStart)
+  await page.getByRole('button', { name: 'Save new time' }).click()
+  await expect(page.getByRole('alert')).toContainText('simulated reschedule failure')
+  await expect.poll(() => auditReports.some(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'reschedule_game_failed')).toBe(true)
+
+  organizerTimingFailure = 'start'
+  await page.getByRole('button', { name: 'Start hunt now' }).click()
+  await expect(page.getByRole('alert')).toContainText('simulated start failure')
+  await expect.poll(() => auditReports.some(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'start_game_now_failed')).toBe(true)
+  await page.getByRole('button', { name: 'Start hunt now' }).click()
+  await page.getByRole('button', { name: 'Add 15 minutes' }).waitFor()
+
+  organizerTimingFailure = 'add'
+  await page.getByRole('button', { name: 'Add 15 minutes' }).click()
+  await expect(page.getByRole('alert')).toContainText('simulated add-time failure')
+  await expect.poll(() => auditReports.some(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'add_game_time_failed')).toBe(true)
+
+  organizerTimingFailure = 'end'
+  await page.getByRole('button', { name: 'End hunt now and review' }).click()
+  await expect(page.getByRole('alert')).toContainText('simulated end failure')
+  await expect.poll(() => auditReports.some(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'end_hunt_early_failed')).toBe(true)
+
+  const diagnostics = page.locator('.hunt-diagnostics')
+  await diagnostics.locator('summary').click()
+  await diagnostics.getByRole('button', { name: 'Refresh' }).click()
+  await expect(diagnostics).toContainText('reschedule game failed')
+  await expect(diagnostics).toContainText('start game now failed')
+  await expect(diagnostics).toContainText('add game time failed')
+  await expect(diagnostics).toContainText('end hunt early failed')
 })
 
 test('organizer can reschedule a hunt from its lobby', async ({ page }) => {
