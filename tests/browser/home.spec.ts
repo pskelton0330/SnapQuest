@@ -1271,6 +1271,8 @@ test('organizer chat pages more than 200 messages with identical timestamps with
   await expect(messages.first()).toContainText('Page message 0')
   await expect(messages.last()).toContainText('A new chat update')
   await expect(page.getByRole('button', { name: 'Load older messages' })).toHaveCount(0)
+  expect(chatStableCursorCalls).toBeGreaterThanOrEqual(3)
+  expect(chatLegacyCursorCalls).toBe(0)
 })
 
 

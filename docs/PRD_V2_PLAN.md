@@ -2,7 +2,7 @@
 
 Controlling specification: `SnapQuest_Revised_PRD_v2.0.md`, document revision 2.0, November 2, 2026. This is an incremental version-one product plan, not an application rebuild or a release named 2.0.
 
-> **Status note (November 7, 2026):** The phased sequence below preserves the original PRD implementation proposal and is not a statement of current release status. The authenticated production app is deployed at [GitHub Pages](https://pskelton0330.github.io/SnapQuest/); current feature, test, and release status is maintained in [PRD_V2_CHECKLIST.md](PRD_V2_CHECKLIST.md), [PRD_V2_TEST_EVIDENCE.md](PRD_V2_TEST_EVIDENCE.md), and [PRODUCT_ROADMAP.md](PRODUCT_ROADMAP.md). The roadmap defers video generation, licensed music, direct social posting, and AI hunt generation beyond the lean core launch. Production migration history was checked read-only through `202611060022`; migrations `202611060023` (audit input hardening), `202611060024` (chat pagination), and `202611070025` (audit retention) are unapplied. Only 025 deletes records and needs explicit approval.
+> **Status note (November 7, 2026):** The phased sequence below preserves the original PRD implementation proposal and is not a statement of current release status. The authenticated production app is deployed at [GitHub Pages](https://pskelton0330.github.io/SnapQuest/); current feature, test, and release status is maintained in [PRD_V2_CHECKLIST.md](PRD_V2_CHECKLIST.md), [PRD_V2_TEST_EVIDENCE.md](PRD_V2_TEST_EVIDENCE.md), and [PRODUCT_ROADMAP.md](PRODUCT_ROADMAP.md). The roadmap defers video generation, licensed music, direct social posting, and AI hunt generation beyond the lean core launch. Production currently has migrations 001–024 and targeted 026–027 applied; 025 audit retention is unapplied and requires explicit approval. See the checklist and evidence for current status.
 
 ## Phase sequence
 
@@ -29,7 +29,7 @@ Open gates retained from PRD: D-01 retention durations/start events; D-02 guest 
 
 ## Migration and configuration boundaries
 
-Current live state at the November 7 read-only audit: migrations `202610280001` through `202611060022` are applied to the linked production project. Migrations `202611060023` and `202611060024` are non-destructive code changes; `202611070025` installs the proposed 365-day audit-event pruning. Audit actual live versions before any future application, and do not apply 025 without explicit operator authorization.
+Current live state updated November 7: migrations 001–024 and targeted 026–027 are applied to the linked production project; 025 installs proposed 365-day audit-event pruning and remains unapplied pending explicit operator authorization. Recheck live versions before future migrations.
 
 The first-batch historical notes below predate many later migrations and do not describe the current production schema. The v1.1 document historically reports 001–006 applied; the November 6 remote history check supersedes that older snapshot. All later schema changes still require an additive migration, review, isolated hosted validation, and explicit approval before production application.
 

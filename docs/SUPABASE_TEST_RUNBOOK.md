@@ -2,7 +2,7 @@
 
 Use an isolated test hunt and test email accounts. Never paste invitation tokens, email magic links, service-role keys, or private photo URLs into notes or bug reports.
 
-> **Migration status (November 7, 2026):** The linked production project was checked read-only and has migrations `202610280001` through `202611060022` applied. Source migrations `202611060023` (non-destructive audit validation), `202611060024` (chat pagination), and `202611070025` (365-day audit-event pruning) are not applied there. Test 023/024 on an isolated project before production; 025 also requires explicit owner approval because it deletes older diagnostic rows. The historical setup instructions below apply to an isolated test project only.
+> **Migration status (November 7, 2026):** Production has migrations 001–024 and targeted 026–027 applied. Migration 025 (365-day audit-event pruning) remains unapplied pending explicit owner approval because it deletes older diagnostic rows. Hosted Storage and concurrent PostgreSQL acceptance still require an isolated test project. The historical setup instructions below apply to an isolated test project only.
 
 ## 1. Public deployment smoke test
 
@@ -43,7 +43,7 @@ Use a dedicated Supabase project or a data-less preview branch with synthetic ac
 
 For a new test project, apply migrations through 024 in filename order using that project’s SQL Editor. Open the [Supabase projects dashboard](https://supabase.com/dashboard/projects), select the test project, and choose **SQL Editor**. Do not use `supabase db push` or `supabase migration up --remote` while 025 is pending: both apply all pending migrations. In the isolated test project, apply 025 to synthetic expired audit rows and verify the prune behavior before deciding whether to adopt this policy. Explicit owner approval is required before applying 025 to production. For an existing project, compare its migration history and schema first; never rerun migrations blindly.
 
-Migrations 023–025 issue `NOTIFY pgrst, 'reload schema'` when they commit. After applying 023 and 024, confirm the expected RPC signatures are visible before testing the app:
+Migrations 023, 024, 026, and 027 issue `NOTIFY pgrst, 'reload schema'` when they commit. They are applied in production; for a future isolated environment, confirm expected RPC signatures and ACLs after application:
 
 ```sql
 select to_regprocedure('public.record_audit_event(text,uuid,text,jsonb)') as client_audit_rpc,
