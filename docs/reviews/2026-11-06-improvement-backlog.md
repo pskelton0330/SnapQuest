@@ -71,7 +71,7 @@ This backlog intentionally distinguishes **implementation** from **observed acce
 
 ## Execution method
 
-1. Start with IMP-01 because the review currently allows a server-side decision correction but the review screen only offers actions for pending photos.
+1. Recheck the status table before each batch. IMP-01 is complete; the next correctness gates are isolated hosted authorization/Storage/concurrency/scoring checks (IMP-05/06/08/15) and the remaining reconnect/privacy tests (IMP-09/10/11/12/13/14). Keep advancing safe local coverage while the isolated test environment and physical-device observations are unavailable.
 2. Add a regression test before or with each fix. Prefer deterministic unit/PGlite coverage; add browser and dedicated-project tests where those layers are required.
 3. Use a dedicated test project and synthetic hunts for hosted behavior. Record exact environment and observations; never expose credentials or real participant media.
 4. Run `npm.cmd test`, `npm.cmd run lint`, and `npm.cmd run build` after each coherent code batch.
