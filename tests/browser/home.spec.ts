@@ -24,6 +24,7 @@ let organizerReviewStatus: 'review' | 'completed' = 'review'
 let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
 let organizerLobbyStatus: 'scheduled' | 'active' | 'review' = 'scheduled'
 let organizerStartCalls = 0
+let organizerTimingFailure: 'start' | null = null
 let organizerMessages: { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }[] = []
 let chatLoadFailures = 0
 let chatSendFailures = 0
@@ -62,6 +63,7 @@ test.beforeEach(async ({ page }) => {
   organizerReviewDecision = 'pending'
   organizerLobbyStatus = 'scheduled'
   organizerStartCalls = 0
+  organizerTimingFailure = null
   organizerMessages = []
   chatLoadFailures = 0
   chatSendFailures = 0
@@ -84,8 +86,9 @@ test.beforeEach(async ({ page }) => {
       return
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/list_hunt_audit_events')) {
+      const clientEvents = auditReports.map((report, index) => ({ id: `client-event-${index}`, created_at: new Date(Date.now() + index).toISOString(), event_type: report.p_event_type, outcome: report.p_outcome, details: report.p_details }))
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
-        { id: 'client-event', created_at: '2026-11-01T17:10:00Z', event_type: 'client_operation', outcome: 'failure', details: { client_report: true, operation_id: '12121212-1212-4121-8121-121212121212', stage: 'chat_send_failed', app: 'organizer_web' } },
+        ...clientEvents,
         { id: 'server-event', created_at: '2026-11-01T17:09:00Z', event_type: 'game_start_now', outcome: 'success', details: {}, source: 'server-authoritative' },
       ]) })
       return
@@ -313,6 +316,11 @@ test.beforeEach(async ({ page }) => {
       return
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/start_game_now')) {
+      if (organizerTimingFailure === 'start') {
+        organizerTimingFailure = null
+        await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'simulated start failure' }) })
+        return
+      }
       organizerStartCalls++
       organizerLobbyStatus = 'active'
       await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
@@ -985,6 +993,7 @@ test('hunt chat offers retry after read failure and keeps a message after send f
   })).toBe(true)
   const diagnostics = page.locator('.hunt-diagnostics')
   await diagnostics.locator('summary').click()
+  await diagnostics.getByRole('button', { name: 'Refresh' }).click()
   await expect(diagnostics).toContainText('Client reported')
   await expect(diagnostics).toContainText('Server authoritative')
   await expect(diagnostics).toContainText('The log is visible to the hunt organizer')
@@ -1021,6 +1030,25 @@ test('organizer can start a scheduled hunt immediately, end it, and open photo r
   await page.getByRole('button', { name: 'End hunt now and review' }).click()
   await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Finalize results' })).toBeDisabled()
+})
+
+test('organizer start failure is recorded with an organizer operation trace', async ({ page }) => {
+  organizerLobbyMode = true
+  organizerTimingFailure = 'start'
+  page.on('dialog', dialog => dialog.accept())
+  await restoreOrganizerSession(page)
+  await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
+  await page.getByRole('button', { name: 'Start hunt now' }).click()
+  await expect(page.getByRole('alert')).toContainText('simulated start failure')
+  await expect.poll(() => auditReports.some(report => {
+    const details = report.p_details as Record<string, unknown> | undefined
+    return details?.stage === 'start_game_now_failed' && details?.app === 'organizer_web'
+  })).toBe(true)
+  const diagnostics = page.locator('.hunt-diagnostics')
+  await diagnostics.locator('summary').click()
+  await diagnostics.getByRole('button', { name: 'Refresh' }).click()
+  await expect(diagnostics).toContainText('Client reported')
+  await expect(diagnostics).toContainText('start game now failed')
 })
 
 test('organizer can reschedule a hunt from its lobby', async ({ page }) => {

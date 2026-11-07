@@ -3,6 +3,7 @@ import { Archive, ArrowDownUp, ArrowRight, Camera, Check, CircleHelp, Clock3, Ho
 import { QRCodeSVG } from 'qrcode.react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase'
+import { reportOperation } from '../../lib/operationLog'
 import { joinInvitation } from '../../lib/participantSession'
 import HuntReview from './HuntReview'
 import HuntChat from '../../components/HuntChat'
@@ -439,28 +440,29 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
 
   async function endHuntNow() {
     if (!supabase || !managedHunt || !window.confirm('End this hunt now? Participants will no longer be able to submit photos.')) return
+    const operationId = crypto.randomUUID()
     setManageSaving(true); setManageMessage('')
-    const { error } = await supabase.rpc('end_hunt_early', { p_hunt_id: managedHunt.id })
-    setManageSaving(false)
-    if (error) { setManageMessage(error.message); return }
-    const reviewHunt = { ...managedHunt, status: 'review' }
-    setManagedHunt(reviewHunt)
-    await loadWorkspace()
-    setPage('review-hunt')
+    try {
+      const { error } = await supabase.rpc('end_hunt_early', { p_hunt_id: managedHunt.id })
+      if (error) { setManageMessage(error.message); void reportOperation(managedHunt.id, operationId, 'end_hunt_early_failed', 'failure', 'organizer_web'); return }
+      const reviewHunt = { ...managedHunt, status: 'review' }
+      setManagedHunt(reviewHunt)
+      await loadWorkspace()
+      setPage('review-hunt')
+    } catch (error) {
+      setManageMessage(error instanceof Error ? error.message : 'Could not end the hunt now.')
+      void reportOperation(managedHunt.id, operationId, 'end_hunt_early_uncertain', 'failure', 'organizer_web')
+    } finally { setManageSaving(false) }
   }
 
   async function startHuntNow() {
     if (!supabase || !managedHunt || managedHunt.status !== 'scheduled' || !window.confirm('Start this hunt now? Players will enter gameplay immediately.')) return
+    const operationId = crypto.randomUUID()
     setManageSaving(true); setManageMessage('')
     try {
       const { error } = await supabase.rpc('start_game_now', { p_game_id: managedHunt.id })
       if (error) {
-        await supabase.rpc('record_audit_event', {
-          p_event_type: 'client_operation',
-          p_hunt_id: managedHunt.id,
-          p_outcome: 'failure',
-          p_details: { client_report: true, operation_id: crypto.randomUUID(), stage: 'start_game_now_failed', app: 'organizer_web' },
-        })
+        void reportOperation(managedHunt.id, operationId, 'start_game_now_failed', 'failure', 'organizer_web')
         setManageMessage(error.message); return
       }
       const refreshed = await supabase.from('hunts').select('id,title,venue,status,created_at,start_at,duration_minutes,team_assignment_mode,voting_enabled,voting_bonus_points').eq('id', managedHunt.id).single()
@@ -469,6 +471,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       await loadWorkspace()
     } catch (error) {
       setManageMessage(error instanceof Error ? error.message : 'Could not start the hunt now.')
+      void reportOperation(managedHunt.id, operationId, 'start_game_now_uncertain', 'failure', 'organizer_web')
     } finally {
       setManageSaving(false)
     }
@@ -499,12 +502,16 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const visibleItems = items.filter(item => item.archived === showArchived && `${item.title} ${item.description ?? ''} ${item.category ?? ''}`.toLowerCase().includes(search.toLowerCase()))
   async function addHuntTime(minutes: number) {
     if (!supabase || !managedHunt || timingBusy) return
+    const operationId = crypto.randomUUID()
     setTimingBusy(true); setManageMessage('')
     try {
       const { error } = await supabase.rpc('add_game_time', { p_game_id: managedHunt.id, p_minutes: minutes })
-      if (error) { setManageMessage(error.message); return }
+      if (error) { setManageMessage(error.message); void reportOperation(managedHunt.id, operationId, 'add_game_time_failed', 'failure', 'organizer_web'); return }
       const next = { ...managedHunt, duration_minutes: managedHunt.duration_minutes + minutes }
       setManagedHunt(next); setHunts(current => current.map(hunt => hunt.id === next.id ? next : hunt))
+    } catch (error) {
+      setManageMessage(error instanceof Error ? error.message : 'Could not add time to the hunt.')
+      void reportOperation(managedHunt.id, operationId, 'add_game_time_uncertain', 'failure', 'organizer_web')
     } finally { setTimingBusy(false) }
   }
 
@@ -512,12 +519,16 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     if (!supabase || !managedHunt || !startAtLocal || timingBusy) return
     const startAt = new Date(startAtLocal)
     if (!Number.isFinite(startAt.getTime()) || startAt.getTime() <= Date.now()) { setManageMessage('Choose a future start time.'); return }
+    const operationId = crypto.randomUUID()
     setTimingBusy(true); setManageMessage('')
     try {
       const { error } = await supabase.rpc('reschedule_game', { p_game_id: managedHunt.id, p_start_at: startAt.toISOString() })
-      if (error) { setManageMessage(error.message); return }
+      if (error) { setManageMessage(error.message); void reportOperation(managedHunt.id, operationId, 'reschedule_game_failed', 'failure', 'organizer_web'); return }
       const next = { ...managedHunt, start_at: startAt.toISOString() }
       setManagedHunt(next); setHunts(current => current.map(hunt => hunt.id === next.id ? next : hunt))
+    } catch (error) {
+      setManageMessage(error instanceof Error ? error.message : 'Could not reschedule the hunt.')
+      void reportOperation(managedHunt.id, operationId, 'reschedule_game_uncertain', 'failure', 'organizer_web')
     } finally { setTimingBusy(false) }
   }
 
