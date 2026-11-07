@@ -1,6 +1,6 @@
 # SnapQuest Supabase test runbook
 
-Use an isolated test hunt and test email accounts. Never paste invitation tokens, email magic links, service-role keys, or private photo URLs into notes or bug reports.
+This runbook separates no-charge local verification from read-only production diagnosis. Do not incur paid service usage to perform development checks. Never paste invitation tokens, email magic links, service-role keys, or private photo URLs into notes or bug reports.
 
 > **Migration status (November 7, 2026):** Production history records migrations 001–024 and targeted 026–028. Read-only checks confirm all public tables have RLS and anon function grants match the approved public RPC allowlist. The owner chose to retain diagnostic events beyond 365 days, with no maximum duration set. Migration 025 is a no-op and 029 removes any earlier pruning implementation. Development verification uses only the ephemeral Supabase stack in GitHub Actions; do not create a paid hosted branch. Do not use production for role-specific row/Storage or concurrent destructive tests.
 
@@ -18,13 +18,13 @@ Expected:
 
 ## 2. Supabase configuration checks
 
-In Supabase Authentication → URL Configuration:
+Open the [project Auth URL Configuration](https://supabase.com/dashboard/project/ykfkwczcomkhxaraqpuq/auth/url-configuration):
 
 - Site URL: `https://pskelton0330.github.io/SnapQuest/`
 - Redirect URL: `https://pskelton0330.github.io/SnapQuest/**`
 - Local redirects may also include `http://127.0.0.1:5173/**` and `http://localhost:5173/**`.
 
-In Authentication → Providers:
+In [Authentication → Providers](https://supabase.com/dashboard/project/ykfkwczcomkhxaraqpuq/auth/providers):
 
 - Email is enabled.
 - Anonymous sign-ins are enabled.
@@ -37,24 +37,26 @@ select to_regprocedure('public.get_hunt_progress(uuid)') is not null as progress
 
 The result must be `true` before testing progress bars.
 
-## 3. Prepare an isolated test project
+## 3. No-charge development verification
 
-Use a dedicated Supabase project or a data-less preview branch with synthetic accounts and hunts for hosted Auth, Storage HTTP, PostgreSQL concurrency, RLS, and Realtime tests. Confirm the project name and reference in the dashboard before running SQL. Do not use the production project for destructive, race, or migration experiments. Supabase currently bills preview branches by service usage; its [branching usage guide](https://supabase.com/docs/guides/platform/manage-your-usage/branching) lists Micro compute starting at $0.01344/hour and says branching compute is not covered by the spend cap. Check current pricing and delete the test branch when the acceptance run is complete.
+Run the repository checks locally; they use synthetic data and do not connect to Supabase:
 
-Development tests run in the repository's ephemeral Supabase CI stack and incur no hosted branch usage. The local verifier confirms audit events older than 365 days remain present. Do not apply development migrations to production as part of this workflow. For any separately approved production change, compare its migration history and schema first; never rerun migrations blindly.
-
-Migrations 023, 024, 026, and 027 issue `NOTIFY pgrst, 'reload schema'` when they commit. They are applied in production; for a future isolated environment, confirm expected RPC signatures and ACLs after application:
-
-```sql
-select to_regprocedure('public.record_audit_event(text,uuid,text,jsonb)') as client_audit_rpc,
-       to_regprocedure('public.get_hunt_messages(uuid,integer,timestamptz,uuid)') as stable_chat_rpc;
+```powershell
+npm.cmd test
+npm.cmd run test:e2e
+npm.cmd run lint
+npm.cmd run build
 ```
 
-Both results should be non-null. If either is null, stop and review the migration result and PostgREST schema cache before running browser acceptance.
+For database and authorization checks, use the [Supabase local stack workflow](https://github.com/pskelton0330/SnapQuest/actions/workflows/supabase-local.yml) in GitHub Actions. It starts an ephemeral local stack, applies migrations, and discards it after the run. It does not create a hosted branch or change production. The test also confirms audit events at 364 and 366 days remain present.
 
-## 4. Verify the game-management RPCs
+Do not create a hosted Supabase branch or a separate paid project for routine development checks. Hosted Storage HTTP, real email delivery, concurrent clients, and physical phones cannot be proven by the local stack; keep those checks out of development until a no-charge test environment is available.
 
-The organizer Start Now control requires the game-management RPC from migration 008. In an existing test project, first confirm whether the template tables already exist:
+## 4. Production troubleshooting is read-only
+
+The latest recorded production migration history is migrations `202610280001` through `202611060024`, plus targeted `202611070026` through `202611070028`. Migration `202611070025` is a no-op; `202611070029` removes any earlier audit-pruning behavior. The owner requires audit events to remain beyond 365 days and has not set a maximum. Check the [current test evidence](PRD_V2_TEST_EVIDENCE.md) before investigating a schema error.
+
+Open the [Supabase SQL Editor](https://supabase.com/dashboard/project/ykfkwczcomkhxaraqpuq/sql) only for read-only diagnosis. For example, check whether an RPC is present:
 
 ```sql
 select to_regclass('public.hunt_templates') as templates_table,
@@ -62,23 +64,9 @@ select to_regclass('public.hunt_templates') as templates_table,
        to_regprocedure('public.get_hunt_progress(uuid)') as progress_rpc;
 ```
 
-If `hunt_templates` is missing, run migration [202610290007_reusable_hunt_templates.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610290007_reusable_hunt_templates.sql) first.
+If the RPC is missing, stop before running SQL migrations. Confirm the deployed app revision and compare the migration history with the [repository migration files](https://github.com/pskelton0330/SnapQuest/tree/main/supabase/migrations). Validate any repair in the ephemeral CI stack first. Production migration changes require an explicit, separately planned operation; never paste an old migration into the editor to troubleshoot a missing function.
 
-Then run migration [202610290008_game_management.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610290008_game_management.sql), followed by [202610300009_team_progress.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610300009_team_progress.sql) and [202610300010_audit_logging.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610300010_audit_logging.sql).
-
-Use the test project’s SQL Editor, paste each complete file, and click **Run**. Run them in filename order. Do not use this section to change production.
-
-Verify afterward:
-
-```sql
-select to_regprocedure('public.start_game_now(uuid)') is not null as start_now_available,
-       to_regprocedure('public.get_hunt_progress(uuid)') is not null as progress_available,
-       to_regprocedure('public.list_hunt_audit_events(uuid,integer)') is not null as audit_available;
-```
-
-All three values must be `true`.
-
-To inspect a hunt’s troubleshooting history as its organizer:
+To inspect a hunt’s troubleshooting history as its organizer, use the app’s Hunt diagnostics panel. The following SQL is read-only and should only be run by the project owner for a hunt they administer:
 
 ```sql
 select created_at, actor_user_id, event_type, outcome, details
@@ -91,6 +79,8 @@ limit 100;
 The audit trail records timing and client failure events without invitation tokens, photo paths, or credentials. It is owner-readable and not participant-readable.
 
 ## 5. Organizer login
+
+This hosted smoke test is optional during development. Run it only when an already-available test account and service quota can be used without charges; the local and GitHub Actions checks above do not require it.
 
 1. Open the public URL on the phone.
 2. Select Organizer Login.
