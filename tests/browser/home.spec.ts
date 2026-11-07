@@ -12,6 +12,9 @@ let photoDeletedPaths: string[] = []
 let uploadedPhotoPath = ''
 let photoSubmissionRpcCalls = 0
 let selfieSubmissionRpcCalls = 0
+let selfieLostResponseMode = false
+let selfieStoredPath = ''
+let selfieReconciliationReads = 0
 let rollbackDeleteRequests = 0
 let organizerReviewMode = false
 let organizerFinalizeLostResponse = false
@@ -89,6 +92,9 @@ test.beforeEach(async ({ page }) => {
   uploadedPhotoPath = ''
   photoSubmissionRpcCalls = 0
   selfieSubmissionRpcCalls = 0
+  selfieLostResponseMode = false
+  selfieStoredPath = ''
+  selfieReconciliationReads = 0
   rollbackDeleteRequests = 0
   organizerReviewMode = false
   organizerFinalizeLostResponse = false
@@ -235,7 +241,21 @@ test.beforeEach(async ({ page }) => {
     }
     if (request.url().includes('/rest/v1/rpc/submit_team_selfie')) {
       selfieSubmissionRpcCalls++
+      selfieStoredPath = (request.postDataJSON() as { p_storage_path?: string }).p_storage_path ?? ''
+      if (selfieLostResponseMode) {
+        await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ code: 'XX000', message: 'simulated lost response after commit' }) })
+        return
+      }
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ submitted_at: new Date().toISOString(), previous_storage_path: null, submitted_by: '55555555-5555-4555-8555-555555555555' }) })
+      return
+    }
+    if (request.method() === 'GET' && request.url().includes('/rest/v1/team_selfies')) {
+      selfieReconciliationReads++
+      const requestedPath = new URL(request.url()).searchParams.get('storage_path')?.replace(/^eq\./, '')
+      const row = selfieStoredPath && requestedPath === selfieStoredPath
+        ? [{ storage_path: selfieStoredPath, submitted_by: '55555555-5555-4555-8555-555555555555', submitted_at: new Date().toISOString() }]
+        : []
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(row) })
       return
     }
     if (request.url().includes('/rest/v1/submissions')) {
@@ -577,6 +597,23 @@ test('saved team selfie stays saved when signing its preview fails', async ({ pa
   await page.locator('.team-identity-panel input[type="file"]').setInputFiles({ name: 'team.png', mimeType: 'image/png', buffer: image })
   await expect(page.getByRole('alert')).toContainText('Team selfie saved. Its preview is temporarily unavailable')
   expect(selfieSubmissionRpcCalls).toBe(1)
+  expect(rollbackDeleteRequests).toBe(0)
+})
+
+test('team selfie survives a lost save response when the server committed it', async ({ page }) => {
+  selfieLostResponseMode = true
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
+
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
+  await page.locator('.team-identity-panel input[type="file"]').setInputFiles({ name: 'team.png', mimeType: 'image/png', buffer: image })
+
+  await expect(page.getByRole('alert')).toContainText('Team selfie saved. Its preview is temporarily unavailable')
+  expect(selfieSubmissionRpcCalls).toBe(1)
+  expect(selfieReconciliationReads).toBe(1)
+  expect(selfieStoredPath).toMatch(/\/selfie\/.+\.jpg$/)
   expect(rollbackDeleteRequests).toBe(0)
 })
 
