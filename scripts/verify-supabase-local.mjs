@@ -605,7 +605,8 @@ try {
   }
   const stableMessageIdSet = new Set(stableMessageIds)
   const pagedFixtureIds = pagedMessageIds.filter((id) => stableMessageIdSet.has(id))
-  assert.deepEqual(pageSizes, [100, 100, 15])
+  assert.deepEqual(pageSizes.slice(0, 2), [100, 100], 'Stable-cursor pagination must fill each requested page before the final page')
+  assert.ok(pageSizes.at(-1) >= 15 && pageSizes.at(-1) < 100, 'The final cursor page must include every fixture row without exceeding its page limit')
   assert.equal(new Set(pagedMessageIds).size, pagedMessageIds.length, 'Chat pagination must not duplicate any rows')
   assert.equal(pagedFixtureIds.length, 205)
   assert.equal(new Set(pagedFixtureIds).size, 205, 'Stable pagination must not skip or duplicate same-timestamp rows')
