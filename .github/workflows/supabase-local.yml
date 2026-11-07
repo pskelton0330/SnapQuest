@@ -28,6 +28,15 @@ jobs:
         with:
           version: latest
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Start isolated local Supabase stack and apply migrations
         run: supabase start -x studio,edge-runtime,logflare,vector,supavisor,postgres-meta
 
@@ -35,7 +44,7 @@ jobs:
         run: supabase status --output env >> "$GITHUB_ENV"
 
       - name: Verify app schema and storage bucket
-        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select to_regprocedure('public.start_game_now(uuid)') is not null as start_rpc, exists(select 1 from storage.buckets where id='hunt-photos') as photo_bucket"
+        run: node scripts/verify-supabase-local.mjs
 
       - name: Stop isolated local stack
         if: always()
