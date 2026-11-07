@@ -208,8 +208,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .workspace-sidebar .side-link.selected { background: var(--sq-coral); color: white; }
   .workspace-sidebar .side-count { display: none; }
   .workspace-main { min-width: 0; padding-bottom: 75px; }
-  .hunt-diagnostics summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; }
-  .hunt-diagnostics summary .outline-button { margin-left: 0; max-width: 100%; }
+  .hunt-diagnostics summary { display: grid; grid-template-columns: 18px minmax(0, 1fr); column-gap: 8px; min-width: 0; }
+  .hunt-diagnostics summary>svg { grid-column: 1; grid-row: 1; }
+  .hunt-diagnostics summary .outline-button { grid-column: 2; grid-row: 2; justify-self: end; margin-left: 0; max-width: 100%; white-space: normal; }
   .workspace-topbar { height: 56px; padding-inline: 17px; }
   .topbar-badge { font-size: 0; padding: 6px; }
   .resume-game-picker select { max-width: 120px; min-height: 34px; font-size: 10px; }
