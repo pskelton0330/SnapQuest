@@ -1,6 +1,6 @@
 # SnapQuest product roadmap
 
-Last updated: November 6, 2026
+Last updated: November 7, 2026
 
 This document records the current product sequencing decision for SnapQuest. It complements the detailed requirements in `SnapQuest_Revised_PRD_v2.0.md`; it does not delete or silently weaken those requirements.
 
@@ -79,4 +79,4 @@ For every premium output, preserve:
 
 ## Sequencing decision
 
-2026-11-06: The initial winner celebration card is part of the core product and has been implemented. Continue prioritizing core hunt reliability, real-device acceptance, privacy/lifecycle decisions, and the review-backlog gates. Treat video montage, automatic social-network publishing, and AI-assisted hunt generation as post-core/premium roadmap work. The broader PRD v2 concepts remain documented for later design and implementation gates.
+2026-11-07: The initial winner celebration card is part of the core product and has been implemented. Continue prioritizing core hunt reliability, real-device acceptance, privacy/lifecycle decisions, and the review-backlog gates. Recent releases added stale-photo conflict recovery, signed-preview retry, foreground gallery refresh, and reduced repeated challenge-list reads during active play. Treat video montage, automatic social-network publishing, and AI-assisted hunt generation as post-core/premium roadmap work. The broader PRD v2 concepts remain documented for later design and implementation gates.
