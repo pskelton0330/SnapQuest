@@ -1231,6 +1231,16 @@ test('organizer lobby refreshes roster when the page returns to the foreground',
 
   await expect(roster.getByText('Riley')).toBeVisible()
   await expect(roster.getByText('Taylor')).toHaveCount(0)
+
+  organizerLobbyParticipantName = 'Morgan'
+  await page.evaluate(() => { Object.defineProperty(navigator, 'onLine', { configurable: true, value: true }); window.dispatchEvent(new Event('online')) })
+  await expect(roster.getByText('Morgan')).toBeVisible()
+  await expect(roster.getByText('Riley')).toHaveCount(0)
+
+  organizerLobbyParticipantName = 'Jordan'
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await expect(roster.getByText('Jordan')).toBeVisible()
+  await expect(roster.getByText('Morgan')).toHaveCount(0)
 })
 
 test('hunt chat offers retry after read failure and keeps a message after send failure', async ({ page }) => {
