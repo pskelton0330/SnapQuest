@@ -91,8 +91,8 @@ try {
     p_assignment_mode: 'organizer',
     p_start_at: null,
     p_start_now: false,
-    p_voting_enabled: false,
-    p_bonus: 0,
+    p_voting_enabled: true,
+    p_bonus: 5,
   })
   assert.ifError(configureError)
   assert.equal(configuredTeams?.length, 2)
@@ -250,6 +250,17 @@ try {
   }
   console.log('Five concurrent same-slot photo replacement races each select one winner and leave only that path referenced.')
 
+  const secondTeamPhotoPath = `${huntId}/${teamTwo.team_id}/${secondItem.id}/${randomUUID()}.jpg`
+  const { error: secondTeamUploadError } = await participantTwo.storage.from('hunt-photos').upload(secondTeamPhotoPath, jpeg, { contentType: 'image/jpeg' })
+  assert.ifError(secondTeamUploadError)
+  objectPaths.push(secondTeamPhotoPath)
+  const { error: secondTeamSubmitError } = await participantTwo.rpc('submit_hunt_photo', {
+    p_hunt_item_id: secondItem.id,
+    p_storage_path: secondTeamPhotoPath,
+    p_expected_storage_path: null,
+  })
+  assert.ifError(secondTeamSubmitError)
+
   const { error: endHuntError } = await organizer.rpc('end_hunt_early', { p_hunt_id: huntId })
   assert.ifError(endHuntError)
   const [reviewRace, finalizeRace] = await Promise.all([
@@ -260,10 +271,56 @@ try {
     organizerConcurrent.rpc('finalize_hunt', { p_hunt_id: huntId }),
   ])
   assert.ifError(reviewRace.error)
-  if (finalizeRace.error) {
-    assert.match(finalizeRace.error.message, /Review or reject every submitted photo before finalizing/)
-  }
-  console.log('Concurrent review/finalize preserves the pending-review guard and allows the decision to complete.')
+  assert.ok(finalizeRace.error, 'Finalization must wait while another submission remains pending')
+  assert.match(finalizeRace.error.message, /Review or reject every submitted photo before finalizing/)
+  const { data: secondTeamSubmission, error: secondSubmissionError } = await admin
+    .from('submissions')
+    .select('id')
+    .eq('hunt_id', huntId)
+    .eq('hunt_item_id', secondItem.id)
+    .single()
+  assert.ifError(secondSubmissionError)
+  const { error: selfVoteError } = await participantOne.rpc('cast_hunt_vote', {
+    p_hunt_id: huntId,
+    p_hunt_item_id: firstItem.id,
+    p_selected_team_id: teamOne.team_id,
+  })
+  assert.ok(selfVoteError, 'Participants must not vote for their own team')
+  assert.match(selfVoteError.message, /You cannot vote for your own team/)
+  const { error: unapprovedVoteError } = await participantTwo.rpc('cast_hunt_vote', {
+    p_hunt_id: huntId,
+    p_hunt_item_id: firstItem.id,
+    p_selected_team_id: teamTwo.team_id,
+  })
+  assert.ok(unapprovedVoteError, 'Participants must not vote for a submission that is not approved')
+  assert.match(unapprovedVoteError.message, /You can vote only for an approved photo/)
+  const { error: outsiderVoteError } = await outsider.rpc('cast_hunt_vote', {
+    p_hunt_id: huntId,
+    p_hunt_item_id: firstItem.id,
+    p_selected_team_id: teamOne.team_id,
+  })
+  assert.ok(outsiderVoteError, 'An outsider must not vote in the hunt')
+  assert.match(outsiderVoteError.message, /Participant access required/)
+  const { error: castVoteError } = await participantTwo.rpc('cast_hunt_vote', {
+    p_hunt_id: huntId,
+    p_hunt_item_id: firstItem.id,
+    p_selected_team_id: teamOne.team_id,
+  })
+  assert.ifError(castVoteError)
+  const { data: votes, error: votesError } = await participantTwo
+    .from('hunt_votes')
+    .select('hunt_item_id,voting_team_id,selected_team_id')
+    .eq('hunt_id', huntId)
+  assert.ifError(votesError)
+  assert.equal(votes?.length, 1)
+  assert.equal(votes[0].voting_team_id, teamTwo.team_id)
+  assert.equal(votes[0].selected_team_id, teamOne.team_id)
+  const { error: rejectSecondSubmissionError } = await organizer.rpc('review_submission', {
+    p_submission_id: secondTeamSubmission.id,
+    p_decision: 'rejected',
+  })
+  assert.ifError(rejectSecondSubmissionError)
+  console.log('Review/finalize preserves the pending guard; valid cross-team voting works while self, unapproved, and outsider votes are denied.')
   const [finalizeOne, finalizeTwo] = await Promise.all([
     organizer.rpc('finalize_hunt', { p_hunt_id: huntId }),
     organizerConcurrent.rpc('finalize_hunt', { p_hunt_id: huntId }),
@@ -275,7 +332,8 @@ try {
   const winningScore = finalizeOne.data.find((score) => score.team_id === teamOne.team_id)
   const losingScore = finalizeOne.data.find((score) => score.team_id === teamTwo.team_id)
   assert.equal(winningScore?.base_points, 10)
-  assert.equal(winningScore?.total, 10)
+  assert.equal(winningScore?.voting_bonus, 5)
+  assert.equal(winningScore?.total, 15)
   assert.equal(winningScore?.rank, 1)
   assert.equal(losingScore?.base_points, 0)
   assert.equal(losingScore?.total, 0)
@@ -288,6 +346,8 @@ try {
   assert.ifError(participantGallery.error)
   assert.deepEqual(organizerGallery.data.final_scores, finalizeOne.data)
   assert.deepEqual(participantGallery.data.final_scores, finalizeOne.data)
+  assert.equal(organizerGallery.data.votes.length, 1)
+  assert.deepEqual(participantGallery.data.votes, organizerGallery.data.votes)
   const { error: outsiderGalleryError } = await outsider.rpc('get_hunt_review_gallery', { p_hunt_id: huntId })
   assert.ok(outsiderGalleryError, 'An outsider must not read finalized hunt results')
   assert.match(outsiderGalleryError.message, /Hunt access required/)
