@@ -772,6 +772,7 @@ test('organizer chat pages more than 200 messages with identical timestamps with
   organizerLobbyMode = true
   const sameTime = '2026-11-06T18:00:00.000Z'
   organizerMessages = Array.from({ length: 205 }, (_, index) => ({ id: `message-${String(index).padStart(3, '0')}`, sender_name: 'Taylor', sender_role: 'participant' as const, body: `Page message ${index}`, created_at: sameTime }))
+  await page.clock.install()
   await restoreOrganizerSession(page)
   await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
   const chat = page.locator('.hunt-chat-messages')
@@ -785,6 +786,12 @@ test('organizer chat pages more than 200 messages with identical timestamps with
   await expect(messages.first()).toContainText('Page message 0')
   const bodies = await messages.locator('p').allTextContents()
   expect(new Set(bodies).size).toBe(205)
+  await expect(page.getByRole('button', { name: 'Load older messages' })).toHaveCount(0)
+  organizerMessages.push({ id: 'message-205', sender_name: 'Taylor', sender_role: 'participant', body: 'A new chat update', created_at: sameTime })
+  await page.clock.runFor(15_000)
+  await expect(messages).toHaveCount(206)
+  await expect(messages.first()).toContainText('Page message 0')
+  await expect(messages.last()).toContainText('A new chat update')
   await expect(page.getByRole('button', { name: 'Load older messages' })).toHaveCount(0)
 })
 

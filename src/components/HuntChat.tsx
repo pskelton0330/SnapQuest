@@ -22,6 +22,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
   const atLatestRef = useRef(true)
   const requestId = useRef(0)
   const preserveScroll = useRef(false)
+  const loadedHuntId = useRef<string | null>(null)
 
   const loadMessages = useCallback(async (before?: Pick<HuntMessage, 'created_at' | 'id'>, older = false) => {
     if (!supabase) return
@@ -32,17 +33,24 @@ export default function HuntChat({ huntId, compact = false, readOnly = false }: 
     if (loadError) { void reportOperation(huntId, crypto.randomUUID(), 'chat_load_failed', 'failure'); setError('Messages could not be refreshed. Check your connection and retry.'); setLoading(false); setLoadingOlder(false); return }
     const rows = Array.isArray(data) ? data as HuntMessage[] : []
     const page = older ? (rows.length > 100 ? rows.slice(1) : rows) : rows.slice(-100)
+    const newHunt = !older && loadedHuntId.current !== huntId
     if (older) {
       for (const message of page) knownMessageIds.current.add(message.id)
       setMessages(current => [...page.filter(row => !current.some(existing => existing.id === row.id)), ...current])
     } else {
       const unread = countNewMessages(knownMessageIds.current, page)
-      if (atLatestRef.current) setNewMessageCount(0)
+      if (newHunt || atLatestRef.current) setNewMessageCount(0)
       else if (unread > 0) setNewMessageCount(current => current + unread)
       knownMessageIds.current = new Set(page.map(message => message.id))
-      setMessages(page)
+      setMessages(current => {
+        if (newHunt) return page
+        const merged = new Map(current.map(message => [message.id, message]))
+        for (const message of page) merged.set(message.id, message)
+        return [...merged.values()].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
+      })
     }
-    setHasOlder(rows.length > 100)
+    if (older || newHunt) setHasOlder(rows.length > 100)
+    if (!older) loadedHuntId.current = huntId
     setError(''); setLoading(false); setLoadingOlder(false)
   }, [huntId])
 
