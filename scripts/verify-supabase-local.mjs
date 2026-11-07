@@ -193,6 +193,42 @@ try {
 
   const { error: startNowError } = await organizer.rpc('start_game_now', { p_game_id: huntId })
   assert.ifError(startNowError)
+  const operationId = randomUUID()
+  const { data: clientAuditId, error: clientAuditError } = await participantOne.rpc('record_audit_event', {
+    p_event_type: 'client_operation',
+    p_hunt_id: huntId,
+    p_outcome: 'failure',
+    p_details: {
+      client_report: true,
+      operation_id: operationId,
+      stage: 'upload_denied',
+      app: 'participant_web',
+    },
+  })
+  assert.ifError(clientAuditError)
+  assert.ok(clientAuditId)
+  const { error: forgedAuditError } = await participantOne.rpc('record_audit_event', {
+    p_event_type: 'client_operation',
+    p_hunt_id: huntId,
+    p_outcome: 'failure',
+    p_details: {
+      client_report: true,
+      operation_id: randomUUID(),
+      stage: 'upload_denied',
+      app: 'participant_web',
+      email: 'player@example.test',
+    },
+  })
+  assert.ok(forgedAuditError, 'Client audit reports must reject unsupported potentially identifying fields')
+  assert.match(forgedAuditError.message, /Unsupported client audit detail/)
+  const { error: forgedServerEventError } = await participantOne.rpc('record_audit_event', {
+    p_event_type: 'game_start_now',
+    p_hunt_id: huntId,
+    p_outcome: 'success',
+    p_details: {},
+  })
+  assert.ok(forgedServerEventError, 'Clients must not forge server-authoritative event types')
+  assert.match(forgedServerEventError.message, /Only client operation reports are accepted/)
   console.log('Only the organizer can manually start the hunt.')
 
   const { error: uploadError } = await participantOne.storage.from('hunt-photos').upload(photoPath, jpeg, { contentType: 'image/jpeg' })
@@ -418,6 +454,32 @@ try {
   assert.ok(closedReviewError, 'A finalized hunt must reject further review changes')
   assert.match(closedReviewError.message, /Photo review is not open/)
   console.log('Concurrent finalization preserves one immutable score/rank snapshot for organizer and participant, while outsiders are denied.')
+
+  const { data: auditEvents, error: auditEventsError } = await organizer.rpc('list_hunt_audit_events', {
+    p_hunt_id: huntId,
+    p_limit: 100,
+  })
+  assert.ifError(auditEventsError)
+  const serverStartEvent = auditEvents.find((event) => event.event_type === 'game_start_now')
+  const serverEndEvent = auditEvents.find((event) => event.event_type === 'game_end_early')
+  const clientOperationEvent = auditEvents.find((event) => event.id === clientAuditId)
+  assert.equal(serverStartEvent?.source, 'server-authoritative')
+  assert.equal(serverEndEvent?.source, 'server-authoritative')
+  assert.equal(clientOperationEvent?.source, 'client-reported')
+  assert.deepEqual(Object.keys(clientOperationEvent.details).sort(), ['app', 'client_report', 'operation_id', 'stage'])
+  assert.equal(clientOperationEvent.details.operation_id, operationId)
+  const { error: participantAuditListError } = await participantOne.rpc('list_hunt_audit_events', { p_hunt_id: huntId, p_limit: 100 })
+  assert.ok(participantAuditListError, 'Participants must not read organizer audit logs')
+  assert.match(participantAuditListError.message, /Organizer access required/)
+  const { error: outsiderAuditListError } = await outsider.rpc('list_hunt_audit_events', { p_hunt_id: huntId, p_limit: 100 })
+  assert.ok(outsiderAuditListError, 'Outsiders must not read hunt audit logs')
+  const { count: participantAuditRows, error: participantAuditRowsError } = await participantOne
+    .from('audit_events')
+    .select('id', { count: 'exact', head: true })
+    .eq('hunt_id', huntId)
+  assert.ifError(participantAuditRowsError)
+  assert.equal(participantAuditRows, 0, 'Participants must not read audit rows directly')
+  console.log('Audit events distinguish server and client sources, strip the client report to an allowlist, and enforce organizer-only log access.')
 
   const { error: outsiderRowsError, count: outsiderRowCount } = await outsider.from('submissions').select('id', { count: 'exact', head: true }).eq('hunt_id', huntId)
   assert.ifError(outsiderRowsError)
