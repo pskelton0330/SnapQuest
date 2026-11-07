@@ -1006,13 +1006,20 @@ test('participant review gallery refreshes signed previews when the page returns
   await expect(galleryImage).toBeVisible()
   await expect.poll(() => signedPreviewRequests).toBeGreaterThan(0)
   const initialRequests = signedPreviewRequests
-  await page.clock.setSystemTime(Date.now() + 300_000)
-  await page.evaluate(() => {
-    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
-    document.dispatchEvent(new Event('visibilitychange'))
-  })
-  await expect.poll(() => signedPreviewRequests).toBeGreaterThan(initialRequests)
-  await expect(galleryImage).toBeVisible()
+  let previousRequests = initialRequests
+  const recoveryEvents: Array<'visibilitychange' | 'online' | 'focus'> = ['visibilitychange', 'online', 'focus']
+  for (const recoveryEvent of recoveryEvents) {
+    const expiredAt = await page.evaluate(() => Date.now() + 300_000)
+    await page.clock.setSystemTime(new Date(expiredAt))
+    await page.evaluate(eventName => {
+      if (eventName === 'visibilitychange') Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+      const target = eventName === 'visibilitychange' ? document : window
+      target.dispatchEvent(new Event(eventName))
+    }, recoveryEvent)
+    await expect.poll(() => signedPreviewRequests, { message: `signed URL should renew after ${recoveryEvent}` }).toBeGreaterThan(previousRequests)
+    await expect(galleryImage).toBeVisible()
+    previousRequests = signedPreviewRequests
+  }
 })
 
 test('organizer reviews a photo, changes its decision, and finalizes results', async ({ page }) => {
@@ -1068,13 +1075,20 @@ test('organizer review refreshes signed previews when the page returns to the fo
   await expect(galleryImage).toBeVisible()
   await expect.poll(() => signedPreviewRequests).toBeGreaterThan(0)
   const initialRequests = signedPreviewRequests
-  await page.clock.setSystemTime(Date.now() + 300_000)
-  await page.evaluate(() => {
-    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
-    document.dispatchEvent(new Event('visibilitychange'))
-  })
-  await expect.poll(() => signedPreviewRequests).toBeGreaterThan(initialRequests)
-  await expect(galleryImage).toBeVisible()
+  let previousRequests = initialRequests
+  const recoveryEvents: Array<'visibilitychange' | 'online' | 'focus'> = ['visibilitychange', 'online', 'focus']
+  for (const recoveryEvent of recoveryEvents) {
+    const expiredAt = await page.evaluate(() => Date.now() + 300_000)
+    await page.clock.setSystemTime(new Date(expiredAt))
+    await page.evaluate(eventName => {
+      if (eventName === 'visibilitychange') Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+      const target = eventName === 'visibilitychange' ? document : window
+      target.dispatchEvent(new Event(eventName))
+    }, recoveryEvent)
+    await expect.poll(() => signedPreviewRequests, { message: `signed URL should renew after ${recoveryEvent}` }).toBeGreaterThan(previousRequests)
+    await expect(galleryImage).toBeVisible()
+    previousRequests = signedPreviewRequests
+  }
 })
 
 test('organizer can retry a photo whose signed preview failed', async ({ page }) => {
