@@ -5,8 +5,8 @@ Source: [deep review](2026-11-06-deep-review.md) and [remediation plan](2026-11-
 
 ## Release evidence
 
-- Current checkout `3169936`: `npm.cmd test` 80/80 passed; `npm.cmd run test:e2e` 96/96 Chromium desktop/mobile browser cases passed; lint and build passed. The production JS entry is 135.05 KiB gzip against the enforced 150 KiB budget.
-- Latest deployed revision `3169936` passed [GitHub Actions run `42334532643`](https://github.com/pskelton0330/SnapQuest/actions/runs/42334532643), including unit/database tests, desktop/mobile browser tests, lint, build, and deploy. The [live manifest](https://pskelton0330.github.io/SnapQuest/build-info.json) matched the full `3169936923ec1a61d7b572c3b8ed9695b9bc4983` SHA when checked.
+- Current checkout `01df242`: `npm.cmd test` 80/80 passed; `npm.cmd run test:e2e` 98/98 Chromium desktop/mobile browser cases passed; lint and build passed. The production JS entry is 135.05 KiB gzip against the enforced 150 KiB budget.
+- Latest deployed revision `01df242` passed [GitHub Actions run `42335496123`](https://github.com/pskelton0330/SnapQuest/actions/runs/42335496123), including unit/database tests, 98 desktop/mobile browser cases, lint, build, and deploy. The [live manifest](https://pskelton0330.github.io/SnapQuest/build-info.json) matched the full `01df2425bcb2e258d0fcf56cc038a7f81a6d7957` SHA when checked.
 - The [PRD v2 crosswalk](../PRD_V2_BACKLOG_CROSSWALK.md) now maps all 56 checklist requirements to remediation, evidence gates, deferred product scope, or owner decisions. It does not represent broader PRD completion.
 - Supabase production migrations 001â€“022 are applied to project `ykfkwczcomkhxaraqpuq`.
 - The current evidence proves the automated/mock-backed journeys listed in the test evidence; it does not prove hosted Storage HTTP policy behavior, multi-session PostgreSQL races, or physical-device acceptance. Use the [improvement backlog](2026-11-06-improvement-backlog.md) for per-item gates and outstanding decisions.
