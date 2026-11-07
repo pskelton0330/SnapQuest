@@ -674,6 +674,13 @@ test('photo upload reports a Storage policy denial without calling the submissio
   await item.locator('input[type="file"]').setInputFiles({ name: 'leaf.png', mimeType: 'image/png', buffer: image })
   await expect(item.getByRole('status')).toContainText('new row violates row-level security policy', { timeout: 10_000 })
   expect(photoSubmissionRpcCalls).toBe(0)
+  await expect.poll(() => auditReports.some(report => {
+    const details = report.p_details as Record<string, unknown> | undefined
+    return details?.stage === 'photo_upload_failed' && details.app === 'participant_web'
+  })).toBe(true)
+  const denialReport = auditReports.find(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'photo_upload_failed')
+  expect(denialReport?.p_outcome).toBe('failure')
+  expect(Object.keys(denialReport?.p_details as Record<string, unknown>).sort()).toEqual(['app', 'client_report', 'operation_id', 'stage'])
 })
 
 test('photo upload rolls back the unreferenced Storage object after the submission RPC rejects', async ({ page }) => {
