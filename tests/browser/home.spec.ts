@@ -64,6 +64,7 @@ let participantReviewVotingMode = false
 let participantReviewVotes: { item_id: string; voting_team_id: string; selected_team_id: string }[] = []
 let participantTieMode = false
 let participantZeroScoreMode = false
+let participantTeamName = 'Team Cedar'
 
 test.beforeEach(async ({ page }) => {
   participantRuntimeState = 'waiting'
@@ -103,6 +104,7 @@ test.beforeEach(async ({ page }) => {
   participantReviewVotes = []
   participantTieMode = false
   participantZeroScoreMode = false
+  participantTeamName = 'Team Cedar'
   await page.context().route('https://test-project.supabase.co/**', async route => {
     const request = route.request()
     if (request.url().includes('/rest/v1/rpc/record_audit_event')) {
@@ -274,7 +276,7 @@ test.beforeEach(async ({ page }) => {
     }
     if (request.url().includes('/rest/v1/rpc/get_participant_context')) {
       const now = Date.now()
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ participant_id: '55555555-5555-4555-8555-555555555555', hunt_id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', rules: ['Stay together'], status: participantRuntimeState === 'waiting' ? 'scheduled' : participantRuntimeState, runtime_state: participantRuntimeState, start_at: participantRuntimeState === 'waiting' ? null : new Date(now - 60_000).toISOString(), ends_at: participantRuntimeState === 'active' ? new Date(now + 3_540_000).toISOString() : new Date(now - 1_000).toISOString(), duration_minutes: 60, server_now: new Date(now).toISOString(), team: { id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a', selfie: null }, participant: { id: '55555555-5555-4555-8555-555555555555', display_name: 'Taylor' }, teammates: [{ id: '55555555-5555-4555-8555-555555555555', display_name: 'Taylor' }] }) })
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ participant_id: '55555555-5555-4555-8555-555555555555', hunt_id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', rules: ['Stay together'], status: participantRuntimeState === 'waiting' ? 'scheduled' : participantRuntimeState, runtime_state: participantRuntimeState, start_at: participantRuntimeState === 'waiting' ? null : new Date(now - 60_000).toISOString(), ends_at: participantRuntimeState === 'active' ? new Date(now + 3_540_000).toISOString() : new Date(now - 1_000).toISOString(), duration_minutes: 60, server_now: new Date(now).toISOString(), team: { id: '44444444-4444-4444-8444-444444444444', name: participantTeamName, display_color: '#15967a', selfie: null }, participant: { id: '55555555-5555-4555-8555-555555555555', display_name: 'Taylor' }, teammates: [{ id: '55555555-5555-4555-8555-555555555555', display_name: 'Taylor' }] }) })
       return
     }
     if (request.url().includes('/rest/v1/rpc/get_hunt_progress')) {
@@ -300,8 +302,8 @@ test.beforeEach(async ({ page }) => {
           ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '55555555-5555-4555-8555-555555555555', storage_path: 'test/maple.jpg', status: 'approved' }]
           : reviewPhotoStatus ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', storage_path: 'test/photo.jpg', status: reviewPhotoStatus }] : []
         const teams = [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }, ...(participantReviewVotingMode ? [{ id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : [])]
-        const finalScores = [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', base_points: participantZeroScoreMode ? 0 : 10, voting_bonus: 0, total: participantZeroScoreMode ? 0 : 10, rank: 1 }, ...(participantTieMode ? [{ team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }] : [])]
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: participantReviewVotingMode, voting_bonus_points: 3, status: participantRuntimeState, final_scores: finalScores, teams: participantTieMode ? [...teams, { id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : teams, items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions, votes: participantReviewVotes }) })
+        const finalScores = [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: participantTeamName, base_points: participantZeroScoreMode ? 0 : 10, voting_bonus: 0, total: participantZeroScoreMode ? 0 : 10, rank: 1 }, ...(participantTieMode ? [{ team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }] : [])]
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ voting_enabled: participantReviewVotingMode, voting_bonus_points: 3, status: participantRuntimeState, final_scores: finalScores, teams: participantTieMode ? [...teams, { id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : teams.map(team => ({ ...team, name: participantTeamName })), items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions, votes: participantReviewVotes }) })
       }
       return
     }
@@ -787,6 +789,40 @@ test('participant celebration identifies tied winners and suppresses a zero-scor
   await page.reload()
   await expect(page.getByText('No team scored points this hunt.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Share team card' })).toHaveCount(0)
+})
+
+test('winner card uses the team-color fallback and handles a long team name', async ({ page }) => {
+  participantRuntimeState = 'completed'
+  participantTeamName = 'The Unreasonably Long Name for the Autumn Adventure Team'
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText(`#1 ${participantTeamName}`)).toBeVisible()
+  const cardDownloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download card' }).click()
+  const download = await cardDownloadPromise
+  expect(download.suggestedFilename()).toContain('the-unreasonably-long-name-for-the-autumn-adventure-team')
+  const cardPath = await download.path()
+  expect(cardPath).toBeTruthy()
+  if (!cardPath) throw new Error('Winner card download did not produce a file')
+  const encodedCard = (await readFile(cardPath)).toString('base64')
+  const sampledColor = await page.evaluate(async (encoded: string) => {
+    const image = new Image()
+    image.src = `data:image/png;base64,${encoded}`
+    await image.decode()
+    const canvas = document.createElement('canvas')
+    canvas.width = image.naturalWidth
+    canvas.height = image.naturalHeight
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Canvas context is unavailable')
+    context.drawImage(image, 0, 0)
+    return Array.from(context.getImageData(540, 600, 1, 1).data).slice(0, 3)
+  }, encodedCard)
+  expect(sampledColor).toEqual([21, 150, 122])
+  await page.setViewportSize({ width: 320, height: 844 })
+  await expect(page.getByRole('button', { name: 'Download card' })).toBeVisible()
+  const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
+  expect(dimensions.content, 'long-name winner card horizontal overflow at 320px').toBeLessThanOrEqual(dimensions.viewport)
 })
 
 test('participant renews signed review-photo previews before their URLs expire', async ({ page }) => {
