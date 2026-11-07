@@ -7,16 +7,18 @@ function storage() {
   return { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }
 }
 
-test('photo cleanup queue deduplicates, caps, and retries only unfinished paths', () => {
+test('photo cleanup queue deduplicates, preserves every failed path, and retries only unfinished paths', () => {
   const local = storage()
-  for (let i = 0; i < 22; i++) queuePhotoCleanup(local, 'hunt', 'team', `photo-${i}`)
-  assert.equal(pendingPhotoCleanup(local, 'hunt', 'team').length, 20)
-  queuePhotoCleanup(local, 'hunt', 'team', 'photo-21')
+  for (let i = 0; i < 25; i++) queuePhotoCleanup(local, 'hunt', 'team', `photo-${i}`)
+  assert.equal(pendingPhotoCleanup(local, 'hunt', 'team').length, 25)
+  queuePhotoCleanup(local, 'hunt', 'team', 'photo-24')
   assert.equal(pendingPhotoCleanup(local, 'hunt', 'team').filter(path => path === 'photo-21').length, 1)
+  assert.equal(pendingPhotoCleanup(local, 'hunt', 'team').filter(path => path === 'photo-24').length, 1)
   completePhotoCleanup(local, 'hunt', 'team', 'photo-21')
   assert.equal(pendingPhotoCleanup(local, 'hunt', 'team').includes('photo-21'), false)
+  assert.equal(pendingPhotoCleanup(local, 'hunt', 'team').includes('photo-0'), true)
   completePhotoCleanup(local, 'hunt', 'team', 'missing')
-  assert.equal(pendingPhotoCleanup(local, 'hunt', 'team').length, 19)
+  assert.equal(pendingPhotoCleanup(local, 'hunt', 'team').length, 24)
 })
 
 test('failed Storage deletion is queued whether the client returns an error or throws', async () => {

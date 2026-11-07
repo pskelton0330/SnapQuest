@@ -15,7 +15,9 @@ export function pendingPhotoCleanup(storage: PhotoCleanupStorage, huntId: string
 export function queuePhotoCleanup(storage: PhotoCleanupStorage, huntId: string, teamId: string, path: string) {
   const paths = pendingPhotoCleanup(storage, huntId, teamId)
   if (!paths.includes(path)) {
-    try { storage.setItem(key(huntId, teamId), JSON.stringify([...paths, path].slice(-20))) } catch { /* Best-effort local retry queue. */ }
+    // Keep every failed deletion. Truncating this list silently orphans older objects
+    // when a team replaces many photos while offline.
+    try { storage.setItem(key(huntId, teamId), JSON.stringify([...paths, path])) } catch { /* Best-effort local retry queue. */ }
   }
 }
 

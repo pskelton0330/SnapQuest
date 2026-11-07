@@ -1570,8 +1570,9 @@ test('legacy active invitations are not replaced without explicit confirmation',
   await page.goto('/#/')
   await page.getByRole('button', { name: 'My hunts' }).click()
   await page.getByRole('button', { name: 'Open lobby' }).click()
-  await expect(page.locator('.locked-note')).toContainText('Existing invitation links are still active')
-  await expect(page.locator('.locked-note')).toContainText('Replace codes only when you are ready to invalidate every older QR code and link')
+  const legacyInviteNotice = page.locator('.locked-note').filter({ hasText: 'Existing invitation links are still active' })
+  await expect(legacyInviteNotice).toContainText('Existing invitation links are still active')
+  await expect(legacyInviteNotice).toContainText('Replace codes only when you are ready to invalidate every older QR code and link')
   await expect(page.locator('.invite-card')).toHaveCount(0)
 
   page.once('dialog', dialog => dialog.dismiss())
