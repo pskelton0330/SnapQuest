@@ -381,8 +381,8 @@ test.beforeEach(async ({ page }) => {
           ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '55555555-5555-4555-8555-555555555555', storage_path: 'test/maple.jpg', status: reviewPhotoStatus ?? 'approved' }]
           : reviewPhotoStatus ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', storage_path: 'test/photo.jpg', status: reviewPhotoStatus }] : []
         const teams = [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }, ...(participantReviewVotingMode ? [{ id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : [])]
-        const finalScores = [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: participantTeamName, base_points: participantZeroScoreMode ? 0 : 10, voting_bonus: 0, total: participantZeroScoreMode ? 0 : 10, rank: 1 }, ...(participantTieMode ? [{ team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }] : [])]
-        const body = JSON.stringify({ voting_enabled: participantReviewVotingMode, voting_bonus_points: 3, status: participantRuntimeState, final_scores: finalScores, teams: participantTieMode ? [...teams, { id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : teams.map(team => ({ ...team, name: participantTeamName })), items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions, votes: participantReviewVotes })
+        const finalScores = [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: participantTeamName, base_points: participantZeroScoreMode ? 0 : 10, voting_bonus: participantZeroScoreMode ? 0 : 5, total: participantZeroScoreMode ? 0 : 15, rank: 1 }, ...(participantTieMode ? [{ team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', base_points: 10, voting_bonus: 5, total: 15, rank: 1 }] : [])]
+        const body = JSON.stringify({ voting_enabled: participantReviewVotingMode, voting_bonus_points: 5, status: participantRuntimeState, final_scores: finalScores, teams: participantTieMode ? [...teams, { id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : teams.map(team => ({ ...team, name: participantTeamName })), items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions, votes: participantReviewVotes })
         if (delayNextParticipantGalleryResponse) {
           delayNextParticipantGalleryResponse = false
           await new Promise<void>(resolve => { releaseDelayedParticipantGalleryResponse = resolve })
@@ -901,9 +901,11 @@ test('participant sees final standings and winner celebration after results publ
   await expect(page.getByText('The results are in!')).toBeVisible()
   await expect(page.getByText('Final results')).toBeVisible()
   await expect(page.getByText('#1 Team Cedar')).toBeVisible()
+  await expect(page.locator('.participant-scoreboard')).toContainText('10 points + 5 voting bonus')
   await expect(page.getByRole('button', { name: 'Share team card' })).toBeVisible()
   const caption = page.locator('.celebration-caption')
   await expect(caption).toBeVisible()
+  await expect(caption).toContainText('Team Cedar won Spring Photo Hunt with 15 points')
   const captionText = (await caption.textContent())?.trim()
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.getByRole('button', { name: 'Copy caption' }).click()

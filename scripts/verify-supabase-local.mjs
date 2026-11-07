@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
+import { normalizeFinalScores, winningTeams } from '../src/lib/scoring.ts'
+import { winnerCaption } from '../src/lib/celebrationCard.ts'
 
 const url = process.env.API_URL
 const serviceRoleKey = process.env.SERVICE_ROLE_KEY
@@ -947,6 +949,15 @@ try {
   assert.deepEqual(participantGallery.data.final_scores, finalizeOne.data)
   assert.equal(organizerGallery.data.votes.length, 1)
   assert.deepEqual(participantGallery.data.votes, organizerGallery.data.votes)
+  const galleryWinners = winningTeams(normalizeFinalScores(participantGallery.data.final_scores))
+  assert.equal(galleryWinners.length, 1)
+  assert.equal(galleryWinners[0].teamId, teamOne.team_id)
+  assert.equal(winnerCaption({
+    title: 'Local Storage authorization test',
+    teamName: galleryWinners[0].teamName,
+    score: galleryWinners[0].total,
+  }), `🏆 ${galleryWinners[0].teamName} won Local Storage authorization test with 15 points! #SnapQuest`, 'The celebration caption must use the immutable database winner, team name, and total')
+  console.log('The finalized Supabase score snapshot normalizes to the same winning team and caption used by the celebration UI.')
   const { error: outsiderGalleryError } = await outsider.rpc('get_hunt_review_gallery', { p_hunt_id: huntId })
   assert.ok(outsiderGalleryError, 'An outsider must not read finalized hunt results')
   assert.match(outsiderGalleryError.message, /Hunt access required/)
