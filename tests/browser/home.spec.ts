@@ -23,6 +23,7 @@ let savedDraftPayloads: Record<string, unknown>[] = []
 let organizerReviewStatus: 'review' | 'completed' = 'review'
 let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
 let organizerLobbyStatus: 'scheduled' | 'active' | 'review' = 'scheduled'
+let organizerLobbyParticipantName = 'Taylor'
 
 async function expectKeyboardCanReach(page: import('@playwright/test').Page, target: import('@playwright/test').Locator) {
   await page.evaluate(() => {
@@ -97,6 +98,7 @@ test.beforeEach(async ({ page }) => {
   organizerReviewStatus = 'review'
   organizerReviewDecision = 'pending'
   organizerLobbyStatus = 'scheduled'
+  organizerLobbyParticipantName = 'Taylor'
   organizerStartCalls = 0
   organizerInviteRecoveryCalls = 0
   organizerInviteRotated = false
@@ -285,7 +287,7 @@ test.beforeEach(async ({ page }) => {
       return
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/participants') && request.url().includes('select=id%2Chunt_id%2Cteam_id')) {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '66666666-6666-4666-8666-666666666666', hunt_id: '33333333-3333-4333-8333-333333333333', team_id: '44444444-4444-4444-8444-444444444444', display_name: 'Taylor', joined_at: '2026-11-01T17:00:00Z' }]) })
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '66666666-6666-4666-8666-666666666666', hunt_id: '33333333-3333-4333-8333-333333333333', team_id: '44444444-4444-4444-8444-444444444444', display_name: organizerLobbyParticipantName, joined_at: '2026-11-01T17:00:00Z' }]) })
       return
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/team_selfies')) {
@@ -1215,6 +1217,20 @@ test('organizer lobby shows the team roster and unread chat count without moving
   await expect(page.getByText('One more update')).toBeVisible()
   await expectKeyboardCanReach(page, page.getByRole('button', { name: 'Start hunt now' }))
   await expectNoHorizontalOverflowAt200Percent(page, 'organizer lobby')
+})
+
+test('organizer lobby refreshes roster when the page returns to the foreground', async ({ page }) => {
+  organizerLobbyMode = true
+  await restoreOrganizerSession(page)
+  await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
+  const roster = page.locator('.participant-roster')
+  await expect(roster.getByText('Taylor')).toBeVisible()
+
+  organizerLobbyParticipantName = 'Riley'
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+
+  await expect(roster.getByText('Riley')).toBeVisible()
+  await expect(roster.getByText('Taylor')).toHaveCount(0)
 })
 
 test('hunt chat offers retry after read failure and keeps a message after send failure', async ({ page }) => {

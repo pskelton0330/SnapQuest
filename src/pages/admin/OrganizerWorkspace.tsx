@@ -365,11 +365,19 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       .on('postgres_changes', { event: '*', schema: 'public', table: 'participants', filter: `hunt_id=eq.${huntId}` }, () => requestLobbyRefresh(huntId))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'team_selfies', filter: `hunt_id=eq.${huntId}` }, () => requestLobbyRefresh(huntId))
       .subscribe()
+    const reconcile = () => requestLobbyRefresh(huntId)
+    const reconcileVisibility = () => { if (document.visibilityState === 'visible') reconcile() }
+    window.addEventListener('focus', reconcile)
+    window.addEventListener('online', reconcile)
+    document.addEventListener('visibilitychange', reconcileVisibility)
     const fallback = window.setInterval(() => void loadManagedLobby(huntId), 15_000)
     return () => {
       ++requestCounter.current
       if (refreshTimer.current !== undefined) window.clearTimeout(refreshTimer.current)
       window.clearInterval(fallback)
+      window.removeEventListener('focus', reconcile)
+      window.removeEventListener('online', reconcile)
+      document.removeEventListener('visibilitychange', reconcileVisibility)
       void supabase?.removeChannel(channel)
     }
   }, [activeLobbyHuntId, loadManagedLobby, requestLobbyRefresh])
