@@ -321,15 +321,20 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const loadManagedLobby = useCallback(async (huntId: string) => {
     if (!supabase) return
     const requestId = ++lobbyRequestId.current
-    const [teamResult, participantResult, selfieResult] = await Promise.all([
+    const [teamResult, participantResult, selfieResult, lobbyResult] = await Promise.all([
       supabase.from('teams').select('id,hunt_id,name,display_color,display_order').eq('hunt_id', huntId).order('display_order'),
       supabase.from('participants').select('id,hunt_id,team_id,display_name,joined_at').eq('hunt_id', huntId).order('joined_at'),
       supabase.from('team_selfies').select('team_id,storage_path,submitted_at').eq('hunt_id', huntId),
+      supabase.rpc('get_game_lobby', { p_game_id: huntId }),
     ])
     if (teamResult.error) setManageMessage(teamResult.error.message)
     if (participantResult.error) setManageMessage(participantResult.error.message)
     if (selfieResult.error) setManageMessage(selfieResult.error.message)
     if (teamResult.error || participantResult.error || selfieResult.error || requestId !== lobbyRequestId.current) return
+    const runtimeState = lobbyResult.data?.runtime_state
+    if (!lobbyResult.error && ['scheduled', 'active', 'ended', 'review', 'completed'].includes(runtimeState)) {
+      setManagedHunt(current => current?.id === huntId ? { ...current, status: runtimeState } : current)
+    }
     const selfieRows = selfieResult.data ?? []
     const activeSelfiePaths = new Set(selfieRows.map(row => row.storage_path))
     for (const path of lobbySelfieUrlCache.current.keys()) if (!activeSelfiePaths.has(path)) lobbySelfieUrlCache.current.delete(path)
@@ -454,6 +459,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     try {
       const { error } = await supabase.rpc('end_hunt_early', { p_hunt_id: managedHunt.id })
       if (error) { setManageMessage(error.message); reportOperationFailure(managedHunt.id, operationId, 'end_hunt_early_failed', error, 'organizer_web'); return }
+      ++lobbyRequestId.current
       const reviewHunt = { ...managedHunt, status: 'review' }
       setManagedHunt(reviewHunt)
       await loadWorkspace()
@@ -476,6 +482,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       }
       const refreshed = await supabase.from('hunts').select('id,title,venue,status,created_at,start_at,duration_minutes,team_assignment_mode,voting_enabled,voting_bonus_points').eq('id', managedHunt.id).single()
       if (refreshed.error) { setManageMessage(refreshed.error.message); return }
+      ++lobbyRequestId.current
       setManagedHunt(refreshed.data as Hunt)
       await loadWorkspace()
     } catch (error) {
@@ -516,6 +523,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     try {
       const { error } = await supabase.rpc('add_game_time', { p_game_id: managedHunt.id, p_minutes: minutes })
       if (error) { setManageMessage(error.message); reportOperationFailure(managedHunt.id, operationId, 'add_game_time_failed', error, 'organizer_web'); return }
+      ++lobbyRequestId.current
       const next = { ...managedHunt, duration_minutes: managedHunt.duration_minutes + minutes }
       setManagedHunt(next); setHunts(current => current.map(hunt => hunt.id === next.id ? next : hunt))
     } catch (error) {
@@ -533,6 +541,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     try {
       const { error } = await supabase.rpc('reschedule_game', { p_game_id: managedHunt.id, p_start_at: startAt.toISOString() })
       if (error) { setManageMessage(error.message); reportOperationFailure(managedHunt.id, operationId, 'reschedule_game_failed', error, 'organizer_web'); return }
+      ++lobbyRequestId.current
       const next = { ...managedHunt, start_at: startAt.toISOString() }
       setManagedHunt(next); setHunts(current => current.map(hunt => hunt.id === next.id ? next : hunt))
     } catch (error) {
@@ -549,6 +558,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const selectedResumeGame = playerGames.find(game => game.hunt_id === resumeHuntId)
     ?? playerGames.find(game => game.hunt_id === initialHuntId)
     ?? playerGames[0]
+  const stageIndex = managedHunt ? ({ draft: 0, scheduled: 1, active: 2, ended: 3, review: 3, completed: 4 } as Record<string, number>)[managedHunt.status] : undefined
   const nextHunt = hunts.find(hunt => hunt.status === 'active') ?? hunts.find(hunt => hunt.status === 'scheduled') ?? hunts.find(hunt => ['review', 'ended'].includes(hunt.status)) ?? hunts.find(hunt => hunt.status === 'draft')
 
   return <div className="workspace">
@@ -568,7 +578,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       {loading ? <div className="workspace-loading">Opening your organizer space…</div> : loadError && !organizer ? <section className="workspace-content"><div className="workspace-alert"><CircleHelp size={19}/><div><b>Organizer access needs attention</b><p>{loadError}</p><button className="outline-button" onClick={() => { setLoading(true); setLoadError(''); void loadWorkspace() }}>Try again</button></div></div></section> : page === 'overview' ? <section className="workspace-content">
         <div className="workspace-greeting"><div><div className="eyebrow"><Sparkles size={14}/> YOUR FAMILY GAME NIGHT</div><h1>Welcome in, {displayName}!</h1><p>Your organizer space is ready. Let’s start gathering the fun.</p></div><div className="greeting-sticker"><Camera size={30}/><span>Let’s play!</span></div></div>
          {loadError && <div className="inline-alert">{loadError}</div>}
-         <section className="next-action-card"><div className="next-action-copy"><span className="eyebrow"><Sparkles size={14}/> YOUR NEXT STEP</span><h2>{nextHunt ? nextHunt.title : 'Create your first hunt'}</h2><p>{nextHunt ? `${huntStatusLabel(nextHunt.status)} · ${nextHunt.venue}` : 'Build a hunt, invite your teams, and start playing in a few minutes.'}</p></div><button className="primary-button" onClick={() => nextHunt ? void openManageHunt(nextHunt) : (setPage('new-hunt'), setHuntMessage(''))}>{nextHunt ? huntActionLabel(nextHunt.status) : 'Create a hunt'} <ArrowRight size={16}/></button></section>
+         <section className="next-action-card"><div className="next-action-copy"><span className="eyebrow"><Sparkles size={14}/> YOUR NEXT STEP</span><h2>{nextHunt ? nextHunt.title : 'Create your first hunt'}</h2><p>{nextHunt ? `${huntStatusLabel(nextHunt.status)} · ${nextHunt.venue}` : 'Build a hunt, invite your teams, and start playing in a few minutes.'}</p></div><button className="primary-button" onClick={() => { if (!nextHunt) { setPage('new-hunt'); setHuntMessage('') } else if (['ended', 'review', 'completed'].includes(nextHunt.status)) { setManagedHunt(nextHunt); setResumeHuntId(nextHunt.id); setPage('review-hunt') } else void openManageHunt(nextHunt) }}>{nextHunt ? huntActionLabel(nextHunt.status) : 'Create a hunt'} <ArrowRight size={16}/></button></section>
         <div className="stats-grid"><div className="stat-card"><span className="stat-icon stat-pink"><Sparkles size={18}/></span><small>ACTIVE CHALLENGES</small><b>{activeCount}</b><span>Ready to add to a hunt</span></div><div className="stat-card"><span className="stat-icon stat-yellow"><Users size={18}/></span><small>LIVE OR SCHEDULED</small><b>{hunts.filter(hunt => ['scheduled','active'].includes(hunt.status)).length}</b><span>Ready for participants</span></div><div className="stat-card"><span className="stat-icon stat-lilac"><Clock3 size={18}/></span><small>YOUR HUNTS</small><b>{hunts.length}</b><span>Venue-based photo adventures</span></div></div>
         <div className="home-panels"><article className="panel-card"><div className="panel-heading"><div><span className="eyebrow">START AT A VENUE</span><h2>Plan a photo hunt</h2><p>Choose a venue, add photo challenges, and set the ground rules.</p></div><span className="panel-illustration"><MapPin size={25}/></span></div><button className="primary-button small-button" onClick={() => { setPage('new-hunt'); setHuntMessage('') }}><Plus size={16}/> Create a hunt</button></article><article className="panel-card"><div className="eyebrow">MAKE IT YOURS</div><h2>Challenge library</h2><p>Photo ideas added to a hunt also become reusable challenges for next time.</p><button className="outline-button panel-link" onClick={() => setPage('library')}><Library size={15}/> Open library</button></article></div>
         <div className="workspace-footnote">Hunt rules and challenge lists are saved to your private Supabase project. <ShieldCheck size={14}/></div>
@@ -595,7 +605,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       </section> : page === 'manage-hunt' && managedHunt ? <section className="workspace-content new-hunt-content manage-hunt-content">
         <button className="back-link" onClick={() => setPage('hunts')}><ArrowLeft size={15}/> Back to your hunts</button>
         <div className="new-hunt-heading"><div className="eyebrow"><Settings2 size={14}/> HUNT MANAGEMENT</div><h1>{managedHunt.title}</h1><p><MapPin size={14}/> {managedHunt.venue} <span className="manage-divider">·</span> {managedHunt.duration_minutes} minute time limit</p></div>
-        <section className="hunt-stage-summary" aria-label="Hunt status"><div><span>Hunt status</span><strong>{huntStatusLabel(managedHunt.status)}</strong></div>{managedHunt.status !== 'draft' && <p>{managedParticipants.length} {managedParticipants.length === 1 ? 'player' : 'players'} joined across {managedTeams.length} {managedTeams.length === 1 ? 'team' : 'teams'}.</p>}{managedHunt.status === 'scheduled' && managedHunt.start_at && <p>Scheduled for {new Date(managedHunt.start_at).toLocaleString()}.</p>}</section>
+        <section className="hunt-stage-summary" aria-label="Hunt status">{stageIndex !== undefined && <ol className="hunt-stage-list" aria-label="Hunt stages">{['Setup', 'Waiting', 'Playing', 'Review', 'Results'].map((label, index) => <li key={label} aria-current={index === stageIndex ? 'step' : undefined} className={index === stageIndex ? 'current' : ''}>{label}</li>)}</ol>}<div><span>Hunt status</span><strong>{huntStatusLabel(managedHunt.status)}</strong></div>{managedHunt.status !== 'draft' && <p>{managedParticipants.length} {managedParticipants.length === 1 ? 'player' : 'players'} joined across {managedTeams.length} {managedTeams.length === 1 ? 'team' : 'teams'}.</p>}{managedHunt.status === 'scheduled' && managedHunt.start_at && <p>Scheduled for {new Date(managedHunt.start_at).toLocaleString()}.</p>}{['ended', 'review', 'completed'].includes(managedHunt.status) && <button className="primary-button hunt-stage-action" type="button" onClick={() => setPage('review-hunt')}>{huntActionLabel(managedHunt.status)}</button>}</section>
          {manageMessage && <div className="form-error" role="alert">{manageMessage}</div>}
          {managedHunt.status !== 'draft' && !inviteWindowOpen && <div className="locked-note"><ShieldCheck size={15}/>Invitation links are closed for this hunt.</div>}
          {managedHunt.status === 'scheduled' && <section className="builder-section organizer-hunt-controls" aria-label="Hunt controls"><div className="builder-step"><Play size={15}/></div><div className="builder-main"><div className="eyebrow">GAME CONTROLS</div><h2>Ready to start?</h2><p>Start when your teams are ready. Their invitations and team assignments stay the same.</p><div className="celebration-card-actions"><button type="button" className="primary-button" disabled={manageSaving} onClick={() => void startHuntNow()}><Play size={15}/> Start hunt now</button></div><details className="hunt-end-options"><summary>More hunt controls</summary><p>End this hunt early and move to photo review.</p><button className="reject-button end-hunt-button" disabled={manageSaving} onClick={() => void endHuntNow()}><Clock3 size={14}/> End hunt now and review</button></details></div></section>}
