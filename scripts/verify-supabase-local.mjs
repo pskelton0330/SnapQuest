@@ -39,6 +39,17 @@ async function expectDenied(operation, message) {
   assert.ok(error, message)
 }
 
+async function assertObjectExists(path, message) {
+  const { data, error } = await admin.storage.from('hunt-photos').download(path)
+  assert.ifError(error)
+  assert.ok(data, message)
+}
+
+async function assertObjectMissing(path, message) {
+  const { error } = await admin.storage.from('hunt-photos').download(path)
+  assert.ok(error, message)
+}
+
 try {
   const organizer = await createIdentity('organizer')
   const outsider = await createIdentity('outsider')
@@ -153,10 +164,9 @@ try {
   assert.ifError(submitError)
   assert.equal(submitted?.accepted, true)
   objectPaths.push(photoPath)
-  await expectDenied(
-    () => participantOne.storage.from('hunt-photos').remove([photoPath]),
-    'A participant must not delete an object referenced by a submission',
-  )
+  const { error: referencedDeleteError } = await participantOne.storage.from('hunt-photos').remove([photoPath])
+  assert.ifError(referencedDeleteError)
+  await assertObjectExists(photoPath, 'A participant must not delete an object referenced by a submission')
 
   const { error: replaceUploadError } = await participantOne.storage.from('hunt-photos').upload(replacePath, jpeg, { contentType: 'image/jpeg' })
   assert.ifError(replaceUploadError)
@@ -169,6 +179,7 @@ try {
   assert.ifError(replaceSubmitError)
   const { error: oldPhotoCleanupError } = await participantOne.storage.from('hunt-photos').remove([photoPath])
   assert.ifError(oldPhotoCleanupError)
+  await assertObjectMissing(photoPath, 'The old photo should be removable after its submission reference moves')
   console.log('Submitted objects cannot be deleted while referenced; replacement updates the reference and then permits old-object cleanup.')
 
   const { error: cleanupUploadError } = await participantOne.storage.from('hunt-photos').upload(cleanupPath, jpeg, { contentType: 'image/jpeg' })
@@ -176,6 +187,7 @@ try {
   objectPaths.push(cleanupPath)
   const { error: cleanupError } = await participantOne.storage.from('hunt-photos').remove([cleanupPath])
   assert.ifError(cleanupError)
+  await assertObjectMissing(cleanupPath, 'Unreferenced same-team cleanup should remove the object')
   objectPaths.splice(objectPaths.indexOf(cleanupPath), 1)
   console.log('Unreferenced same-team object cleanup succeeds.')
 
