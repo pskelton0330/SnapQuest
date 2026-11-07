@@ -41,6 +41,43 @@ async function expectDenied(operation, message) {
   assert.ok(error, message)
 }
 
+async function verifyHuntTableRoleMatrix(huntId, organizer, participant, outsider, anonymous) {
+  const tables = [
+    'hunts',
+    'hunt_items',
+    'teams',
+    'participants',
+    'submissions',
+    'hunt_votes',
+    'team_selfies',
+    'hunt_messages',
+    'audit_events',
+  ]
+  for (const table of tables) {
+    const readHuntRows = (client) => client.from(table).select('id').eq('hunt_id', huntId)
+    const [organizerResult, participantResult, outsiderResult, anonymousResult] = await Promise.all([
+      readHuntRows(organizer),
+      readHuntRows(participant),
+      readHuntRows(outsider),
+      readHuntRows(anonymous),
+    ])
+    assert.ifError(organizerResult.error, `Organizer should have access to ${table}`)
+    assert.ifError(participantResult.error, `Participant SELECT should be evaluated by RLS for ${table}`)
+    assert.ifError(outsiderResult.error, `Outsider SELECT should be evaluated by RLS for ${table}`)
+    if (!anonymousResult.error) {
+      assert.equal(anonymousResult.data?.length, 0, `Anonymous role must not see ${table} rows`)
+    }
+    assert.ok(organizerResult.data?.length, `Organizer should see rows in ${table}`)
+    if (table === 'audit_events') {
+      assert.equal(participantResult.data?.length, 0, 'Participants must not see organizer audit rows')
+    } else {
+      assert.ok(participantResult.data?.length, `Hunt participants should see authorized ${table} rows`)
+    }
+    assert.equal(outsiderResult.data?.length, 0, `Outsiders must not see ${table} rows for this hunt`)
+  }
+  console.log(`Organizer, participant, outsider, and anonymous SELECT boundaries pass for ${tables.length} hunt tables.`)
+}
+
 async function verifyEmailMagicLinkReturnPath() {
   const email = `snapquest-magic-link-${randomUUID()}@example.test`
   const callbackUrl = 'http://127.0.0.1:5173/'
@@ -170,6 +207,10 @@ try {
     p_display_name: 'CI Player Two',
   })
   assert.ifError(joinTwoError)
+  const participantUser = await participantOne.auth.getUser()
+  assert.ifError(participantUser.error)
+  const { error: selfProvisionError } = await participantOne.from('organizers').insert({ auth_user_id: participantUser.data.user.id })
+  assert.ok(selfProvisionError, 'Participants must not provision themselves as organizers through the table API')
 
   const { data: recoveredInvites, error: recoverInvitesError } = await organizer.rpc('get_hunt_invites', { p_hunt_id: huntId })
   assert.ifError(recoverInvitesError)
@@ -789,6 +830,7 @@ try {
     .eq('hunt_id', huntId)
   assert.ifError(participantAuditRowsError)
   assert.equal(participantAuditRows, 0, 'Participants must not read audit rows directly')
+  await verifyHuntTableRoleMatrix(huntId, organizer, participantOne, outsider, anonymous)
   console.log('Audit events distinguish server and client sources, strip the client report to an allowlist, and enforce organizer-only log access.')
 
   const { error: outsiderRowsError, count: outsiderRowCount } = await outsider.from('submissions').select('id', { count: 'exact', head: true }).eq('hunt_id', huntId)
