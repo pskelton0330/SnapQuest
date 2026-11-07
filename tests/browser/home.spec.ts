@@ -1228,6 +1228,12 @@ test('organizer reviews a photo, changes its decision, and finalizes results', a
   await expectKeyboardCanReach(page, approveButton)
   await approveButton.click()
   await expect(page.getByRole('button', { name: 'Change decision to rejected' })).toBeVisible()
+  await expect(page.getByText('1 reviewed / 1 submitted', { exact: false })).toBeVisible()
+  await page.getByLabel('Show photos').selectOption('pending')
+  await expect(page.getByText('No photos match this filter.')).toBeVisible()
+  await page.getByLabel('Show photos').selectOption('approved')
+  await expect(page.getByRole('button', { name: 'Change decision to rejected' })).toBeVisible()
+  await page.getByLabel('Show photos').selectOption('all')
   await expect.poll(() => auditReports.some(report => {
     const details = report.p_details as Record<string, unknown> | undefined
     return details?.app === 'organizer_web' && details?.stage === 'review_approved_confirmed'
@@ -1554,6 +1560,8 @@ test('organizer can start a scheduled hunt immediately, end it, and open photo r
   await page.getByRole('button', { name: 'My hunts' }).click()
   await page.getByRole('button', { name: 'Open lobby' }).click()
   await expect(page.getByRole('heading', { name: 'Ready to start?' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Hunt status' })).toContainText('joined across')
+  await expect(page.getByText('More hunt controls')).toBeVisible()
   const controls = page.getByRole('region', { name: 'Hunt controls' })
   await expect(controls.getByRole('button', { name: 'Start hunt now' })).toBeVisible()
   expect(await controls.evaluate(element => {
@@ -1821,6 +1829,33 @@ test('organizer chat pages more than 200 messages with identical timestamps with
   await expect(page.getByRole('button', { name: 'Load older messages' })).toHaveCount(0)
   expect(chatStableCursorCalls).toBeGreaterThanOrEqual(3)
   expect(chatLegacyCursorCalls).toBe(0)
+})
+
+test('chat keeps an older page when a refresh finishes while it is loading', async ({ page }) => {
+  organizerLobbyMode = true
+  const sameTime = '2026-11-06T18:00:00.000Z'
+  const rows = Array.from({ length: 150 }, (_, index) => ({ id: `message-${String(index).padStart(3, '0')}`, sender_name: 'Taylor', sender_role: 'participant', body: `Page message ${index}`, created_at: sameTime }))
+  let releaseOlder: (() => void) | undefined
+  const olderHeld = new Promise<void>(resolve => { releaseOlder = resolve })
+  let olderStarted = false
+  await page.route('**/rest/v1/rpc/get_hunt_messages', async route => {
+    const body = route.request().postDataJSON() as { p_before_id?: string | null }
+    if (body.p_before_id) { olderStarted = true; await olderHeld }
+    const eligible = body.p_before_id ? rows.filter(message => message.id < body.p_before_id!) : rows
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(eligible.slice(-101)) })
+  })
+  await restoreOrganizerSession(page)
+  await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
+  const messages = page.locator('.hunt-chat-message')
+  await expect(messages).toHaveCount(100)
+  await page.getByRole('button', { name: 'Load older messages' }).click()
+  await expect.poll(() => olderStarted).toBe(true)
+  const refresh = page.waitForResponse(response => response.url().includes('/rpc/get_hunt_messages') && response.request().postDataJSON()?.p_before_id == null)
+  await page.evaluate(() => window.dispatchEvent(new Event('online')))
+  await refresh
+  releaseOlder?.()
+  await expect(messages).toHaveCount(150)
+  await expect(messages.first()).toContainText('Page message 0')
 })
 
 

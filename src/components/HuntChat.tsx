@@ -23,13 +23,15 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
   const knownMessageIds = useRef(new Set<string>())
   const atLatestRef = useRef(true)
   const requestId = useRef(0)
+  const olderRequestId = useRef(0)
   const preserveScroll = useRef(false)
   const loadedHuntId = useRef<string | null>(null)
   const legacyPagingHuntId = useRef<string | null>(null)
 
   const loadMessages = useCallback(async (before?: Pick<HuntMessage, 'created_at' | 'id'>, older = false) => {
     if (!supabase) return
-    const id = ++requestId.current
+    const counter = older ? olderRequestId : requestId
+    const id = ++counter.current
     if (older) setLoadingOlder(true)
     let usingLegacyPaging = legacyPagingHuntId.current === huntId
     let result = usingLegacyPaging
@@ -42,8 +44,8 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
       result = await supabase.rpc('get_hunt_messages', { p_hunt_id: huntId, p_limit: 100, p_before: before?.created_at ?? null })
     }
     const { data, error: loadError } = result
-    if (id !== requestId.current) return
-    if (loadError) { reportOperationFailure(huntId, crypto.randomUUID(), 'chat_load_failed', loadError, app); setError('Messages could not be refreshed. Check your connection and retry.'); setErrorAction('load'); setLoading(false); setLoadingOlder(false); return }
+    if (id !== counter.current) return
+    if (loadError) { reportOperationFailure(huntId, crypto.randomUUID(), 'chat_load_failed', loadError, app); setError('Messages could not be refreshed. Check your connection and retry.'); setErrorAction('load'); setLoading(false); if (older) setLoadingOlder(false); return }
     const rows = Array.isArray(data) ? data as HuntMessage[] : []
     const page = older ? (rows.length > 100 ? rows.slice(1) : rows) : rows.slice(-100)
     const newHunt = !older && loadedHuntId.current !== huntId
@@ -64,7 +66,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
     }
     if (older || newHunt) setHasOlder(usingLegacyPaging ? rows.length === 100 : rows.length > 100)
     if (!older) loadedHuntId.current = huntId
-    setError(''); setErrorAction(null); setLoading(false); setLoadingOlder(false)
+    setError(''); setErrorAction(null); setLoading(false); if (older) setLoadingOlder(false)
   }, [app, huntId])
 
   // Chat loads from its database-backed source on mount and when the user returns online.
@@ -73,6 +75,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
   useEffect(() => {
     if (!supabase) return
     const requestCounter = requestId
+    const olderCounter = olderRequestId
     const markOffline = () => setConnection('offline')
     const markOnline = () => { setConnection('reconnecting'); if (document.visibilityState === 'visible') void loadMessages() }
     let replicationReady = false
@@ -93,7 +96,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
     window.addEventListener('online', markOnline)
     window.addEventListener('offline', markOffline)
     window.addEventListener('focus', reconcile)
-    return () => { ++requestCounter.current; window.clearInterval(fallback); window.removeEventListener('online', markOnline); window.removeEventListener('offline', markOffline); window.removeEventListener('focus', reconcile); void supabase?.removeChannel(channel) }
+    return () => { ++requestCounter.current; ++olderCounter.current; window.clearInterval(fallback); window.removeEventListener('online', markOnline); window.removeEventListener('offline', markOffline); window.removeEventListener('focus', reconcile); void supabase?.removeChannel(channel) }
   }, [huntId, loadMessages])
   useEffect(() => {
     if (loadingOlder) return

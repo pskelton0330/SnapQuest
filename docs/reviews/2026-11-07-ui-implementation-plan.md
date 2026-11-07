@@ -15,3 +15,9 @@ Owner-approved plan: improve trust in live progress, organizer management and pl
 - [ ] Keep video, music, direct posting, and AI generation on the future roadmap with cost gates.
 
 Audit events must be retained beyond 365 days; no maximum has been specified. Hands-on iOS testing is waived and remains unperformed; WebKit emulation is not physical-device evidence. Android acceptance has not been waived by this decision. Never run destructive tests on production.
+
+## Implementation notes
+
+- Progress freshness is live in `925d0bb`: stale counts are retained and labeled, initial failures do not appear as zero, and reconnect refreshes them. [Pages workflow](https://github.com/pskelton0330/SnapQuest/actions/runs/42412752990) and [Supabase workflow](https://github.com/pskelton0330/SnapQuest/actions/runs/42412752934) passed. An out-of-order response regression remains to be added.
+- The current batch adds a hunt status and roster summary, moves the waiting-lobby end action behind More hunt controls, clarifies home entry, adds photo-review counts and filters, places final standings earlier, and keeps an older chat page when a refresh completes while it is loading. Full lifecycle/dashboard and play/manage acceptance remain open.
+- [Hunt deletion design](../HUNT_DELETION_DESIGN.md) records a proposed durable deletion process and the owner decisions needed before activation. No production deletion is authorized by this document.

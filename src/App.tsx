@@ -124,7 +124,7 @@ function App() {
               <div className="home-ribbon">PHOTO SCAVENGER HUNT</div>
             </div>
             <div className="home-paint-swipe"><span>EXPLORE&nbsp; • &nbsp;CAPTURE&nbsp; • &nbsp;COMPETE</span><strong>MAKE MEMORIES</strong></div>
-            <p className="home-footnote"><ShieldCheck size={14}/> Private family hunts. Memories worth keeping.</p>
+            <p className="home-footnote"><ShieldCheck size={14}/> Join with your team link, or create a hunt for friends.</p>
           </div>
           <div className="home-actions" aria-label="Choose how to get started">
             <button className="home-action home-action-player" type="button" onClick={() => setHomeMode('player')}>
