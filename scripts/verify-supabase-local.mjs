@@ -265,6 +265,26 @@ try {
   assert.ifError(finalizeOne.error)
   assert.ifError(finalizeTwo.error)
   assert.deepEqual(finalizeOne.data, finalizeTwo.data, 'Concurrent finalization should return the same immutable score snapshot')
+  assert.equal(finalizeOne.data?.length, 2)
+  const winningScore = finalizeOne.data.find((score) => score.team_id === teamOne.team_id)
+  const losingScore = finalizeOne.data.find((score) => score.team_id === teamTwo.team_id)
+  assert.equal(winningScore?.base_points, 10)
+  assert.equal(winningScore?.total, 10)
+  assert.equal(winningScore?.rank, 1)
+  assert.equal(losingScore?.base_points, 0)
+  assert.equal(losingScore?.total, 0)
+  assert.equal(losingScore?.rank, 2)
+  const [organizerGallery, participantGallery] = await Promise.all([
+    organizer.rpc('get_hunt_review_gallery', { p_hunt_id: huntId }),
+    participantOne.rpc('get_hunt_review_gallery', { p_hunt_id: huntId }),
+  ])
+  assert.ifError(organizerGallery.error)
+  assert.ifError(participantGallery.error)
+  assert.deepEqual(organizerGallery.data.final_scores, finalizeOne.data)
+  assert.deepEqual(participantGallery.data.final_scores, finalizeOne.data)
+  const { error: outsiderGalleryError } = await outsider.rpc('get_hunt_review_gallery', { p_hunt_id: huntId })
+  assert.ok(outsiderGalleryError, 'An outsider must not read finalized hunt results')
+  assert.match(outsiderGalleryError.message, /Hunt access required/)
   const { data: completedHunt, error: completedHuntError } = await admin
     .from('hunts')
     .select('status,final_scores')
@@ -279,7 +299,7 @@ try {
   })
   assert.ok(closedReviewError, 'A finalized hunt must reject further review changes')
   assert.match(closedReviewError.message, /Photo review is not open/)
-  console.log('Concurrent finalization returns one immutable score snapshot and closes review decisions.')
+  console.log('Concurrent finalization preserves one immutable score/rank snapshot for organizer and participant, while outsiders are denied.')
 
   const { error: outsiderRowsError, count: outsiderRowCount } = await outsider.from('submissions').select('id', { count: 'exact', head: true }).eq('hunt_id', huntId)
   assert.ifError(outsiderRowsError)
