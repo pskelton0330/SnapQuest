@@ -119,6 +119,38 @@ try {
   })
   assert.ifError(joinTwoError)
 
+  const { data: recoveredInvites, error: recoverInvitesError } = await organizer.rpc('get_hunt_invites', { p_hunt_id: huntId })
+  assert.ifError(recoverInvitesError)
+  assert.equal(recoveredInvites.has_active_invites, true)
+  assert.equal(recoveredInvites.recoverable, true)
+  assert.deepEqual(
+    new Set(recoveredInvites.invite_codes.map((invite) => invite.invite_token)),
+    new Set(configuredTeams.map((team) => team.invite_token)),
+    'Organizer recovery should return the currently active invitation tokens',
+  )
+  const { error: outsiderInviteRecoveryError } = await outsider.rpc('get_hunt_invites', { p_hunt_id: huntId })
+  assert.ok(outsiderInviteRecoveryError, 'An outsider must not recover organizer invitation links')
+  const { data: rotatedInvites, error: rotateInvitesError } = await organizer.rpc('regenerate_hunt_invites', { p_hunt_id: huntId })
+  assert.ifError(rotateInvitesError)
+  assert.equal(rotatedInvites.length, configuredTeams.length)
+  assert.ok(rotatedInvites.every((invite) => !configuredTeams.some((oldInvite) => oldInvite.invite_token === invite.invite_token)))
+  const staleInviteIdentity = await createIdentity('stale-invite')
+  const { error: staleInviteRedeemError } = await staleInviteIdentity.rpc('redeem_invitation', {
+    p_token: configuredTeams[0].invite_token,
+    p_display_name: 'Stale Invite Player',
+  })
+  assert.ok(staleInviteRedeemError, 'A rotated invitation must no longer admit new participants')
+  const { data: recoveredRotatedInvites, error: recoverRotatedError } = await organizer.rpc('get_hunt_invites', { p_hunt_id: huntId })
+  assert.ifError(recoverRotatedError)
+  assert.equal(recoveredRotatedInvites.has_active_invites, true)
+  assert.equal(recoveredRotatedInvites.invite_codes.length, configuredTeams.length)
+  assert.deepEqual(
+    new Set(recoveredRotatedInvites.invite_codes.map((invite) => invite.invite_token)),
+    new Set(rotatedInvites.map((invite) => invite.invite_token)),
+    'Organizer recovery should return only the replacement links after rotation',
+  )
+  console.log('Invitation recovery is organizer-only; rotation revokes old links and exposes only the replacements.')
+
   const selfiePath = `${huntId}/${teamOne.team_id}/selfie/${randomUUID()}.jpg`
   const replacementSelfiePath = `${huntId}/${teamOne.team_id}/selfie/${randomUUID()}.jpg`
   const { error: selfieUploadError } = await participantOne.storage.from('hunt-photos').upload(selfiePath, Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/AP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAT8Af//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQIBAT8Af//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQMBAT8Af//Z', 'base64'), { contentType: 'image/jpeg' })
@@ -562,6 +594,10 @@ try {
   assert.ifError(completedHuntError)
   assert.equal(completedHunt.status, 'completed')
   assert.deepEqual(completedHunt.final_scores, finalizeOne.data)
+  const { data: closedInvites, error: closedInvitesError } = await organizer.rpc('get_hunt_invites', { p_hunt_id: huntId })
+  assert.ifError(closedInvitesError)
+  assert.equal(closedInvites.has_active_invites, false)
+  assert.equal(closedInvites.invite_codes.length, 0, 'Closed hunts must not disclose recoverable invitation tokens')
   const { error: closedReviewError } = await organizer.rpc('review_submission', {
     p_submission_id: savedSubmission.id,
     p_decision: 'rejected',
