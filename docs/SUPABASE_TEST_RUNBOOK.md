@@ -2,6 +2,8 @@
 
 Use an isolated test hunt and test email accounts. Never paste invitation tokens, email magic links, service-role keys, or private photo URLs into notes or bug reports.
 
+> **Migration status (November 6, 2026):** The linked production project was checked read-only and has migrations `202610280001` through `202611060022` applied. Source migrations `202611060023` and `202611060024` are not applied there. Migration 023 prunes diagnostic rows older than 365 days; do not apply either pending migration to production without a reviewed change plan and explicit operator approval. The historical setup instructions below apply to an isolated test project only.
+
 ## 1. Public deployment smoke test
 
 Open `https://pskelton0330.github.io/SnapQuest/` on desktop and on the test phone.
@@ -35,7 +37,13 @@ select to_regprocedure('public.get_hunt_progress(uuid)') is not null as progress
 
 The result must be `true` before testing progress bars.
 
-## 3. Apply the game-management migrations
+## 3. Prepare an isolated test project
+
+Use a dedicated Supabase project with synthetic accounts and hunts for hosted Auth, Storage HTTP, PostgreSQL concurrency, RLS, and Realtime tests. Confirm the project name and reference in the dashboard before running SQL. Do not use the production project for destructive, race, or migration experiments.
+
+For a new test project, apply every file in `supabase/migrations/` in filename order through that project’s SQL Editor or the Supabase CLI. Open the [Supabase projects dashboard](https://supabase.com/dashboard/projects), select the test project, and choose **SQL Editor**. For an existing project, compare its migration history and schema first; never rerun migrations blindly. Validate 023’s exact prune behavior with synthetic expired audit rows in the test project before requesting production approval.
+
+## 4. Verify the game-management RPCs
 
 The organizer Start Now control requires the game-management RPC from migration 008. In an existing test project, first confirm whether the template tables already exist:
 
@@ -49,7 +57,7 @@ If `hunt_templates` is missing, run migration [202610290007_reusable_hunt_templa
 
 Then run migration [202610290008_game_management.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610290008_game_management.sql), followed by [202610300009_team_progress.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610300009_team_progress.sql) and [202610300010_audit_logging.sql](https://github.com/pskelton0330/SnapQuest/blob/main/supabase/migrations/202610300010_audit_logging.sql).
 
-Use the [Supabase SQL Editor](https://supabase.com/dashboard/project/ykfkwczcomkhxaraqpuq/sql/new), paste each complete file, and click **Run**. Run them in filename order. Do not apply migrations to production without a backup and a schema/data audit.
+Use the test project’s SQL Editor, paste each complete file, and click **Run**. Run them in filename order. Do not use this section to change production.
 
 Verify afterward:
 
@@ -73,7 +81,7 @@ limit 100;
 
 The audit trail records timing and client failure events without invitation tokens, photo paths, or credentials. It is owner-readable and not participant-readable.
 
-## 4. Organizer login
+## 5. Organizer login
 
 1. Open the public URL on the phone.
 2. Select Organizer Login.
@@ -89,7 +97,7 @@ Expected:
 
 If the link is wrong, copy only its destination host/path—not the full token—and correct Supabase URL Configuration before requesting another link.
 
-## 5. Create and join a test game
+## 6. Create and join a test game
 
 1. Create a test hunt with at least two challenges.
 2. Publish it with two teams and individual QR codes.
@@ -104,7 +112,7 @@ Expected:
 - A participant cannot be silently moved by scanning another team’s QR code.
 - The organizer can use `Join this team`, enter Play mode, and return with `Manage game`.
 
-## 6. Active-play and progress test
+## 7. Active-play and progress test
 
 Start the test game, then submit one photo from Team A.
 
@@ -124,7 +132,7 @@ Expected:
 - The accepted photo remains present.
 - No duplicate participant or duplicate submission is created.
 
-## 7. Authorization checks
+## 8. Authorization checks
 
 - A signed-out visitor can view the public landing page but cannot organize a game.
 - An anonymous participant cannot open organizer tables or manage another game.
@@ -135,4 +143,4 @@ Record the test environment, device/browser, game ID, time, expected result, act
 
 ## Current verification boundary
 
-This runbook verifies the deployed invitation/session and aggregate-progress slice. Team selfie, quick review, montage generation, media deletion, and physical multi-phone acceptance remain separate pending features.
+The app, team names/selfies, aggregate progress, chat, winner cards, invitation recovery, and core scoring/review flows are implemented. This runbook describes test setup and core journeys; its mocked-browser and local database suites do not replace live Storage HTTP, concurrent-session, physical multi-phone, real email-link, or screen-reader acceptance. Quick-review policy, server-rendered video, media deletion/retention controls, and AI hunt generation are not implemented in the core launch. See the [PRD v2 checklist](PRD_V2_CHECKLIST.md), [test evidence](PRD_V2_TEST_EVIDENCE.md), and [product roadmap](PRODUCT_ROADMAP.md) for current status.
