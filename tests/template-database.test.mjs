@@ -6,7 +6,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 import { calculateTeamScores, normalizeFinalScores, winningTeams } from '../src/lib/scoring.ts'
 
 let db, legacyBefore, templateId
-const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222'
+const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222', outsider='12345678-1234-4234-9234-123456789abc'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
 let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration
 async function as(role, uid, sql, params=[]) {
@@ -29,6 +29,7 @@ before(async () => {
     grant usage on schema auth to anon,authenticated; grant execute on function auth.uid() to anon,authenticated;
     create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
     create table storage.objects(id uuid default gen_random_uuid(),bucket_id text,name text);
+    grant usage on schema storage to anon,authenticated; grant select,insert,update,delete on storage.objects to authenticated;
     alter table storage.objects enable row level security;`)
   for(const file of (await readdir(migrationUrl)).filter(f=>f.endsWith('.sql')).sort()) {
     const sql=await readFile(new URL(file,migrationUrl),'utf8')
@@ -50,7 +51,7 @@ before(async () => {
     if(file.includes('0025')) { auditRetentionMigration=sql; continue }
     await db.exec(sql)
   }
-  await db.query('insert into auth.users(id) values ($1),($2)',[owner,other])
+  await db.query('insert into auth.users(id) values ($1),($2),($3)',[owner,other,outsider])
   await db.query('insert into public.organizers(id,auth_user_id) values ($1,$1),($2,$2)',[owner,other])
   await db.exec(`insert into public.hunts(id,organizer_id,title,venue,status,final_scores) values ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','${owner}','Legacy game','Shop','completed','[{"total":7}]');
     insert into public.hunt_items(id,hunt_id,title_snapshot,point_value,display_order) values ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Legacy challenge',7,0);
@@ -296,6 +297,20 @@ test('moving a selfie submitter preserves the original team selfie and attributi
   assert.equal(saved.submitted_by, participant.participant_id)
   assert.equal(saved.storage_path, selfiePath)
   assert.equal((await db.query('select team_id from public.participants where id=$1', [participant.participant_id])).rows[0].team_id, targetTeam)
+})
+
+test('a participant cannot read another team selfie after the hunt ends', async () => {
+  const startsLater = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  const { huntId, teams, participant } = await createReliabilityHunt('Private selfie storage', startsLater)
+  await as('authenticated', outsider, "select public.redeem_invitation($1,'Other team player')", [teams[1].invite_token])
+  const selfiePath = `${huntId}/${participant.team_id}/selfie/44444444-4444-4444-8444-444444444444.jpg`
+  await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1)", [selfiePath])
+  await db.query("update public.hunts set status='completed',ended_at=clock_timestamp() where id=$1", [huntId])
+
+  assert.equal((await as('authenticated', other, 'select name from storage.objects where name=$1', [selfiePath])).rows.length, 1)
+  assert.equal((await as('authenticated', owner, 'select name from storage.objects where name=$1', [selfiePath])).rows.length, 1)
+  const visibleObjects = await as('authenticated', outsider, 'select name from storage.objects where name=$1', [selfiePath])
+  assert.equal(visibleObjects.rows.length, 0, 'hunt-photo review access must not widen private team-selfie access')
 })
 
 test('review writes stop at completion and finalization retries return the stored result', async () => {
