@@ -43,6 +43,15 @@ Use a dedicated Supabase project or a data-less preview branch with synthetic ac
 
 For a new test project, apply migrations through 024 in filename order using that project’s SQL Editor. Open the [Supabase projects dashboard](https://supabase.com/dashboard/projects), select the test project, and choose **SQL Editor**. Do not use `supabase db push` or `supabase migration up --remote` while 025 is pending: both apply all pending migrations. Apply migration 025 only after the owner approves the 365-day policy, then validate its exact prune behavior with synthetic expired audit rows in the test project before any production application. For an existing project, compare its migration history and schema first; never rerun migrations blindly.
 
+Migrations 023–025 issue `NOTIFY pgrst, 'reload schema'` when they commit. After applying 023 and 024, confirm the expected RPC signatures are visible before testing the app:
+
+```sql
+select to_regprocedure('public.record_audit_event(text,uuid,text,jsonb)') as client_audit_rpc,
+       to_regprocedure('public.get_hunt_messages(uuid,integer,timestamptz,uuid)') as stable_chat_rpc;
+```
+
+Both results should be non-null. If either is null, stop and review the migration result and PostgREST schema cache before running browser acceptance.
+
 ## 4. Verify the game-management RPCs
 
 The organizer Start Now control requires the game-management RPC from migration 008. In an existing test project, first confirm whether the template tables already exist:
