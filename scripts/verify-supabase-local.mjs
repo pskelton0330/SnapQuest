@@ -52,6 +52,11 @@ async function assertObjectMissing(path, message) {
 
 try {
   const organizer = await createIdentity('organizer')
+  const organizerConcurrent = createClient(url, anonKey, authOptions)
+  const { data: organizerSession } = await organizer.auth.getSession()
+  assert.ok(organizerSession.session)
+  const { error: concurrentSessionError } = await organizerConcurrent.auth.setSession(organizerSession.session)
+  assert.ifError(concurrentSessionError)
   const outsider = await createIdentity('outsider')
   const { error: organizerProvisionError } = await admin.from('organizers').insert({ auth_user_id: (await organizer.auth.getUser()).data.user.id })
   assert.ifError(organizerProvisionError)
@@ -95,6 +100,7 @@ try {
   const teamOne = configuredTeams[0]
   const teamTwo = configuredTeams[1]
   const participantOne = await createIdentity('participant-one')
+  const participantOneConcurrent = await createIdentity('participant-one-concurrent')
   const participantTwo = await createIdentity('participant-two')
   const outsiderClient = outsider
   const { error: joinOneError } = await participantOne.rpc('redeem_invitation', {
@@ -102,6 +108,11 @@ try {
     p_display_name: 'CI Player One',
   })
   assert.ifError(joinOneError)
+  const { error: joinConcurrentError } = await participantOneConcurrent.rpc('redeem_invitation', {
+    p_token: teamOne.invite_token,
+    p_display_name: 'CI Player One Concurrent',
+  })
+  assert.ifError(joinConcurrentError)
   const { error: joinTwoError } = await participantTwo.rpc('redeem_invitation', {
     p_token: teamTwo.invite_token,
     p_display_name: 'CI Player Two',
@@ -190,6 +201,78 @@ try {
   await assertObjectMissing(cleanupPath, 'Unreferenced same-team cleanup should remove the object')
   objectPaths.splice(objectPaths.indexOf(cleanupPath), 1)
   console.log('Unreferenced same-team object cleanup succeeds.')
+
+  const concurrentPathOne = `${huntId}/${teamOne.team_id}/${firstItem.id}/${randomUUID()}.jpg`
+  const concurrentPathTwo = `${huntId}/${teamOne.team_id}/${firstItem.id}/${randomUUID()}.jpg`
+  for (const [client, path] of [[participantOne, concurrentPathOne], [participantOneConcurrent, concurrentPathTwo]]) {
+    const { error } = await client.storage.from('hunt-photos').upload(path, jpeg, { contentType: 'image/jpeg' })
+    assert.ifError(error)
+    objectPaths.push(path)
+  }
+  const [raceOne, raceTwo] = await Promise.all([
+    participantOne.rpc('submit_hunt_photo', {
+      p_hunt_item_id: firstItem.id,
+      p_storage_path: concurrentPathOne,
+      p_expected_storage_path: replacePath,
+    }),
+    participantOneConcurrent.rpc('submit_hunt_photo', {
+      p_hunt_item_id: firstItem.id,
+      p_storage_path: concurrentPathTwo,
+      p_expected_storage_path: replacePath,
+    }),
+  ])
+  const raceResults = [raceOne, raceTwo]
+  assert.equal(raceResults.filter((result) => !result.error).length, 1, 'Exactly one concurrent replacement should win')
+  assert.equal(raceResults.filter((result) => result.error).length, 1, 'The stale concurrent replacement should be rejected')
+  assert.equal(raceResults.find((result) => !result.error).data?.accepted, true)
+  const { data: savedSubmission, error: savedSubmissionError } = await admin
+    .from('submissions')
+    .select('id,storage_path')
+    .eq('hunt_id', huntId)
+    .single()
+  assert.ifError(savedSubmissionError)
+  const winningPath = raceOne.error ? concurrentPathTwo : concurrentPathOne
+  const losingPath = raceOne.error ? concurrentPathOne : concurrentPathTwo
+  assert.equal(savedSubmission.storage_path, winningPath, 'The stored submission must match the one accepted replacement')
+  const { error: staleCleanupError } = await participantOne.storage.from('hunt-photos').remove([losingPath])
+  assert.ifError(staleCleanupError)
+  await assertObjectMissing(losingPath, 'The rejected concurrent upload should be removable as unreferenced')
+  objectPaths.splice(objectPaths.indexOf(losingPath), 1)
+  const { error: replacedCleanupError } = await participantOne.storage.from('hunt-photos').remove([replacePath])
+  assert.ifError(replacedCleanupError)
+  await assertObjectMissing(replacePath, 'The prior version should be removable after concurrent replacement')
+  objectPaths.splice(objectPaths.indexOf(replacePath), 1)
+  console.log('Concurrent same-slot photo replacements serialize: exactly one succeeds, and only its path is referenced.')
+
+  const { error: endHuntError } = await organizer.rpc('end_hunt_early', { p_hunt_id: huntId })
+  assert.ifError(endHuntError)
+  const { error: reviewError } = await organizer.rpc('review_submission', {
+    p_submission_id: savedSubmission.id,
+    p_decision: 'approved',
+  })
+  assert.ifError(reviewError)
+  const [finalizeOne, finalizeTwo] = await Promise.all([
+    organizer.rpc('finalize_hunt', { p_hunt_id: huntId }),
+    organizerConcurrent.rpc('finalize_hunt', { p_hunt_id: huntId }),
+  ])
+  assert.ifError(finalizeOne.error)
+  assert.ifError(finalizeTwo.error)
+  assert.deepEqual(finalizeOne.data, finalizeTwo.data, 'Concurrent finalization should return the same immutable score snapshot')
+  const { data: completedHunt, error: completedHuntError } = await admin
+    .from('hunts')
+    .select('status,final_scores')
+    .eq('id', huntId)
+    .single()
+  assert.ifError(completedHuntError)
+  assert.equal(completedHunt.status, 'completed')
+  assert.deepEqual(completedHunt.final_scores, finalizeOne.data)
+  const { error: closedReviewError } = await organizer.rpc('review_submission', {
+    p_submission_id: savedSubmission.id,
+    p_decision: 'rejected',
+  })
+  assert.ok(closedReviewError, 'A finalized hunt must reject further review changes')
+  assert.match(closedReviewError.message, /Photo review is not open/)
+  console.log('Concurrent finalization returns one immutable score snapshot and closes review decisions.')
 
   const { error: outsiderRowsError, count: outsiderRowCount } = await outsider.from('submissions').select('id', { count: 'exact', head: true }).eq('hunt_id', huntId)
   assert.ifError(outsiderRowsError)
