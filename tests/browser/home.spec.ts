@@ -70,6 +70,11 @@ test.beforeEach(async ({ page }) => {
   participantZeroScoreMode = false
   await page.context().route('https://test-project.supabase.co/**', async route => {
     const request = route.request()
+    if (request.method() === 'GET' && request.url().includes('/storage/v1/object/sign/hunt-photos/') && (signedPreviewMode || photoReplacementRaceMode)) {
+      const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
+      await route.fulfill({ status: 200, contentType: 'image/png', body: png })
+      return
+    }
     if (request.url().includes('/storage/v1/object/sign/hunt-photos/')) {
       if (photoReplacementRaceMode && request.method() === 'POST') {
         const path = decodeURIComponent(new URL(request.url()).pathname.split('/object/sign/hunt-photos/')[1] ?? '')
@@ -591,6 +596,11 @@ test('participant gallery explains pending approval and an unavailable approved 
   participantReviewPhotoStatus = 'approved'
   await page.reload()
   await expect(page.getByText('Photo preview unavailable')).toBeVisible()
+  const retryPreview = page.getByRole('button', { name: 'Retry Team Cedar photo preview for A red leaf' })
+  await expect(retryPreview).toBeVisible()
+  signedPreviewMode = true
+  await retryPreview.click()
+  await expect(page.getByRole('img', { name: 'Team Cedar photo for A red leaf' })).toBeVisible()
 })
 
 test('participant gallery picks up an organizer approval through its refresh fallback', async ({ page }) => {
@@ -765,6 +775,21 @@ test('organizer review refreshes signed previews when the page returns to the fo
   })
   await expect.poll(() => signedPreviewRequests).toBeGreaterThan(initialRequests)
   await expect(galleryImage).toBeVisible()
+})
+
+test('organizer can retry a photo whose signed preview failed', async ({ page }) => {
+  organizerReviewMode = true
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  const hunt = page.getByRole('article').filter({ hasText: 'Spring Photo Hunt' })
+  await hunt.getByRole('button', { name: 'Review photos' }).click()
+  await expect(page.getByText('Preview unavailable')).toBeVisible()
+  const retryPreview = page.getByRole('button', { name: 'Retry preview' })
+  await expect(retryPreview).toBeVisible()
+  signedPreviewMode = true
+  await retryPreview.click()
+  await expect(page.getByRole('img', { name: 'Team Cedar photo for A red leaf' })).toBeVisible()
 })
 
 test('organizer login confirms that the email link was requested', async ({ page }) => {

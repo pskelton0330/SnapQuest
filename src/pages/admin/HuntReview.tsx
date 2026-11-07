@@ -20,6 +20,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
   const [data, setData] = useState<ReviewData | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
+  const [previewRetryingPath, setPreviewRetryingPath] = useState('')
   const [confirmFinalize, setConfirmFinalize] = useState(false)
   const [celebrationBusy, setCelebrationBusy] = useState(false)
   const [celebrationError, setCelebrationError] = useState('')
@@ -49,6 +50,19 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     setData({ ...next, submissions: photos, team_selfies: teamSelfies })
     setError('')
   }, [huntId])
+
+  function markPreviewUnavailable(path: string) {
+    signedUrlCache.current.delete(path)
+    setData(current => current ? { ...current, submissions: current.submissions.map(photo => photo.storage_path === path ? { ...photo, photo_url: undefined } : photo) } : current)
+  }
+
+  async function retryReviewPhoto(path: string) {
+    if (previewRetryingPath === path) return
+    setPreviewRetryingPath(path)
+    signedUrlCache.current.delete(path)
+    try { await load() }
+    finally { setPreviewRetryingPath('') }
+  }
 
   // Initializing the review screen from its database-backed source is intentional.
   // eslint-disable-next-line react/set-state-in-effect
@@ -192,7 +206,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
       {reviewStarted && <div className="review-summary"><b>{pendingCount ? `${pendingCount} photos need review` : 'All submitted photos reviewed'}</b><span>{data.submissions.length} submitted · {data.teams.length} teams · {data.items.length} challenges</span></div>}
       <div className="review-item-list">{data.items.map(item => <section className="review-item" key={item.id}><header><div><span>CHALLENGE {item.display_order + 1}</span><h2>{item.title}</h2></div><b>{item.points} pts</b></header><div className="review-photos">{data.teams.map(team => {
         const photo = data.submissions.find(row => row.item_id === item.id && row.team_id === team.id)
-        return <article className="review-photo-card" key={team.id}><div className="review-photo-team"><span className="team-swatch" style={{ backgroundColor: team.display_color }}/><b>{team.name}</b></div>{photo?.photo_url ? <a href={photo.photo_url} target="_blank" rel="noreferrer"><img src={photo.photo_url} alt={`${team.name} photo for ${item.title}`}/></a> : <div className="review-photo-empty">{photo ? 'Preview unavailable' : 'No photo submitted'}</div>}{photo && <><div className={`review-status status-${photo.status}`}>{photo.status}</div>{data.status === 'review' && <div className="review-photo-actions">{photo.status === 'pending' ? <><button className="approve-button" disabled={busy === photo.id} onClick={() => void decide(photo.id, 'approved')}><Check size={14}/> Approve</button><button className="reject-button" disabled={busy === photo.id} onClick={() => void decide(photo.id, 'rejected')}><X size={14}/> Reject</button></> : <button className={photo.status === 'approved' ? 'reject-button' : 'approve-button'} disabled={busy === photo.id} aria-label={photo.status === 'approved' ? 'Change decision to rejected' : 'Change decision to approved'} onClick={() => void decide(photo.id, photo.status === 'approved' ? 'rejected' : 'approved')}>{photo.status === 'approved' ? <><X size={14}/> Change to rejected</> : <><Check size={14}/> Change to approved</>}</button>}</div>}</>}</article>
+        return <article className="review-photo-card" key={team.id}><div className="review-photo-team"><span className="team-swatch" style={{ backgroundColor: team.display_color }}/><b>{team.name}</b></div>{photo?.photo_url ? <a href={photo.photo_url} target="_blank" rel="noreferrer"><img src={photo.photo_url} alt={`${team.name} photo for ${item.title}`} onError={() => markPreviewUnavailable(photo.storage_path)}/></a> : <div className="review-photo-empty">{photo ? <>Preview unavailable<button className="outline-button" disabled={previewRetryingPath === photo.storage_path} onClick={() => void retryReviewPhoto(photo.storage_path)}>{previewRetryingPath === photo.storage_path ? 'Retrying preview…' : 'Retry preview'}</button></> : 'No photo submitted'}</div>}{photo && <><div className={`review-status status-${photo.status}`}>{photo.status}</div>{data.status === 'review' && <div className="review-photo-actions">{photo.status === 'pending' ? <><button className="approve-button" disabled={busy === photo.id} onClick={() => void decide(photo.id, 'approved')}><Check size={14}/> Approve</button><button className="reject-button" disabled={busy === photo.id} onClick={() => void decide(photo.id, 'rejected')}><X size={14}/> Reject</button></> : <button className={photo.status === 'approved' ? 'reject-button' : 'approve-button'} disabled={busy === photo.id} aria-label={photo.status === 'approved' ? 'Change decision to rejected' : 'Change decision to approved'} onClick={() => void decide(photo.id, photo.status === 'approved' ? 'rejected' : 'approved')}>{photo.status === 'approved' ? <><X size={14}/> Change to rejected</> : <><Check size={14}/> Change to approved</>}</button>}</div>}</>}</article>
       })}</div></section>)}</div>
       {data.status === 'completed' ? completedResults : ended ? (
         <div className="review-finish">
