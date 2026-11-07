@@ -41,7 +41,7 @@ The result must be `true` before testing progress bars.
 
 Use a dedicated Supabase project with synthetic accounts and hunts for hosted Auth, Storage HTTP, PostgreSQL concurrency, RLS, and Realtime tests. Confirm the project name and reference in the dashboard before running SQL. Do not use the production project for destructive, race, or migration experiments.
 
-For a new test project, apply migrations through 024 in filename order through that project’s SQL Editor or the Supabase CLI. Open the [Supabase projects dashboard](https://supabase.com/dashboard/projects), select the test project, and choose **SQL Editor**. For an existing project, compare its migration history and schema first; never rerun migrations blindly. Apply migration 025 only after the owner approves the 365-day policy, then validate its exact prune behavior with synthetic expired audit rows in the test project before any production application.
+For a new test project, apply migrations through 024 in filename order using that project’s SQL Editor. Open the [Supabase projects dashboard](https://supabase.com/dashboard/projects), select the test project, and choose **SQL Editor**. Do not use `supabase db push` or `supabase migration up --remote` while 025 is pending: both apply all pending migrations. Apply migration 025 only after the owner approves the 365-day policy, then validate its exact prune behavior with synthetic expired audit rows in the test project before any production application. For an existing project, compare its migration history and schema first; never rerun migrations blindly.
 
 ## 4. Verify the game-management RPCs
 
