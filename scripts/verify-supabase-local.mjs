@@ -163,6 +163,114 @@ try {
   assert.equal(refreshedContext.team.selfie.storage_path, replacementSelfiePath)
   console.log('Team selfie upload, private team visibility, organizer access, context refresh, and safe replacement pass through real Storage HTTP.')
 
+  const { data: organizerMessage, error: organizerMessageError } = await organizer.rpc('send_hunt_message', {
+    p_hunt_id: huntId,
+    p_body: 'Organizer CI message',
+  })
+  assert.ifError(organizerMessageError)
+  assert.equal(organizerMessage.sender_role, 'organizer')
+  const { data: participantMessage, error: participantMessageError } = await participantTwo.rpc('send_hunt_message', {
+    p_hunt_id: huntId,
+    p_body: 'Participant CI message',
+  })
+  assert.ifError(participantMessageError)
+  assert.equal(participantMessage.sender_role, 'participant')
+  assert.equal(participantMessage.sender_name, 'CI Player Two')
+  const { data: messages, error: messagesError } = await participantOne.rpc('get_hunt_messages', {
+    p_hunt_id: huntId,
+    p_limit: 100,
+    p_before: null,
+    p_before_id: null,
+  })
+  assert.ifError(messagesError)
+  assert.ok(messages.some((message) => message.id === organizerMessage.id))
+  assert.ok(messages.some((message) => message.id === participantMessage.id))
+  const { error: outsiderMessageError } = await outsider.rpc('send_hunt_message', {
+    p_hunt_id: huntId,
+    p_body: 'Outsider must not send',
+  })
+  assert.ok(outsiderMessageError, 'Outsiders must not send hunt chat messages')
+  assert.match(outsiderMessageError.message, /Participant access required/)
+  const { error: outsiderReadMessagesError } = await outsider.rpc('get_hunt_messages', {
+    p_hunt_id: huntId,
+    p_limit: 100,
+    p_before: null,
+    p_before_id: null,
+  })
+  assert.ok(outsiderReadMessagesError, 'Outsiders must not read hunt chat messages')
+  assert.match(outsiderReadMessagesError.message, /Hunt access required/)
+  const { error: directMessageInsertError } = await participantOne.from('hunt_messages').insert({
+    hunt_id: huntId,
+    sender_user_id: (await participantOne.auth.getUser()).data.user.id,
+    sender_participant_id: null,
+    sender_name: 'Forged sender',
+    sender_role: 'organizer',
+    body: 'Forged direct insert',
+  })
+  assert.ok(directMessageInsertError, 'Clients must not insert or forge chat rows directly')
+  for (let messageNumber = 0; messageNumber < 7; messageNumber += 1) {
+    const { error } = await participantTwo.rpc('send_hunt_message', {
+      p_hunt_id: huntId,
+      p_body: `Rate limit fixture ${messageNumber}`,
+    })
+    assert.ifError(error)
+  }
+  const { error: rateLimitError } = await participantTwo.rpc('send_hunt_message', {
+    p_hunt_id: huntId,
+    p_body: 'One too many messages',
+  })
+  assert.ok(rateLimitError, 'Chat should enforce its per-user send rate limit')
+  assert.match(rateLimitError.message, /Wait a minute before sending another/)
+
+  const outsiderUser = await outsider.auth.getUser()
+  const { data: outsiderParticipant } = await admin.from('participants').select('id').eq('auth_user_id', outsiderUser.data.user.id).maybeSingle()
+  assert.equal(outsiderParticipant, null)
+  const stableTime = '2099-01-01T00:00:00.000Z'
+  const stableMessages = Array.from({ length: 205 }, (_, index) => ({
+    hunt_id: huntId,
+    sender_user_id: outsiderUser.data.user.id,
+    sender_participant_id: null,
+    sender_name: 'CI Pagination Fixture',
+    sender_role: 'participant',
+    body: `Stable cursor message ${index}`,
+    created_at: stableTime,
+  }))
+  const stableMessageIds = []
+  for (let offset = 0; offset < stableMessages.length; offset += 100) {
+    const { data: insertedMessages, error } = await admin
+      .from('hunt_messages')
+      .insert(stableMessages.slice(offset, offset + 100))
+      .select('id')
+    assert.ifError(error)
+    stableMessageIds.push(...insertedMessages.map((message) => message.id))
+  }
+  const pagedMessageIds = []
+  const pageSizes = []
+  let cursorTime = null
+  let cursorId = null
+  while (true) {
+    const { data: page, error } = await participantOne.rpc('get_hunt_messages', {
+      p_hunt_id: huntId,
+      p_limit: 100,
+      p_before: cursorTime,
+      p_before_id: cursorId,
+    })
+    assert.ifError(error)
+    if (page.length === 0) break
+    pageSizes.push(page.length)
+    pagedMessageIds.push(...page.map((message) => message.id))
+    const oldestMessage = page[0]
+    cursorTime = oldestMessage.created_at
+    cursorId = oldestMessage.id
+    if (page.length < 100) break
+  }
+  const stableMessageIdSet = new Set(stableMessageIds)
+  const pagedFixtureIds = pagedMessageIds.filter((id) => stableMessageIdSet.has(id))
+  assert.deepEqual(pageSizes, [100, 100, 5])
+  assert.equal(pagedFixtureIds.length, 205)
+  assert.equal(new Set(pagedFixtureIds).size, 205, 'Stable pagination must not skip or duplicate same-timestamp rows')
+  console.log('Organizer/participant chat HTTP access, sender identity, send rate limit, and 205-row stable-cursor paging pass.')
+
   const { data: huntItems, error: itemsError } = await admin.from('hunt_items').select('id,display_order').eq('hunt_id', huntId).order('display_order')
   assert.ifError(itemsError)
   assert.equal(huntItems?.length, 2)
