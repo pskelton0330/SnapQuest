@@ -1,0 +1,42 @@
+name: Supabase local stack
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-local-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v3
+        with:
+          version: latest
+
+      - name: Start isolated local Supabase stack and apply migrations
+        run: supabase start -x studio,edge-runtime,logflare,vector,supavisor,postgres-meta
+
+      - name: Export local Supabase connection settings
+        run: supabase status --output env >> "$GITHUB_ENV"
+
+      - name: Verify app schema and storage bucket
+        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select to_regprocedure('public.start_game_now(uuid)') is not null as start_rpc, exists(select 1 from storage.buckets where id='hunt-photos') as photo_bucket"
+
+      - name: Stop isolated local stack
+        if: always()
+        run: supabase stop --no-backup
