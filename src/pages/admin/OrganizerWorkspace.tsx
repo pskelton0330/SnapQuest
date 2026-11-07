@@ -387,7 +387,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     window.addEventListener('focus', reconcile)
     window.addEventListener('online', reconcile)
     document.addEventListener('visibilitychange', reconcileVisibility)
-    const fallback = window.setInterval(() => void loadManagedLobby(huntId), 15_000)
+    const fallback = window.setInterval(() => { if (document.visibilityState === 'visible') void loadManagedLobby(huntId) }, 15_000)
     return () => {
       ++requestCounter.current
       if (refreshTimer.current !== undefined) window.clearTimeout(refreshTimer.current)

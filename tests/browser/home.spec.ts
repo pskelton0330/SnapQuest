@@ -1684,6 +1684,24 @@ test('organizer lobby updates timing from the server', async ({ page }) => {
   await expect(page.getByText('90 minute time limit')).toBeVisible()
 })
 
+test('organizer lobby pauses background polling and refreshes when visible', async ({ page }) => {
+  organizerLobbyMode = true
+  let lobbyReads = 0
+  await page.clock.install()
+  page.on('request', request => { if (request.url().includes('/rpc/get_game_lobby')) lobbyReads++ })
+  await restoreOrganizerSession(page)
+  await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
+  await expect(page.getByRole('heading', { name: 'Ready to start?' })).toBeVisible()
+  await expect.poll(() => lobbyReads).toBeGreaterThan(0)
+  await page.evaluate(() => Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }))
+  const before = lobbyReads
+  await page.clock.fastForward(45_000)
+  expect(lobbyReads).toBe(before)
+  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' }); document.dispatchEvent(new Event('visibilitychange')) })
+  await page.clock.runFor(300)
+  await expect.poll(() => lobbyReads).toBeGreaterThan(before)
+})
+
 test('organizer start failure is recorded with an organizer operation trace', async ({ page }) => {
   organizerLobbyMode = true
   organizerTimingFailure = 'start'
