@@ -646,6 +646,22 @@ test('restored organizer session opens the production organizer workspace', asyn
   await expect(returnToTeam).toHaveAttribute('href', '#/play/33333333-3333-4333-8333-333333333333')
 })
 
+test('organizer can reorder production hunt challenges before saving', async ({ page }) => {
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'Create a hunt' }).first().click()
+  await expect(page.getByRole('heading', { name: 'Create a venue hunt' })).toBeVisible()
+  await page.getByLabel('Venue name').fill('Town Park')
+  await page.getByRole('button', { name: 'Add item' }).click()
+  await page.getByRole('button', { name: 'Add item' }).click()
+  const titles = page.getByLabel('What should they find?')
+  await titles.nth(0).fill('First challenge')
+  await titles.nth(1).fill('Second challenge')
+  await page.getByRole('button', { name: 'Move item 1 down' }).click()
+  await expect(titles.nth(0)).toHaveValue('Second challenge')
+  await expect(titles.nth(1)).toHaveValue('First challenge')
+})
+
 test('organizer lobby shows the team roster and unread chat count without moving the scroll', async ({ page }) => {
   organizerLobbyMode = true
   const baseTime = Date.now()
