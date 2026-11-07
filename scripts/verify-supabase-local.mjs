@@ -119,6 +119,50 @@ try {
   })
   assert.ifError(joinTwoError)
 
+  const selfiePath = `${huntId}/${teamOne.team_id}/selfie/${randomUUID()}.jpg`
+  const replacementSelfiePath = `${huntId}/${teamOne.team_id}/selfie/${randomUUID()}.jpg`
+  const { error: selfieUploadError } = await participantOne.storage.from('hunt-photos').upload(selfiePath, Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/AP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAT8Af//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQIBAT8Af//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQMBAT8Af//Z', 'base64'), { contentType: 'image/jpeg' })
+  assert.ifError(selfieUploadError)
+  objectPaths.push(selfiePath)
+  const { data: savedSelfie, error: saveSelfieError } = await participantOne.rpc('submit_team_selfie', {
+    p_hunt_id: huntId,
+    p_team_id: teamOne.team_id,
+    p_storage_path: selfiePath,
+  })
+  assert.ifError(saveSelfieError)
+  assert.equal(savedSelfie?.accepted, true)
+  await expectDenied(
+    () => participantTwo.storage.from('hunt-photos').download(selfiePath),
+    'A different team must not read this team selfie',
+  )
+  const { data: organizerSelfie, error: organizerSelfieError } = await organizer.storage.from('hunt-photos').download(selfiePath)
+  assert.ifError(organizerSelfieError)
+  assert.ok(organizerSelfie)
+  const { data: participantContext, error: participantContextError } = await participantOne.rpc('get_participant_context', { p_hunt_id: huntId })
+  assert.ifError(participantContextError)
+  assert.equal(participantContext.team.selfie.storage_path, selfiePath)
+  const { error: referencedSelfieDeleteError } = await participantOne.storage.from('hunt-photos').remove([selfiePath])
+  assert.ifError(referencedSelfieDeleteError)
+  await assertObjectExists(selfiePath, 'A participant must not delete a selfie referenced by the team')
+  const { error: replacementSelfieUploadError } = await participantOneConcurrent.storage.from('hunt-photos').upload(replacementSelfiePath, Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/AP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAT8Af//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQIBAT8Af//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQMBAT8Af//Z', 'base64'), { contentType: 'image/jpeg' })
+  assert.ifError(replacementSelfieUploadError)
+  objectPaths.push(replacementSelfiePath)
+  const { data: replacedSelfie, error: replaceSelfieError } = await participantOneConcurrent.rpc('submit_team_selfie', {
+    p_hunt_id: huntId,
+    p_team_id: teamOne.team_id,
+    p_storage_path: replacementSelfiePath,
+  })
+  assert.ifError(replaceSelfieError)
+  assert.equal(replacedSelfie.previous_storage_path, selfiePath)
+  const { error: oldSelfieCleanupError } = await participantOne.storage.from('hunt-photos').remove([selfiePath])
+  assert.ifError(oldSelfieCleanupError)
+  await assertObjectMissing(selfiePath, 'The previous selfie should be removable after replacement')
+  objectPaths.splice(objectPaths.indexOf(selfiePath), 1)
+  const { data: refreshedContext, error: refreshedContextError } = await participantOne.rpc('get_participant_context', { p_hunt_id: huntId })
+  assert.ifError(refreshedContextError)
+  assert.equal(refreshedContext.team.selfie.storage_path, replacementSelfiePath)
+  console.log('Team selfie upload, private team visibility, organizer access, context refresh, and safe replacement pass through real Storage HTTP.')
+
   const { data: huntItems, error: itemsError } = await admin.from('hunt_items').select('id,display_order').eq('hunt_id', huntId).order('display_order')
   assert.ifError(itemsError)
   assert.equal(huntItems?.length, 2)
