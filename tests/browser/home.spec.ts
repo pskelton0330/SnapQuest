@@ -50,6 +50,7 @@ async function expectNoHorizontalOverflowAt200Percent(page: import('@playwright/
 }
 let organizerStartCalls = 0
 let organizerInviteRecoveryCalls = 0
+let organizerInviteRotated = false
 let organizerTimingFailure: 'start' | 'end' | 'add' | 'reschedule' | null = null
 let organizerMessages: { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }[] = []
 let chatLoadFailures = 0
@@ -96,6 +97,7 @@ test.beforeEach(async ({ page }) => {
   organizerLobbyStatus = 'scheduled'
   organizerStartCalls = 0
   organizerInviteRecoveryCalls = 0
+  organizerInviteRotated = false
   organizerTimingFailure = null
   organizerMessages = []
   chatLoadFailures = 0
@@ -345,7 +347,14 @@ test.beforeEach(async ({ page }) => {
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/get_hunt_invites')) {
       organizerInviteRecoveryCalls++
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ has_active_invites: true, recoverable: true, invite_codes: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', invite_token: 'a'.repeat(64) }, { team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', invite_token: 'b'.repeat(64) }] }) })
+      const firstToken = organizerInviteRotated ? 'c'.repeat(64) : 'a'.repeat(64)
+      const secondToken = organizerInviteRotated ? 'd'.repeat(64) : 'b'.repeat(64)
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ has_active_invites: true, recoverable: true, invite_codes: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', invite_token: firstToken }, { team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', invite_token: secondToken }] }) })
+      return
+    }
+    if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/regenerate_hunt_invites')) {
+      organizerInviteRotated = true
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', invite_token: 'c'.repeat(64) }, { team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', invite_token: 'd'.repeat(64) }]) })
       return
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/get_hunt_messages')) {
@@ -1387,6 +1396,21 @@ test('organizer can recover active team links after invitation cache is cleared'
   await expect(recoveredCard.locator('input')).toHaveValue(/a{64}$/)
   await expect.poll(() => organizerInviteRecoveryCalls).toBe(2)
   expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('snapquest-invites-')))).toEqual([])
+})
+
+test('organizer replacement refreshes each displayed team link', async ({ page }) => {
+  organizerLobbyMode = true
+  page.on('dialog', dialog => dialog.accept())
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  await page.getByRole('button', { name: 'Open lobby' }).click()
+  await expect(page.locator('.invite-card').filter({ hasText: 'Team Cedar' }).locator('input')).toHaveValue(/a{64}$/)
+
+  await page.getByRole('button', { name: 'Replace codes' }).click()
+
+  await expect(page.locator('.invite-card').filter({ hasText: 'Team Cedar' }).locator('input')).toHaveValue(/c{64}$/)
+  await expect(page.locator('.invite-card').filter({ hasText: 'Team Maple' }).locator('input')).toHaveValue(/d{64}$/)
 })
 
 test('organizer can join an assigned team and return to hunt management', async ({ page }) => {
