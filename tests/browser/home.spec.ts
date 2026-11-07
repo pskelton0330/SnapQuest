@@ -1343,6 +1343,13 @@ test('hunt chat offers retry after read failure and keeps a message after send f
   await expect(page.getByRole('heading', { name: 'Team lobby' })).toBeVisible()
   const chatError = page.locator('.hunt-chat-error')
   await expect(chatError).toContainText('Messages could not be refreshed')
+  await expect.poll(() => auditReports.some(report => {
+    const details = report.p_details as Record<string, unknown> | undefined
+    return details?.stage === 'chat_load_failed' && details.app === 'organizer_web'
+  })).toBe(true)
+  const loadFailure = auditReports.find(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'chat_load_failed')
+  expect(loadFailure?.p_outcome).toBe('failure')
+  expect(Object.keys(loadFailure?.p_details as Record<string, unknown>).sort()).toEqual(['app', 'client_report', 'operation_id', 'stage'])
   await chatError.getByRole('button', { name: 'Retry' }).click()
   await expect(chatError).toHaveCount(0)
 
@@ -1355,6 +1362,9 @@ test('hunt chat offers retry after read failure and keeps a message after send f
     const details = report.p_details as Record<string, unknown> | undefined
     return details?.stage === 'chat_send_failed' && details?.app === 'organizer_web'
   })).toBe(true)
+  const sendFailure = auditReports.find(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'chat_send_failed')
+  expect(sendFailure?.p_outcome).toBe('failure')
+  expect(Object.keys(sendFailure?.p_details as Record<string, unknown>).sort()).toEqual(['app', 'client_report', 'operation_id', 'stage'])
   const diagnostics = page.locator('.hunt-diagnostics')
   await diagnostics.locator('summary').click()
   await diagnostics.getByRole('button', { name: 'Refresh' }).click()
