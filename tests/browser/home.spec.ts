@@ -49,6 +49,7 @@ async function expectNoHorizontalOverflowAt200Percent(page: import('@playwright/
   expect(dimensions.content, `${route} horizontal overflow at 200% text size: ${JSON.stringify(dimensions.offenders)}`).toBeLessThanOrEqual(dimensions.viewport)
 }
 let organizerStartCalls = 0
+let organizerInviteRecoveryCalls = 0
 let organizerTimingFailure: 'start' | 'end' | 'add' | 'reschedule' | null = null
 let organizerMessages: { id: string; sender_name: string; sender_role: 'organizer' | 'participant'; body: string; created_at: string }[] = []
 let chatLoadFailures = 0
@@ -94,6 +95,7 @@ test.beforeEach(async ({ page }) => {
   organizerReviewDecision = 'pending'
   organizerLobbyStatus = 'scheduled'
   organizerStartCalls = 0
+  organizerInviteRecoveryCalls = 0
   organizerTimingFailure = null
   organizerMessages = []
   chatLoadFailures = 0
@@ -342,6 +344,7 @@ test.beforeEach(async ({ page }) => {
       return
     }
     if (organizerLobbyMode && request.url().includes('/rest/v1/rpc/get_hunt_invites')) {
+      organizerInviteRecoveryCalls++
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ has_active_invites: true, recoverable: true, invite_codes: [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', invite_token: 'a'.repeat(64) }, { team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', invite_token: 'b'.repeat(64) }] }) })
       return
     }
@@ -1357,6 +1360,33 @@ test('organizer can copy a team invitation from the QR code card', async ({ page
   await inviteCard.getByRole('button', { name: 'Copy invite link' }).click()
   await expect(inviteCard.getByRole('button', { name: 'Copied!' })).toBeVisible()
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(expectedUrl)
+})
+
+test('organizer can recover active team links after invitation cache is cleared', async ({ page }) => {
+  organizerLobbyMode = true
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  await page.getByRole('button', { name: 'Open lobby' }).click()
+  const inviteCard = page.locator('.invite-card').filter({ hasText: 'Team Cedar' })
+  await expect(inviteCard).toBeVisible()
+  await expect(inviteCard.locator('input')).toHaveValue(/a{64}$/)
+  await expect.poll(() => organizerInviteRecoveryCalls).toBe(1)
+
+  await page.evaluate(() => {
+    const authSession = localStorage.getItem('sb-test-project-auth-token')
+    localStorage.clear()
+    if (authSession) localStorage.setItem('sb-test-project-auth-token', authSession)
+  })
+  await page.reload()
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  await page.getByRole('button', { name: 'Open lobby' }).click()
+
+  const recoveredCard = page.locator('.invite-card').filter({ hasText: 'Team Cedar' })
+  await expect(recoveredCard).toBeVisible()
+  await expect(recoveredCard.locator('input')).toHaveValue(/a{64}$/)
+  await expect.poll(() => organizerInviteRecoveryCalls).toBe(2)
+  expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('snapquest-invites-')))).toEqual([])
 })
 
 test('organizer can join an assigned team and return to hunt management', async ({ page }) => {
