@@ -358,7 +358,7 @@ try {
       (error) => { clearTimeout(timeout); reject(error) },
     )
   })
-  function watchTeamIdentity(client, audience) {
+  function watchTeamIdentity(client, audience, expectedName) {
     let markSubscribed
     let rejectSubscription
     const subscribed = new Promise((resolve, reject) => { markSubscribed = resolve; rejectSubscription = reject })
@@ -374,7 +374,9 @@ try {
         if (payload.extension === 'postgres_changes' && payload.status === 'ok') markReplicationReady()
         else if (payload.status === 'error' || payload.status === 'timeout') rejectReplicationReady(new Error(`${audience} team identity replication failed: ${payload.message}`))
       })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'teams', filter: `id=eq.${teamOne.team_id}` }, (payload) => receiveUpdate(payload.new))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'teams', filter: `id=eq.${teamOne.team_id}` }, (payload) => {
+        if (payload.new?.name === expectedName) receiveUpdate(payload.new)
+      })
       .subscribe((status, error) => {
         console.log(`Team identity Realtime ${audience} status: ${status}${error ? ` (${JSON.stringify(error)})` : ''}`)
         if (status === 'SUBSCRIBED') markSubscribed()
@@ -382,11 +384,11 @@ try {
       })
     return { channel, subscribed, replicationReady, update }
   }
-  const participantTeamRealtime = watchTeamIdentity(participantOne, 'participant device one')
+  const firstRealtimeTeamName = `CI Live ${randomUUID().slice(0, 8)}`
+  const participantTeamRealtime = watchTeamIdentity(participantOne, 'participant device one', firstRealtimeTeamName)
   try {
     await withTimeout(participantTeamRealtime.subscribed, 'Participant team identity subscription')
     await withTimeout(participantTeamRealtime.replicationReady, 'Participant team identity replication readiness')
-    const firstRealtimeTeamName = `CI Live ${randomUUID().slice(0, 8)}`
     const { error: firstTeamNameError } = await organizer.rpc('set_team_name', {
       p_hunt_id: huntId,
       p_team_id: teamOne.team_id,
@@ -403,7 +405,8 @@ try {
       p_name: missedRealtimeTeamName,
     })
     assert.ifError(offlineTeamNameError)
-    const reconnectedTeamRealtime = watchTeamIdentity(participantOneConcurrent, 'participant reconnect')
+    const finalRealtimeTeamName = `CI Restored ${randomUUID().slice(0, 8)}`
+    const reconnectedTeamRealtime = watchTeamIdentity(participantOneConcurrent, 'participant reconnect', finalRealtimeTeamName)
     try {
       await withTimeout(reconnectedTeamRealtime.subscribed, 'Reconnected participant team identity subscription')
       await withTimeout(reconnectedTeamRealtime.replicationReady, 'Reconnected participant team identity replication readiness')
@@ -414,7 +417,6 @@ try {
         .single()
       assert.ifError(reconciledTeamError)
       assert.equal(reconciledTeam.name, missedRealtimeTeamName, 'A reconnecting device must reconcile team state changed while it was offline')
-      const finalRealtimeTeamName = `CI Restored ${randomUUID().slice(0, 8)}`
       const { error: restoredTeamNameError } = await organizer.rpc('set_team_name', {
         p_hunt_id: huntId,
         p_team_id: teamOne.team_id,
