@@ -9,6 +9,7 @@ import HuntChat from '../../components/HuntChat'
 import TeamLobby from '../../components/TeamLobby'
 import InviteLinksPanel from '../../components/InviteLinksPanel'
 import HuntDiagnostics from '../../components/HuntDiagnostics'
+import { validateHuntDraft } from '../../lib/huntEditor'
 
 type OrganizerWorkspaceProps = { session: Session; onSignOut: () => void; initialHuntId?: string }
 type Organizer = { id: string }
@@ -193,10 +194,12 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   }
 
   function addDraftItem() {
+    if (draftItems.length >= 100) { setHuntMessage('A hunt can contain up to 100 photo challenges.'); return }
     setDraftItems(current => [...current, { key: crypto.randomUUID(), title: '', description: '', pointValue: 1 }])
   }
 
   function addLibraryChallenge(item: LibraryItem) {
+    if (draftItems.length >= 100) { setHuntMessage('A hunt can contain up to 100 photo challenges.'); return }
     setDraftItems(current => current.some(draft => draft.libraryItemId === item.id) ? current : [...current, {
       key: crypto.randomUUID(), title: item.title, description: item.description ?? '', pointValue: 1, libraryItemId: item.id,
     }])
@@ -213,9 +216,13 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     if (!huntSchemaReady) { setHuntMessage('The venue-hunt database setup is not active yet.'); return }
     if (!venue.trim()) { setHuntMessage('Enter a venue before adding the hunt list.'); return }
     const readyItems = draftItems.filter(item => item.title.trim())
-    if (!readyItems.length) { setHuntMessage('Add at least one photo challenge.'); return }
     const title = huntTitle.trim() || `${venue.trim()} Photo Hunt`
-    if (title.length > 120) { setHuntMessage('The hunt title must be 120 characters or fewer.'); return }
+    const validationError = validateHuntDraft({
+      id: editingDraftId || 'new-draft', title, venue, description: '', creatorId: '', creatorName: '', visibility: 'personal',
+      rules: selectedRules, defaultDuration: huntDuration, createdAt: '',
+      challenges: readyItems.map(item => ({ id: item.key, title: item.title, description: item.description, points: item.pointValue })),
+    })
+    if (validationError) { setHuntMessage(validationError); return }
     setHuntSaving(true)
     try {
       const payload = {

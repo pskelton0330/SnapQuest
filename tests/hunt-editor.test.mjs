@@ -25,14 +25,17 @@ test('reordering keeps identity, instructions and points together and respects b
   assert.equal(moveChallenge(items,0,-1),items)
   assert.equal(moveChallenge(items,items.length-1,1),items)
 })
-test('review validation catches empty challenges, fractional points and duration boundaries',()=>{
+test('shared hunt validation catches missing or excessive challenges, bad points, rules and duration',()=>{
   const hunt=sampleWorkspace().hunts[0]
   assert.equal(validateHuntDraft(hunt),null)
   assert.ok(validateHuntDraft({...hunt,challenges:[]}))
+  assert.ok(validateHuntDraft({...hunt,challenges:Array.from({length:101},(_,id)=>({...hunt.challenges[0],id:String(id)}))}))
   assert.equal(validateHuntDraft({...hunt,challenges:[]},true),null)
   assert.ok(validateHuntDraft({...hunt,defaultDuration:4}))
   assert.ok(validateHuntDraft({...hunt,challenges:[{...hunt.challenges[0],points:1.5}]}))
   assert.ok(validateHuntDraft({...hunt,challenges:[{...hunt.challenges[0],title:'  '}]}))
+  assert.ok(validateHuntDraft({...hunt,rules:Array(31).fill('rule')}))
+  assert.ok(validateHuntDraft({...hunt,challenges:[{...hunt.challenges[0],description:'x'.repeat(1001)}]}))
 })
 test('discovery combines title, venue and creator filters and uses completed games only for popularity',()=>{
   const {hunts,games}=sampleWorkspace()
