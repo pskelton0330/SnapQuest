@@ -4,8 +4,8 @@ Updated November 6, 2026. These labels describe the whole requirement, not just 
 
 ## Current verification snapshot (November 6)
 
-- The latest fully verified application-code release is `73516f1`; GitHub Actions run `42317791859` passed, and live `build-info.json` matched that commit. It includes the participant home/history fixes, explicit chat offline/reconnect feedback, and preservation of loaded chat history during polling.
-- The current local suite has 79 passing unit/database tests and 80 passing desktop/mobile browser cases. Lint and the production build pass; the JavaScript entry remains below the enforced 150 KiB gzip budget. The last deployed application release passed 78 browser cases; two new rescheduling cases are awaiting GitHub Actions.
+- The latest fully verified Pages build is `be4510`; GitHub Actions run `42319097855` passed, and live `build-info.json` matched that commit. It verifies organizer scheduled-hunt rescheduling plus the chat offline/reconnect and loaded-history refresh fixes.
+- The current suite has 79 passing unit/database tests and 80 passing desktop/mobile browser cases. Lint and the production build pass; the JavaScript entry remains below the enforced 150 KiB gzip budget. All 80 browser cases passed in workflow `42319097855` on the deployed source.
 - Physical-device, screen-reader, hosted Storage HTTP, multi-session concurrency, and full authorization acceptance are still separate gates. The historical AT-01 through AT-36 table remains NOT RUN for physical-device acceptance; mock-browser and PGlite evidence does not satisfy those rows.
 
 The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. This checklist supersedes the older implementation review where requirements conflict; that review remains historical evidence.
