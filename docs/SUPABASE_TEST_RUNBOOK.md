@@ -39,7 +39,7 @@ The result must be `true` before testing progress bars.
 
 ## 3. Prepare an isolated test project
 
-Use a dedicated Supabase project with synthetic accounts and hunts for hosted Auth, Storage HTTP, PostgreSQL concurrency, RLS, and Realtime tests. Confirm the project name and reference in the dashboard before running SQL. Do not use the production project for destructive, race, or migration experiments.
+Use a dedicated Supabase project or a data-less preview branch with synthetic accounts and hunts for hosted Auth, Storage HTTP, PostgreSQL concurrency, RLS, and Realtime tests. Confirm the project name and reference in the dashboard before running SQL. Do not use the production project for destructive, race, or migration experiments. Supabase currently bills preview branches by service usage; its [branching usage guide](https://supabase.com/docs/guides/platform/manage-your-usage/branching) lists Micro compute starting at $0.01344/hour and says branching compute is not covered by the spend cap. Check current pricing and delete the test branch when the acceptance run is complete.
 
 For a new test project, apply migrations through 024 in filename order using that project’s SQL Editor. Open the [Supabase projects dashboard](https://supabase.com/dashboard/projects), select the test project, and choose **SQL Editor**. Do not use `supabase db push` or `supabase migration up --remote` while 025 is pending: both apply all pending migrations. Apply migration 025 only after the owner approves the 365-day policy, then validate its exact prune behavior with synthetic expired audit rows in the test project before any production application. For an existing project, compare its migration history and schema first; never rerun migrations blindly.
 
