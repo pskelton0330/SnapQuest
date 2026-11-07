@@ -21,6 +21,7 @@ assert.equal(bucket?.public, false, 'hunt-photos must remain private')
 console.log('Private hunt-photos bucket is available through Storage HTTP.')
 
 const identities = []
+const testCredentials = new Map()
 const objectPaths = []
 
 async function createIdentity(label) {
@@ -29,11 +30,25 @@ async function createIdentity(label) {
   const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true })
   assert.ifError(error)
   identities.push(data.user.id)
+  testCredentials.set(data.user.id, { email, password })
   const client = createClient(url, anonKey, authOptions)
   const { data: session, error: loginError } = await client.auth.signInWithPassword({ email, password })
   assert.ifError(loginError)
   assert.ok(session.session, `${label} should receive an authenticated session`)
   return client
+}
+
+async function signInSameIdentityOnFreshClient(sourceClient) {
+  const { data: sourceUser, error: sourceUserError } = await sourceClient.auth.getUser()
+  assert.ifError(sourceUserError)
+  const credentials = testCredentials.get(sourceUser.user.id)
+  assert.ok(credentials, 'Synthetic test identity credentials should be available for a fresh session')
+  const freshClient = createClient(url, anonKey, authOptions)
+  const { data, error } = await freshClient.auth.signInWithPassword(credentials)
+  assert.ifError(error)
+  assert.equal(data.user.id, sourceUser.user.id, 'Fresh client should authenticate the same organizer identity')
+  assert.ok(data.session)
+  return freshClient
 }
 
 async function expectDenied(operation, message) {
@@ -222,6 +237,14 @@ try {
     new Set(configuredTeams.map((team) => team.invite_token)),
     'Organizer recovery should return the currently active invitation tokens',
   )
+  const organizerFreshDevice = await signInSameIdentityOnFreshClient(organizer)
+  const { data: recoveredOnFreshDevice, error: freshDeviceRecoveryError } = await organizerFreshDevice.rpc('get_hunt_invites', { p_hunt_id: huntId })
+  assert.ifError(freshDeviceRecoveryError)
+  assert.deepEqual(
+    new Set(recoveredOnFreshDevice.invite_codes.map((invite) => invite.invite_token)),
+    new Set(configuredTeams.map((team) => team.invite_token)),
+    'A fresh organizer session should recover the same active invitations without prior device storage',
+  )
   const { error: outsiderInviteRecoveryError } = await outsider.rpc('get_hunt_invites', { p_hunt_id: huntId })
   assert.ok(outsiderInviteRecoveryError, 'An outsider must not recover organizer invitation links')
   const { data: rotatedInvites, error: rotateInvitesError } = await organizer.rpc('regenerate_hunt_invites', { p_hunt_id: huntId })
@@ -243,7 +266,14 @@ try {
     new Set(rotatedInvites.map((invite) => invite.invite_token)),
     'Organizer recovery should return only the replacement links after rotation',
   )
-  console.log('Invitation recovery is organizer-only; rotation revokes old links and exposes only the replacements.')
+  const { data: freshDeviceRotatedInvites, error: freshDeviceRotatedRecoveryError } = await organizerFreshDevice.rpc('get_hunt_invites', { p_hunt_id: huntId })
+  assert.ifError(freshDeviceRotatedRecoveryError)
+  assert.deepEqual(
+    new Set(freshDeviceRotatedInvites.invite_codes.map((invite) => invite.invite_token)),
+    new Set(rotatedInvites.map((invite) => invite.invite_token)),
+    'A fresh organizer session should recover only rotated invitations',
+  )
+  console.log('Invitation recovery works in a fresh authenticated organizer session; rotation revokes old links and exposes only the replacements.')
 
   const selfiePath = `${huntId}/${teamOne.team_id}/selfie/${randomUUID()}.jpg`
   const replacementSelfiePath = `${huntId}/${teamOne.team_id}/selfie/${randomUUID()}.jpg`
