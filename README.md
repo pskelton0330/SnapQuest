@@ -5,6 +5,7 @@ SnapQuest is a responsive React, TypeScript, and Vite app backed by Supabase Aut
 - **Live app:** [https://pskelton0330.github.io/SnapQuest/](https://pskelton0330.github.io/SnapQuest/)
 - **GitHub repository:** [https://github.com/pskelton0330/SnapQuest](https://github.com/pskelton0330/SnapQuest)
 - **Current implementation, release evidence, and open acceptance gaps:** [PRD v2 checklist](docs/PRD_V2_CHECKLIST.md), [test evidence](docs/PRD_V2_TEST_EVIDENCE.md), and [improvement backlog](docs/reviews/2026-11-06-improvement-backlog.md).
+- **Privacy and data lifecycle proposal:** [docs/PRIVACY_LIFECYCLE_POLICY.md](docs/PRIVACY_LIFECYCLE_POLICY.md).
 
 ## What is implemented
 

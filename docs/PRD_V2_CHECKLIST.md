@@ -46,7 +46,7 @@ The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. T
 | POST-02 | missing | No real montage lifecycle, preview, download or user-triggered share. |
 | POST-03 | missing | No real montage lifecycle, preview, download or user-triggered share. |
 | POST-04 | partial | Existing private game/media permissions; no video export/share flow or disclosure. |
-| POST-05 | missing | No retention/access policy fields, actual dates or explicit unset-policy UI. |
+| POST-05 | missing | No retention/access policy fields, actual dates or explicit unset-policy UI. The [privacy/lifecycle proposal](PRIVACY_LIFECYCLE_POLICY.md) records the current gap; owner-approved durations and an implemented deletion workflow are still required. |
 | VIDEO-01 | missing | Required version-one scope. No renderer, real reel, cleared catalog or coordinated deletion/expiry model. Runtime, profile, rights and policy gates remain. |
 | VIDEO-02 | partial | SnapQuest frontend branding exists; shared renderer branding configuration missing. |
 | VIDEO-03 | missing | Required version-one scope. No renderer, real reel, cleared catalog or coordinated deletion/expiry model. Runtime, profile, rights and policy gates remain. |
@@ -62,7 +62,7 @@ The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. T
 | SEC-02 | implemented-unverified | Private bucket/policies and short-lived URLs in code. Storage HTTP/deletion/revocation tests not performed. |
 | SEC-03 | partial | SQL validation exists; public abuse controls and expensive-render rate limiting not complete. |
 | SEC-04 | verified | Local PGlite owner/participant/public-template boundaries pass. No claim of live policy review, rival-progress access tests or full security acceptance. |
-| PRIV-01 | partial | Minimal guest name/identity design, venue rules, semantic forms and private media exist. Legal/privacy, physical device and assistive-technology review outstanding. |
+| PRIV-01 | partial | Minimal guest identity design, venue rules, semantic forms and private media exist. [Privacy/lifecycle proposal](PRIVACY_LIFECYCLE_POLICY.md) maps current data/access and deletion gaps; owner decisions on retention, erasure, backups, and user controls remain, along with legal/privacy, physical-device, and assistive-technology review. |
 | A11Y-01 | partial | Minimal guest name/identity design, venue rules, semantic forms and private media exist. Legal/privacy, physical device and assistive-technology review outstanding. |
 | MIG-01 | verified | Entire v2.0 read; repository/migrations/tests inspected; this batch assessment and local evidence recorded. |
 | MIG-02 | partial | Read-only Supabase CLI migration history check on November 6 confirms production migrations `202610280001` through `202611060022` are applied; `202611060023` and `202611060024` are source-only and unapplied. Migration 023 awaits authorization because it prunes expired audit rows; 024 is behind it in the migration chain. |
