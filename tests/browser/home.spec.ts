@@ -11,6 +11,10 @@ let rollbackDeleteRequests = 0
 let organizerReviewMode = false
 let organizerTieMode = false
 let organizerLobbyMode = false
+let organizerDraftMode = false
+let organizerDraft: { id: string; title: string; venue: string; rules: string[]; duration_minutes: number; status: 'draft'; created_at: string } | null = null
+let organizerDraftItems: { id: string; title_snapshot: string; description_snapshot: string | null; point_value: number; display_order: number; library_item_id: string | null }[] = []
+let savedDraftPayloads: Record<string, unknown>[] = []
 let organizerReviewStatus: 'review' | 'completed' = 'review'
 let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
 let organizerLobbyStatus: 'scheduled' | 'active' | 'review' = 'scheduled'
@@ -36,6 +40,10 @@ test.beforeEach(async ({ page }) => {
   organizerReviewMode = false
   organizerTieMode = false
   organizerLobbyMode = false
+  organizerDraftMode = false
+  organizerDraft = null
+  organizerDraftItems = []
+  savedDraftPayloads = []
   organizerReviewStatus = 'review'
   organizerReviewDecision = 'pending'
   organizerLobbyStatus = 'scheduled'
@@ -106,6 +114,30 @@ test.beforeEach(async ({ page }) => {
     }
     if (request.url().includes('/rest/v1/organizers')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '11111111-1111-4111-8111-111111111111' }]) })
+      return
+    }
+    if (organizerDraftMode && request.url().includes('/rest/v1/rpc/create_hunt_draft')) {
+      const payload = request.postDataJSON() as Record<string, unknown>
+      savedDraftPayloads.push(payload)
+      organizerDraft = { id: '33333333-3333-4333-8333-333333333333', title: String(payload.p_title), venue: String(payload.p_venue), rules: payload.p_rules as string[], duration_minutes: Number(payload.p_duration_minutes), status: 'draft', created_at: '2026-11-06T12:00:00Z' }
+      organizerDraftItems = (payload.p_items as { title: string; description: string | null; pointValue: number; libraryItemId?: string }[]).map((item, index) => ({ id: `77777777-7777-4777-8777-${String(index + 1).padStart(12, '0')}`, title_snapshot: item.title, description_snapshot: item.description, point_value: item.pointValue, display_order: index, library_item_id: item.libraryItemId ?? null }))
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(organizerDraft.id) })
+      return
+    }
+    if (organizerDraftMode && request.url().includes('/rest/v1/rpc/update_hunt_draft')) {
+      const payload = request.postDataJSON() as Record<string, unknown>
+      savedDraftPayloads.push(payload)
+      organizerDraft = { id: String(payload.p_hunt_id), title: String(payload.p_title), venue: String(payload.p_venue), rules: payload.p_rules as string[], duration_minutes: Number(payload.p_duration_minutes), status: 'draft', created_at: organizerDraft?.created_at ?? '2026-11-06T12:00:00Z' }
+      organizerDraftItems = (payload.p_items as { title: string; description: string | null; pointValue: number; libraryItemId?: string }[]).map((item, index) => ({ id: `77777777-7777-4777-8777-${String(index + 1).padStart(12, '0')}`, title_snapshot: item.title, description_snapshot: item.description, point_value: item.pointValue, display_order: index, library_item_id: item.libraryItemId ?? null }))
+      await route.fulfill({ status: 200, contentType: 'application/json', body: 'null' })
+      return
+    }
+    if (organizerDraftMode && request.url().includes('/rest/v1/hunts') && request.url().includes('organizer_id=')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(organizerDraft ? [organizerDraft] : []) })
+      return
+    }
+    if (organizerDraftMode && request.url().includes('/rest/v1/hunts') && request.url().includes('id=eq.')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: organizerDraft ? JSON.stringify([organizerDraft]) : '[]' })
       return
     }
     if ((organizerReviewMode || organizerLobbyMode) && request.url().includes('/rest/v1/hunts') && request.url().includes('organizer_id=')) {
@@ -240,6 +272,10 @@ test.beforeEach(async ({ page }) => {
       return
     }
     if (request.url().includes('/rest/v1/hunt_items')) {
+      if (organizerDraftMode) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(organizerDraftItems) })
+        return
+      }
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '77777777-7777-4777-8777-777777777777', title_snapshot: 'A red leaf', description_snapshot: 'Find one on the trail.', point_value: 10, display_order: 1 }, { id: '88888888-8888-4888-8888-888888888888', title_snapshot: 'A park sign', description_snapshot: null, point_value: 5, display_order: 2 }]) })
       return
     }
@@ -671,6 +707,50 @@ test('organizer hunt editor fits phone widths, passes axe, and reorders challeng
   await page.getByRole('button', { name: 'Move item 1 down' }).click()
   await expect(titles.nth(0)).toHaveValue('Second challenge')
   await expect(titles.nth(1)).toHaveValue('First challenge')
+})
+
+test('organizer can save, reopen, edit, and save a production draft', async ({ page }) => {
+  organizerDraftMode = true
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'Create a hunt' }).first().click()
+  await page.getByLabel('Venue name').fill('Riverside Park')
+  await page.getByLabel(/Hunt title/).fill('Saturday Adventure')
+  await page.getByRole('button', { name: 'Add first item' }).click()
+  const challengeTitles = page.getByLabel('What should they find?')
+  await challengeTitles.first().fill('Find a red leaf')
+  await page.getByRole('button', { name: 'Add item' }).click()
+  await challengeTitles.nth(1).fill('Find a park sign')
+  await page.getByRole('button', { name: 'Save draft hunt' }).click()
+
+  const huntCard = page.getByRole('article').filter({ hasText: 'Saturday Adventure' })
+  await expect(huntCard).toBeVisible()
+  expect(savedDraftPayloads).toHaveLength(1)
+  expect(savedDraftPayloads[0].p_title).toBe('Saturday Adventure')
+  expect(savedDraftPayloads[0].p_venue).toBe('Riverside Park')
+  expect(savedDraftPayloads[0].p_items).toEqual([
+    { title: 'Find a red leaf', description: null, pointValue: 1, libraryItemId: undefined },
+    { title: 'Find a park sign', description: null, pointValue: 1, libraryItemId: undefined },
+  ])
+
+  await huntCard.getByRole('button', { name: 'Edit draft' }).click()
+  await expect(page.getByRole('heading', { name: 'Edit your draft hunt' })).toBeVisible()
+  await expect(page.getByLabel('Venue name')).toHaveValue('Riverside Park')
+  await expect(challengeTitles.nth(0)).toHaveValue('Find a red leaf')
+  await page.getByLabel(/Hunt title/).fill('Saturday Family Adventure')
+  await challengeTitles.nth(0).fill('Find a bright red leaf')
+  await page.getByRole('button', { name: 'Move item 2 up' }).click()
+  await expect(challengeTitles.nth(0)).toHaveValue('Find a park sign')
+  await page.getByRole('button', { name: 'Save draft changes' }).click()
+
+  await expect(page.getByRole('article').filter({ hasText: 'Saturday Family Adventure' })).toBeVisible()
+  expect(savedDraftPayloads).toHaveLength(2)
+  expect(savedDraftPayloads[1].p_hunt_id).toBe(organizerDraft?.id)
+  expect(savedDraftPayloads[1].p_title).toBe('Saturday Family Adventure')
+  expect(savedDraftPayloads[1].p_items).toEqual([
+    { title: 'Find a park sign', description: null, pointValue: 1, libraryItemId: undefined },
+    { title: 'Find a bright red leaf', description: null, pointValue: 1, libraryItemId: undefined },
+  ])
 })
 
 test('organizer lobby shows the team roster and unread chat count without moving the scroll', async ({ page }) => {
