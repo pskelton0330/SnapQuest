@@ -41,7 +41,7 @@ jobs:
         run: supabase start -x studio,edge-runtime,logflare,vector,supavisor,postgres-meta
 
       - name: Export local Supabase connection settings
-        run: supabase status --output env >> "$GITHUB_ENV"
+        run: supabase status --output env | sed -E 's/^([^=]+)="(.*)"$/\1=\2/' >> "$GITHUB_ENV"
 
       - name: Verify app schema and storage bucket
         run: node scripts/verify-supabase-local.mjs
