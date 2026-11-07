@@ -8,7 +8,7 @@ import HuntChat from '../../components/HuntChat'
 import { celebrationFilename, renderWinnerCelebrationCard, winnerCaption } from '../../lib/celebrationCard'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import { normalizeFinalScores } from '../../lib/scoring'
-import { reportOperation } from '../../lib/operationLog'
+import { reportOperation, reportOperationFailure } from '../../lib/operationLog'
 
 type ParticipantGameProps = { huntId: string; session: Session }
 type TeamMate = { id: string; display_name: string }
@@ -360,7 +360,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
         void reportOperation(huntId, operationId, 'selfie_preview_unavailable')
       }
     } catch (uploadError) {
-      void reportOperation(huntId, operationId, uncertain ? 'selfie_reconciliation_uncertain' : uploaded ? 'selfie_acceptance_failed' : 'selfie_upload_failed', 'failure')
+      reportOperationFailure(huntId, operationId, uncertain ? 'selfie_reconciliation_uncertain' : uploaded ? 'selfie_acceptance_failed' : 'selfie_upload_failed', uploadError)
       if (uploaded && !committed && !uncertain) {
         const storage = browserStorage()
         const removed = await removePhotoOrQueueCleanup(storage, huntId, context.team.id, storagePath,
@@ -476,7 +476,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       } }))
       if (previewUnavailable) { setUploadErrors(current => ({ ...current, [item.id]: 'Submitted successfully, but the preview could not load yet.' })); void reportOperation(huntId, operationId, 'photo_preview_unavailable') }
     } catch (uploadError) {
-      void reportOperation(huntId, operationId, uncertain ? 'photo_reconciliation_uncertain' : uploaded ? 'photo_acceptance_failed' : 'photo_upload_failed', 'failure')
+      reportOperationFailure(huntId, operationId, uncertain ? 'photo_reconciliation_uncertain' : uploaded ? 'photo_acceptance_failed' : 'photo_upload_failed', uploadError)
       if (storagePath && !uploadRejected && !accepted && !uncertain) {
         const storage = browserStorage()
         const removed = await removePhotoOrQueueCleanup(storage, huntId, context.team.id, storagePath,
@@ -492,7 +492,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     if (!supabase) return
     setError('')
     const { error: voteError } = await supabase.rpc('cast_hunt_vote', { p_hunt_id: huntId, p_hunt_item_id: itemId, p_selected_team_id: selectedTeamId })
-    if (voteError) { setError(voteError.message); void reportOperation(huntId, crypto.randomUUID(), 'vote_failed', 'failure') }
+    if (voteError) { setError(voteError.message); reportOperationFailure(huntId, crypto.randomUUID(), 'vote_failed', voteError) }
     else await loadReviewGallery()
   }
 

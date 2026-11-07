@@ -736,6 +736,11 @@ test('photo upload reports a Storage policy denial without calling the submissio
   const denialReport = auditReports.find(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'photo_upload_failed')
   expect(denialReport?.p_outcome).toBe('failure')
   expect(Object.keys(denialReport?.p_details as Record<string, unknown>).sort()).toEqual(['app', 'client_report', 'operation_id', 'stage'])
+  await expect.poll(() => auditReports.some(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'authorization_denied')).toBe(true)
+  const authorizationReport = auditReports.find(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'authorization_denied')
+  expect(authorizationReport?.p_outcome).toBe('failure')
+  expect(authorizationReport?.p_details).toMatchObject({ client_report: true, app: 'participant_web', stage: 'authorization_denied' })
+  expect(JSON.stringify(authorizationReport?.p_details)).not.toContain('row-level security')
 })
 
 test('photo upload rolls back the unreferenced Storage object after the submission RPC rejects', async ({ page }) => {

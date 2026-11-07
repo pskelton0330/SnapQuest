@@ -681,6 +681,7 @@ try {
   assert.ifError(clientAuditError)
   assert.ok(clientAuditId)
   const failureTraceCases = [
+    { actor: participantOne, app: 'participant_web', stage: 'authorization_denied' },
     { actor: participantOne, app: 'participant_web', stage: 'photo_preview_unavailable' },
     { actor: organizer, app: 'organizer_web', stage: 'chat_send_failed' },
     { actor: organizer, app: 'organizer_web', stage: 'review_decision_failed' },

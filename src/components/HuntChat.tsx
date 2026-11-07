@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { LoaderCircle, MessageCircle, Send } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { reportOperation } from '../lib/operationLog'
+import { reportOperationFailure } from '../lib/operationLog'
 import type { OperationApp } from '../lib/operationLog'
 import { countNewMessages } from '../lib/chatMessages'
 
@@ -43,7 +43,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
     }
     const { data, error: loadError } = result
     if (id !== requestId.current) return
-    if (loadError) { void reportOperation(huntId, crypto.randomUUID(), 'chat_load_failed', 'failure', app); setError('Messages could not be refreshed. Check your connection and retry.'); setErrorAction('load'); setLoading(false); setLoadingOlder(false); return }
+    if (loadError) { reportOperationFailure(huntId, crypto.randomUUID(), 'chat_load_failed', loadError, app); setError('Messages could not be refreshed. Check your connection and retry.'); setErrorAction('load'); setLoading(false); setLoadingOlder(false); return }
     const rows = Array.isArray(data) ? data as HuntMessage[] : []
     const page = older ? (rows.length > 100 ? rows.slice(1) : rows) : rows.slice(-100)
     const newHunt = !older && loadedHuntId.current !== huntId
@@ -106,7 +106,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
     const operationId = crypto.randomUUID()
     setSending(true); setError(''); setErrorAction(null)
     const { error: sendError } = await supabase.rpc('send_hunt_message', { p_hunt_id: huntId, p_body: body })
-    if (sendError) { setError('Message could not be confirmed. Check the chat for your message before trying again; your draft is still here.'); void reportOperation(huntId, operationId, 'chat_send_failed', 'failure', app) }
+    if (sendError) { setError('Message could not be confirmed. Check the chat for your message before trying again; your draft is still here.'); reportOperationFailure(huntId, operationId, 'chat_send_failed', sendError, app) }
     else { setDraft(''); setErrorAction(null); await loadMessages() }
     setSending(false)
   }

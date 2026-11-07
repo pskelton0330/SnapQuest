@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { calculateTeamScores, normalizeFinalScores, normalizeScoringVotes, winningTeams as findWinningTeams, type ScoringSubmission } from '../../lib/scoring'
 import { celebrationFilename, renderWinnerCelebrationCard, winnerCaption } from '../../lib/celebrationCard'
 import { copyTextToClipboard } from '../../lib/clipboard'
-import { reportOperation } from '../../lib/operationLog'
+import { reportOperation, reportOperationFailure } from '../../lib/operationLog'
 
 type HuntReviewProps = { huntId: string; title: string; status: string; onBack: () => void; onChanged: () => void }
 type ReviewData = {
@@ -37,19 +37,21 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     if (!supabase) return
     const requestId = ++galleryRequestId.current
     const { data: raw, error: loadError } = await supabase.rpc('get_hunt_review_gallery', { p_hunt_id: huntId })
-    if (loadError) { if (requestId === galleryRequestId.current) setError(loadError.message); return }
+    if (loadError) { if (requestId === galleryRequestId.current) setError(loadError.message); reportOperationFailure(huntId, crypto.randomUUID(), 'review_gallery_load_failed', loadError, 'organizer_web'); return }
     const next = raw as Omit<ReviewData, 'submissions'> & { submissions: ReviewData['submissions'] }
     let previewUnavailable = false
+    let previewFailure: unknown = null
     async function signedUrl(path: string) {
       const cached = signedUrlCache.current.get(path)
       if (cached && cached.expiresAt > Date.now() + 30_000) return cached.url
       try {
         const { data: signed, error: signError } = await supabase!.storage.from('hunt-photos').createSignedUrl(path, 300)
-        if (signError || !signed?.signedUrl) { previewUnavailable = true; return undefined }
+        if (signError || !signed?.signedUrl) { previewUnavailable = true; previewFailure ??= signError ?? new Error('Signed preview URL was unavailable'); return undefined }
         signedUrlCache.current.set(path, { url: signed.signedUrl, expiresAt: Date.now() + 270_000 })
         return signed.signedUrl
-      } catch {
+      } catch (signError) {
         previewUnavailable = true
+        previewFailure ??= signError
         return undefined
       }
     }
@@ -58,7 +60,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     const { data: selfies } = await supabase.from('team_selfies').select('team_id,storage_path').eq('hunt_id', huntId)
     const teamSelfies = await Promise.all((selfies ?? []).map(async row => ({ ...row, photo_url: await signedUrl(row.storage_path) })))
     if (requestId !== galleryRequestId.current) return
-    if (previewUnavailable) void reportOperation(huntId, crypto.randomUUID(), 'review_preview_unavailable', 'failure', 'organizer_web')
+    if (previewUnavailable) reportOperationFailure(huntId, crypto.randomUUID(), 'review_preview_unavailable', previewFailure, 'organizer_web')
     setData({ ...next, submissions: photos, team_selfies: teamSelfies })
     setError('')
   }, [huntId])
@@ -99,7 +101,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     const operationId = crypto.randomUUID()
     setBusy(id); setError('')
     const { error: actionError } = await supabase.rpc('review_submission', { p_submission_id: id, p_decision: decision })
-    if (actionError) { setError(actionError.message); void reportOperation(huntId, operationId, 'review_decision_failed', 'failure', 'organizer_web') }
+    if (actionError) { setError(actionError.message); reportOperationFailure(huntId, operationId, 'review_decision_failed', actionError, 'organizer_web') }
     else { void reportOperation(huntId, operationId, `review_${decision}_confirmed`, 'success', 'organizer_web'); await load(); onChanged() }
     setBusy('')
   }
@@ -109,7 +111,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     const operationId = crypto.randomUUID()
     setBusy('review'); setError('')
     const { error: actionError } = await supabase.rpc('begin_hunt_review', { p_hunt_id: huntId })
-    if (actionError) { setError(actionError.message); void reportOperation(huntId, operationId, 'begin_review_failed', 'failure', 'organizer_web') }
+    if (actionError) { setError(actionError.message); reportOperationFailure(huntId, operationId, 'begin_review_failed', actionError, 'organizer_web') }
     else { void reportOperation(huntId, operationId, 'review_opened', 'success', 'organizer_web'); await load(); onChanged() }
     setBusy('')
   }
@@ -121,15 +123,18 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     const attempt = ++finalizationAttempt.current
     setBusy('finalize'); setError('')
     let actionErrorMessage: string | null = null
+    let actionFailure: unknown = null
     try {
       const { error: actionError } = await supabase.rpc('finalize_hunt', { p_hunt_id: huntId })
       actionErrorMessage = actionError?.message ?? null
+      actionFailure = actionError
     } catch (finalizeError) {
+      actionFailure = finalizeError
       actionErrorMessage = finalizeError instanceof Error ? finalizeError.message : 'Final results could not be confirmed. Please retry.'
     }
     if (actionErrorMessage) {
       setError(actionErrorMessage)
-      void reportOperation(huntId, operationId, attempt === 1 ? 'finalization_failed' : 'finalization_retry_failed', 'failure', 'organizer_web')
+      reportOperationFailure(huntId, operationId, attempt === 1 ? 'finalization_failed' : 'finalization_retry_failed', actionFailure, 'organizer_web')
       setBusy('')
       return
     }
