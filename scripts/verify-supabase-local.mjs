@@ -505,8 +505,30 @@ try {
     'Organizers must not upload into participant photo paths',
   )
 
-  const { error: startNowError } = await organizer.rpc('start_game_now', { p_game_id: huntId })
-  assert.ifError(startNowError)
+  const startRace = await Promise.all([
+    organizer.rpc('start_game_now', { p_game_id: huntId }),
+    organizerConcurrent.rpc('start_game_now', { p_game_id: huntId }),
+  ])
+  assert.equal(startRace.filter((result) => !result.error).length, 1, 'Exactly one concurrent Start Now request should win')
+  const rejectedStart = startRace.find((result) => result.error)
+  assert.ok(rejectedStart, 'The losing concurrent Start Now request should be rejected')
+  assert.match(rejectedStart.error.message, /Only an unstarted hunt can start now/)
+  const { data: startRaceState, error: startRaceStateError } = await admin
+    .from('hunts')
+    .select('status,start_at')
+    .eq('id', huntId)
+    .single()
+  assert.ifError(startRaceStateError)
+  assert.equal(startRaceState.status, 'active')
+  assert.ok(startRaceState.start_at, 'A winning Start Now request should set a server start time')
+  const { count: startEventCount, error: startEventCountError } = await admin
+    .from('audit_events')
+    .select('id', { count: 'exact', head: true })
+    .eq('hunt_id', huntId)
+    .eq('event_type', 'game_start_now')
+  assert.ifError(startEventCountError)
+  assert.equal(startEventCount, 1, 'Concurrent Start Now requests should create exactly one audit event')
+  console.log('Concurrent Start Now requests serialize: one starts the hunt, and only the winner records an audit event.')
   const operationId = randomUUID()
   const { data: clientAuditId, error: clientAuditError } = await participantOne.rpc('record_audit_event', {
     p_event_type: 'client_operation',
