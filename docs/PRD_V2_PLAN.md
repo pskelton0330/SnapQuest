@@ -2,6 +2,8 @@
 
 Controlling specification: `SnapQuest_Revised_PRD_v2.0.md`, document revision 2.0, November 2, 2026. This is an incremental version-one product plan, not an application rebuild or a release named 2.0.
 
+> **Status note (November 6, 2026):** The phased sequence below preserves the original PRD implementation proposal and is not a statement of current release status. The authenticated production app is deployed at [GitHub Pages](https://pskelton0330.github.io/SnapQuest/); current feature, test, and release status is maintained in [PRD_V2_CHECKLIST.md](PRD_V2_CHECKLIST.md), [PRD_V2_TEST_EVIDENCE.md](PRD_V2_TEST_EVIDENCE.md), and [PRODUCT_ROADMAP.md](PRODUCT_ROADMAP.md). The roadmap defers video generation, licensed music, direct social posting, and AI hunt generation beyond the lean core launch. Production migration history was last checked read-only through `202611060022`; migrations `202611060023` and `202611060024` are source-only, and 023 requires explicit approval before pruning production diagnostic records.
+
 ## Phase sequence
 
 1. Check-in and hosting. First batch restores Auth before invitation actions, resumes permanent and guest identities with trusted membership, fails safely on restoration errors, and reconciles game context after focus/online/visibility return. Next batch adds owner-checked Join this team and Play/Manage switching in the retained authenticated flow. Review controlled account onboarding and common game context separately; do not open live signups. Existing preview remains a UI sandbox, not a substitute for account-based hosting.
@@ -9,7 +11,7 @@ Controlling specification: `SnapQuest_Revised_PRD_v2.0.md`, document revision 2.
 3. Review and outcomes. Add per-game quick/manual policy with legacy games explicitly manual. Quick review resolves eligible non-rejected submissions only on confirmed finalization. Use stored authoritative results and dense ties; preserve optional team voting. Add idempotent completion and one logical job per finalization, plus guest read-only outcomes without an invented expiry duration. Job persistence alone does not deliver video.
 4. Montage feasibility. Produce a genuine bounded prototype, measure time/output/memory where possible, evaluate closed-browser behavior, private-media scope, licenses and costs. Propose one deterministic storyboard/output profile. Obtain approval for unresolved runtime/profile/music choices before commitment.
 5. Montage and media. Integrate an approved durable renderer, validated private output, verified music catalog, guest preview/download/deliberate sharing, coordinated media deletion and retries. Results/play counts survive media deletion. Retention/access fields may be unset in controlled development; no production TTL until approved.
-6. Release readiness. Approved email/onboarding, abuse controls, retention and guest policy, multiple physical phones, renderer playback/sharing, ownership/RLS tests, successful production bundle and explicit release approval. No deployment in this plan execution.
+6. Release readiness. The original PRD release gate called for approved email/onboarding, abuse controls, retention and guest policy, multiple physical phones, renderer playback/sharing, ownership/RLS tests, a successful production bundle, and explicit release approval. This original proposed sequence is historical; consult the current checklist and roadmap for active scope.
 
 Each batch stops for review. Montage, guest access and deletion remain required version-one scope even while their gates are unresolved.
 
@@ -27,9 +29,9 @@ Open gates retained from PRD: D-01 retention durations/start events; D-02 guest 
 
 ## Migration and configuration boundaries
 
-Current live state: migrations 001–010 are applied to the linked production project and were verified through the Supabase CLI. The earlier batch note below is historical; future schema proposals must remain additive and be audited against the live migration history before application.
+Current live state at the last read-only audit: migrations `202610280001` through `202611060022` are applied to the linked production project. Migrations `202611060023` and `202611060024` remain unapplied; the earlier batch note below is historical. Audit actual live versions before any future application, and do not apply migration 023 without explicit operator authorization because it prunes expired records.
 
-This batch adds no SQL migration, auth provider change, policy relaxation, account or media cleanup. Migrations 007–008 remain staged locally. The v1.1 document historically reports 001–006 applied, but no remote schema inspection has been performed in this batch. Audit actual live versions before any future application.
+The first-batch historical notes below predate many later migrations and do not describe the current production schema. The v1.1 document historically reports 001–006 applied; the November 6 remote history check supersedes that older snapshot. All later schema changes still require an additive migration, review, isolated hosted validation, and explicit approval before production application.
 
 Future schema proposals must be additive and reviewed: template publication/drafts, team selfies, submission versions/idempotency, timing audit, per-game review policy, completed-play event, finalization/job uniqueness, music catalog, media lifecycle and deletion coordination. Provide backup, legacy mapping, local tests and forward-repair/rollback instructions with each proposed migration before requesting shared/live approval.
 
