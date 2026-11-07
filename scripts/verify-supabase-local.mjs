@@ -202,10 +202,19 @@ try {
     let markSubscribed
     let rejectSubscription
     const subscribed = new Promise((resolve, reject) => { markSubscribed = resolve; rejectSubscription = reject })
+    let markReplicationReady
+    let rejectReplicationReady
+    const replicationReady = new Promise((resolve, reject) => { markReplicationReady = resolve; rejectReplicationReady = reject })
     const change = { event: 'INSERT', schema: 'public', table: 'hunt_messages' }
     if (withHuntFilter) change.filter = `hunt_id=eq.${huntId}`
     const channel = client
-      .channel(`ci-hunt-chat-${audience}-${huntId}-${randomUUID()}`)
+      .channel(`ci-hunt-chat-${audience}-${huntId}-${randomUUID()}`, { config: { broadcast: { replication_ready: true } } })
+      .on('system', {}, (payload) => {
+        console.log(`Chat Realtime ${audience}${withHuntFilter ? ' filtered' : ' unfiltered'} replication: ${payload.status} (${payload.message})`)
+        if (payload.extension !== 'system') return
+        if (payload.status === 'ok') markReplicationReady()
+        else if (payload.status === 'error') rejectReplicationReady(new Error(`${audience} chat replication failed: ${payload.message}`))
+      })
       .on('postgres_changes', change, (payload) => {
         if (payload.new?.body === realtimeMessageBody) receiveMessage(payload.new)
       })
@@ -214,7 +223,7 @@ try {
         if (status === 'SUBSCRIBED') markSubscribed()
         else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') rejectSubscription(new Error(`${audience} chat Realtime subscription failed: ${status}`))
       })
-    return { channel, message, subscribed }
+    return { channel, message, subscribed, replicationReady }
   }
   const organizerRealtime = watchChatRealtime(organizer, 'organizer')
   const organizerUnfilteredRealtime = watchChatRealtime(organizer, 'organizer', false)
@@ -231,6 +240,9 @@ try {
       withTimeout(organizerRealtime.subscribed, 'Organizer chat Realtime subscription'),
       withTimeout(organizerUnfilteredRealtime.subscribed, 'Unfiltered organizer chat Realtime subscription'),
       withTimeout(participantRealtime.subscribed, 'Participant chat Realtime subscription'),
+      withTimeout(organizerRealtime.replicationReady, 'Organizer Postgres replication readiness'),
+      withTimeout(organizerUnfilteredRealtime.replicationReady, 'Unfiltered organizer Postgres replication readiness'),
+      withTimeout(participantRealtime.replicationReady, 'Participant Postgres replication readiness'),
     ])
     const { data: realtimeSentMessage, error: realtimeSendError } = await organizer.rpc('send_hunt_message', {
       p_hunt_id: huntId,

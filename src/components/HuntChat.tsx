@@ -16,7 +16,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   const [errorAction, setErrorAction] = useState<'load' | null>(null)
-  const [connection, setConnection] = useState<'connecting' | 'live' | 'reconnecting' | 'offline'>(() => navigator.onLine ? 'connecting' : 'offline')
+  const [connection, setConnection] = useState<'connecting' | 'connected' | 'live' | 'reconnecting' | 'offline'>(() => navigator.onLine ? 'connecting' : 'offline')
   const [atLatest, setAtLatest] = useState(true)
   const [newMessageCount, setNewMessageCount] = useState(0)
   const messagesRef = useRef<HTMLDivElement>(null)
@@ -75,9 +75,20 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
     const requestCounter = requestId
     const markOffline = () => setConnection('offline')
     const markOnline = () => { setConnection('reconnecting'); if (document.visibilityState === 'visible') void loadMessages() }
-    const channel = supabase.channel(`hunt-chat-${huntId}`)
+    let replicationReady = false
+    const channel = supabase.channel(`hunt-chat-${huntId}`, { config: { broadcast: { replication_ready: true } } })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'hunt_messages', filter: `hunt_id=eq.${huntId}` }, () => void loadMessages())
-      .subscribe(status => setConnection(!navigator.onLine ? 'offline' : status === 'SUBSCRIBED' ? 'live' : status === 'CLOSED' ? 'reconnecting' : 'connecting'))
+      .on('system', {}, payload => {
+        if (payload.extension !== 'system') return
+        if (payload.status === 'ok') { replicationReady = true; setConnection(navigator.onLine ? 'live' : 'offline') }
+        else if (payload.status === 'error') { replicationReady = false; setConnection(navigator.onLine ? 'reconnecting' : 'offline') }
+      })
+      .subscribe(status => {
+        if (!navigator.onLine) setConnection('offline')
+        else if (status === 'SUBSCRIBED') setConnection(replicationReady ? 'live' : 'connected')
+        else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { replicationReady = false; setConnection('reconnecting') }
+        else setConnection('connecting')
+      })
     const fallback = window.setInterval(() => { if (document.visibilityState === 'visible') void loadMessages() }, 15_000)
     const reconcile = () => { if (document.visibilityState === 'visible') void loadMessages() }
     window.addEventListener('online', markOnline)
@@ -108,7 +119,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
 
   const oldest = messages[0]
   return <section className={`hunt-chat ${compact ? 'hunt-chat-compact' : ''}`} aria-label="Hunt chat">
-    <div className="hunt-chat-heading"><div><span className="eyebrow"><MessageCircle size={14}/> HUNT CHAT</span><h2>Keep everyone in the loop</h2></div><span aria-live="polite">{connection === 'offline' ? 'Offline' : connection === 'live' ? 'Live' : connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span></div>
+    <div className="hunt-chat-heading"><div><span className="eyebrow"><MessageCircle size={14}/> HUNT CHAT</span><h2>Keep everyone in the loop</h2></div><span aria-live="polite">{connection === 'offline' ? 'Offline' : connection === 'live' ? 'Live' : connection === 'connected' ? 'Connected' : connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span></div>
     {connection === 'offline' && <p className="hunt-chat-error" role="status">You are offline. New messages will refresh when you reconnect.</p>}
     <div className="hunt-chat-messages" aria-live="polite" ref={messagesRef} onScroll={event => { const element = event.currentTarget; const latest = element.scrollHeight - element.scrollTop - element.clientHeight < 48; atLatestRef.current = latest; setAtLatest(latest); if (latest) setNewMessageCount(0) }}>
       {hasOlder && oldest && <button className="outline-button" type="button" disabled={loadingOlder} onClick={() => { preserveScroll.current = true; void loadMessages(oldest, true) }}>{loadingOlder ? 'Loading…' : 'Load older messages'}</button>}
