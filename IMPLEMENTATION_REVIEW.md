@@ -2,6 +2,8 @@
 
 Assessment date: 2026-11-01. Scope: repository files, historical PRD v1.1, supplied v1.2 instructions, latest existing-app improvement request, and local checks. No live Supabase schema or dashboard was inspected. Latest supplied instructions govern this incremental batch.
 
+> **Historical snapshot:** This assessment predates the subsequent production and reliability releases and must not be used as the current status ledger. Check the [PRD v2 checklist](docs/PRD_V2_CHECKLIST.md), [test evidence](docs/PRD_V2_TEST_EVIDENCE.md), and [improvement backlog](docs/reviews/2026-11-06-improvement-backlog.md) for verified current behavior and remaining gaps.
+
 ## Current state and gaps
 
 | Capability | Evidence and status |

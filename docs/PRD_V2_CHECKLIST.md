@@ -4,17 +4,17 @@ Updated November 6, 2026. These labels describe the whole requirement, not just 
 
 ## Current verification snapshot (November 6)
 
-- The most recent fully verified Pages build is `436895f`; GitHub Actions run `42315743973` passed, and the live `build-info.json` matched that commit. It includes the participant home/history fix and explicit chat offline/reconnect feedback.
-- The current suite has 79 passing unit/database tests and 78 passing desktop/mobile browser cases. Lint and the production build pass; the JavaScript entry remains below the enforced 150 KiB gzip budget. The 78 browser cases passed in workflow `42315743973` on the deployed source.
+- The latest fully verified application-code release is `73516f1`; GitHub Actions run `42317791859` passed, and live `build-info.json` matched that commit. It includes the participant home/history fixes, explicit chat offline/reconnect feedback, and preservation of loaded chat history during polling.
+- The current suite has 79 passing unit/database tests and 78 passing desktop/mobile browser cases. Lint and the production build pass; the JavaScript entry remains below the enforced 150 KiB gzip budget. All 78 browser cases passed in workflow `42317791859` on the deployed source.
 - Physical-device, screen-reader, hosted Storage HTTP, multi-session concurrency, and full authorization acceptance are still separate gates. The historical AT-01 through AT-36 table remains NOT RUN for physical-device acceptance; mock-browser and PGlite evidence does not satisfy those rows.
 
 The full controlling document is preserved in `SnapQuest_Revised_PRD_v2.0.md`. This checklist supersedes the older implementation review where requirements conflict; that review remains historical evidence.
 
 | PRD ID | Status | Code and verification evidence or gap |
 | --- | --- | --- |
-| HUNT-01 | partial | Local discovery/filtering and staged safe public RPC; new authenticated workspace not connected. No remote discovery check. |
+| HUNT-01 | partial | The development preview supports local discovery/filtering; production users can create/manage hunts, but production browse/discovery of reusable public templates is not integrated. No remote discovery acceptance check. |
 | HUNT-02 | partial | Explicit publish and personal copies exist; browser draft cache only, no distinct server template-draft state. Library population differs across old/new builders. |
-| HUNT-03 | partial | Local discovery/filtering and staged safe public RPC; new authenticated workspace not connected. No remote discovery check. |
+| HUNT-03 | partial | The development preview supports local discovery/filtering and a staged safe public RPC; production browse/discovery of reusable public templates is not integrated. No remote discovery acceptance check. |
 | HUNT-04 | missing | Local completed-game counts exist; no authoritative unique completed-play event. |
 | HUNT-05 | verified | Public-template versus private-game distinction covered by local PGlite access tests; public challenge wording is not secret. |
 | AUTH-01 | partial | Existing organizer-profile/owner checks; PGlite denial tests pass. Controlled self-onboarding and permanent-account release path incomplete; preview bypass is development-only. |

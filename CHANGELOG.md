@@ -1,5 +1,7 @@
 # Changelog
 
+> Historical entries below end on November 3, 2026 and record the status at each batch’s release. For current shipped features, deployment evidence, and open work, use the [PRD v2 checklist](docs/PRD_V2_CHECKLIST.md), [test evidence](docs/PRD_V2_TEST_EVIDENCE.md), and [improvement backlog](docs/reviews/2026-11-06-improvement-backlog.md). Do not read an older entry’s “pending” or “not deployed” statement as current status without checking those records.
+
 ## 2026-11-03 Aggregate team progress
 
 - Added migration `202610300009_team_progress.sql` with a participant-authorized aggregate progress RPC.
