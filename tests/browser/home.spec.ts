@@ -65,6 +65,8 @@ let participantReviewVotes: { item_id: string; voting_team_id: string; selected_
 let participantTieMode = false
 let participantZeroScoreMode = false
 let participantTeamName = 'Team Cedar'
+let celebrationSelfieMode = false
+let celebrationSelfieSignedRequests = 0
 
 test.beforeEach(async ({ page }) => {
   participantRuntimeState = 'waiting'
@@ -105,6 +107,8 @@ test.beforeEach(async ({ page }) => {
   participantTieMode = false
   participantZeroScoreMode = false
   participantTeamName = 'Team Cedar'
+  celebrationSelfieMode = false
+  celebrationSelfieSignedRequests = 0
   await page.context().route('https://test-project.supabase.co/**', async route => {
     const request = route.request()
     if (request.url().includes('/rest/v1/rpc/record_audit_event')) {
@@ -120,12 +124,17 @@ test.beforeEach(async ({ page }) => {
       ]) })
       return
     }
-    if (request.method() === 'GET' && request.url().includes('/storage/v1/object/sign/hunt-photos/') && (signedPreviewMode || photoReplacementRaceMode)) {
+    if (request.method() === 'GET' && request.url().includes('/storage/v1/object/sign/hunt-photos/') && (signedPreviewMode || photoReplacementRaceMode || celebrationSelfieMode)) {
       const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
       await route.fulfill({ status: 200, contentType: 'image/png', body: png })
       return
     }
     if (request.url().includes('/storage/v1/object/sign/hunt-photos/')) {
+      if (celebrationSelfieMode && request.method() === 'POST' && request.url().includes('team-selfie.png')) {
+        celebrationSelfieSignedRequests++
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ signedURL: '/storage/v1/object/sign/hunt-photos/test/team-selfie.png?token=selfie' }) })
+        return
+      }
       if (photoReplacementRaceMode && request.method() === 'POST') {
         const path = decodeURIComponent(new URL(request.url()).pathname.split('/object/sign/hunt-photos/')[1] ?? '')
         raceSignedPaths.push(path)
@@ -276,7 +285,7 @@ test.beforeEach(async ({ page }) => {
     }
     if (request.url().includes('/rest/v1/rpc/get_participant_context')) {
       const now = Date.now()
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ participant_id: '55555555-5555-4555-8555-555555555555', hunt_id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', rules: ['Stay together'], status: participantRuntimeState === 'waiting' ? 'scheduled' : participantRuntimeState, runtime_state: participantRuntimeState, start_at: participantRuntimeState === 'waiting' ? null : new Date(now - 60_000).toISOString(), ends_at: participantRuntimeState === 'active' ? new Date(now + 3_540_000).toISOString() : new Date(now - 1_000).toISOString(), duration_minutes: 60, server_now: new Date(now).toISOString(), team: { id: '44444444-4444-4444-8444-444444444444', name: participantTeamName, display_color: '#15967a', selfie: null }, participant: { id: '55555555-5555-4555-8555-555555555555', display_name: 'Taylor' }, teammates: [{ id: '55555555-5555-4555-8555-555555555555', display_name: 'Taylor' }] }) })
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ participant_id: '55555555-5555-4555-8555-555555555555', hunt_id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', rules: ['Stay together'], status: participantRuntimeState === 'waiting' ? 'scheduled' : participantRuntimeState, runtime_state: participantRuntimeState, start_at: participantRuntimeState === 'waiting' ? null : new Date(now - 60_000).toISOString(), ends_at: participantRuntimeState === 'active' ? new Date(now + 3_540_000).toISOString() : new Date(now - 1_000).toISOString(), duration_minutes: 60, server_now: new Date(now).toISOString(), team: { id: '44444444-4444-4444-8444-444444444444', name: participantTeamName, display_color: '#15967a', selfie: celebrationSelfieMode ? { storage_path: 'test/team-selfie.png', submitted_by: '55555555-5555-4555-8555-555555555555', submitted_at: '2026-11-01T17:00:00Z' } : null }, participant: { id: '55555555-5555-4555-8555-555555555555', display_name: 'Taylor' }, teammates: [{ id: '55555555-5555-4555-8555-555555555555', display_name: 'Taylor' }] }) })
       return
     }
     if (request.url().includes('/rest/v1/rpc/get_hunt_progress')) {
@@ -823,6 +832,36 @@ test('winner card uses the team-color fallback and handles a long team name', as
   await expect(page.getByRole('button', { name: 'Download card' })).toBeVisible()
   const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
   expect(dimensions.content, 'long-name winner card horizontal overflow at 320px').toBeLessThanOrEqual(dimensions.viewport)
+})
+
+test('winner card includes the team selfie when one is available', async ({ page }) => {
+  participantRuntimeState = 'completed'
+  celebrationSelfieMode = true
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.getByText('Final results')).toBeVisible()
+  await expect.poll(() => celebrationSelfieSignedRequests).toBeGreaterThan(0)
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  const cardDownloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download card' }).click()
+  const cardPath = await (await cardDownloadPromise).path()
+  expect(cardPath).toBeTruthy()
+  if (!cardPath) throw new Error('Winner card download did not produce a file')
+  const encodedCard = (await readFile(cardPath)).toString('base64')
+  const sampledColor = await page.evaluate(async (encoded: string) => {
+    const image = new Image()
+    image.src = `data:image/png;base64,${encoded}`
+    await image.decode()
+    const canvas = document.createElement('canvas')
+    canvas.width = image.naturalWidth
+    canvas.height = image.naturalHeight
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Canvas context is unavailable')
+    context.drawImage(image, 0, 0)
+    return Array.from(context.getImageData(540, 600, 1, 1).data).slice(0, 3)
+  }, encodedCard)
+  expect(sampledColor).not.toEqual([21, 150, 122])
 })
 
 test('participant renews signed review-photo previews before their URLs expire', async ({ page }) => {
