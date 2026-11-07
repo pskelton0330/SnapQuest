@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Check, CircleHelp, Clock3, Download, LoaderCircle, Medal, Share2, Trophy, X } from 'lucide-react'
+import { ArrowLeft, Check, CircleHelp, Clock3, Copy, Download, LoaderCircle, Medal, Share2, Trophy, X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { calculateTeamScores, normalizeFinalScores, normalizeScoringVotes, winningTeams as findWinningTeams, type ScoringSubmission } from '../../lib/scoring'
 import { celebrationFilename, renderWinnerCelebrationCard, winnerCaption } from '../../lib/celebrationCard'
+import { copyTextToClipboard } from '../../lib/clipboard'
 import { reportOperation } from '../../lib/operationLog'
 
 type HuntReviewProps = { huntId: string; title: string; status: string; onBack: () => void; onChanged: () => void }
@@ -24,6 +25,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
   const [confirmFinalize, setConfirmFinalize] = useState(false)
   const [celebrationBusy, setCelebrationBusy] = useState(false)
   const [celebrationError, setCelebrationError] = useState('')
+  const [copiedCaption, setCopiedCaption] = useState('')
   const [celebrationPreviewUrl, setCelebrationPreviewUrl] = useState('')
   const [celebrationTeamId, setCelebrationTeamId] = useState('')
   const galleryRequestId = useRef(0)
@@ -157,6 +159,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
   const winningTeams = findWinningTeams(scores)
   const winner = winningTeams.find(score => score.teamId === celebrationTeamId) ?? winningTeams[0]
   const tiedWinner = winningTeams.length > 1
+  const celebrationCaption = winner ? winnerCaption({ title, teamName: winner.teamName, score: winner.total, tied: tiedWinner }) : ''
 
   useEffect(() => {
     // The card is an external canvas/blob resource; its preview state belongs in this effect.
@@ -217,6 +220,17 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     } finally { setCelebrationBusy(false) }
   }
 
+  async function copyCelebrationCaption() {
+    if (!winner) return
+    setCelebrationError('')
+    try {
+      await copyTextToClipboard(celebrationCaption)
+      setCopiedCaption(celebrationCaption)
+    } catch {
+      setCelebrationError('Caption could not be copied. Select the caption below and copy it manually.')
+    }
+  }
+
   const completedResults = data?.status === 'completed'
     ? scores.length
       ? <section className="scoreboard"><div className="eyebrow"><Medal size={14}/> FINAL RESULTS</div><h2>Hunt complete</h2>{scores.map(score => <div className="score-row" key={score.teamId}><b>#{score.rank} {score.teamName}</b><span>{score.basePoints} points{score.votingBonus ? ` + ${score.votingBonus} voting bonus` : ''}</span><strong>{score.total}</strong></div>)}</section>
@@ -241,7 +255,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
           {confirmFinalize ? <><button className="outline-button" onClick={() => { setConfirmFinalize(false); finalizationOperationId.current = null; finalizationAttempt.current = 0 }}>Cancel</button><button className="primary-button" disabled={!!pendingCount || busy === 'finalize'} onClick={() => void finalize()}>{busy === 'finalize' ? 'Finalizing…' : 'Confirm final results'}</button></> : <button className="primary-button" disabled={!!pendingCount} onClick={() => setConfirmFinalize(true)}>Finalize results</button>}
         </div>
       ) : null}
-      {data.status === 'completed' && (winner ? <section className="celebration-card-panel"><div className="eyebrow"><Trophy size={14}/> {winningTeams.length > 1 ? 'TIED WINNERS' : 'WINNER CELEBRATION'}</div><h2>{winningTeams.length > 1 ? `${winningTeams.length} teams share first place` : 'Make the win shareable'}</h2>{winningTeams.length > 1 && <label>Choose a team card<select value={winner.teamId} onChange={event => setCelebrationTeamId(event.target.value)}>{winningTeams.map(team => <option key={team.teamId} value={team.teamId}>{team.teamName}</option>)}</select></label>}{celebrationPreviewUrl && <img className="celebration-card-preview" src={celebrationPreviewUrl} alt={`Winner celebration card for ${winner.teamName}`}/>}<p>Create a branded winner card using {winner.teamName}’s team selfie. If no selfie was submitted, the card uses the team color as a placeholder.</p><div className="celebration-card-actions"><button className="primary-button" disabled={celebrationBusy} onClick={() => void shareCelebrationCard()}><Share2 size={15}/> {celebrationBusy ? 'Preparing card…' : 'Share winner card'}</button><button className="outline-button" disabled={celebrationBusy} onClick={() => void downloadCelebrationCard()}><Download size={15}/> Download card</button></div>{celebrationError && <p className="photo-upload-error" role="alert">{celebrationError}</p>}<small className="celebration-card-note">The image is created in this browser and is not uploaded to SnapQuest.</small></section> : <section className="celebration-card-panel"><div className="eyebrow"><Trophy size={14}/> RESULTS</div><h2>No winning team this time</h2><p>Every team finished with zero points. Celebrate the teams’ effort and try another hunt.</p></section>)}
+      {data.status === 'completed' && (winner ? <section className="celebration-card-panel"><div className="eyebrow"><Trophy size={14}/> {winningTeams.length > 1 ? 'TIED WINNERS' : 'WINNER CELEBRATION'}</div><h2>{winningTeams.length > 1 ? `${winningTeams.length} teams share first place` : 'Make the win shareable'}</h2>{winningTeams.length > 1 && <label>Choose a team card<select value={winner.teamId} onChange={event => setCelebrationTeamId(event.target.value)}>{winningTeams.map(team => <option key={team.teamId} value={team.teamId}>{team.teamName}</option>)}</select></label>}{celebrationPreviewUrl && <img className="celebration-card-preview" src={celebrationPreviewUrl} alt={`Winner celebration card for ${winner.teamName}`}/>}<p>Create a branded winner card using {winner.teamName}’s team selfie. If no selfie was submitted, the card uses the team color as a placeholder.</p><p className="celebration-caption">{celebrationCaption}</p><div className="celebration-card-actions"><button className="primary-button" disabled={celebrationBusy} onClick={() => void shareCelebrationCard()}><Share2 size={15}/> {celebrationBusy ? 'Preparing card?' : 'Share winner card'}</button><button className="outline-button" disabled={celebrationBusy} onClick={() => void downloadCelebrationCard()}><Download size={15}/> Download card</button><button className="outline-button" onClick={() => void copyCelebrationCaption()}><Copy size={15}/> {copiedCaption === celebrationCaption ? 'Caption copied' : 'Copy caption'}</button></div>{celebrationError && <p className="photo-upload-error" role="alert">{celebrationError}</p>}<small className="celebration-card-note">The image is created in this browser and is not uploaded to SnapQuest.</small></section> : <section className="celebration-card-panel"><div className="eyebrow"><Trophy size={14}/> RESULTS</div><h2>No winning team this time</h2><p>Every team finished with zero points. Celebrate the teams’ effort and try another hunt.</p></section>)}
     </>}
   </section>
 }

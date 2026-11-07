@@ -822,6 +822,19 @@ test('participant sees final standings and winner celebration after results publ
   await expect(page.getByText('Final results')).toBeVisible()
   await expect(page.getByText('#1 Team Cedar')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Share team card' })).toBeVisible()
+  const caption = page.locator('.celebration-caption')
+  await expect(caption).toBeVisible()
+  const captionText = (await caption.textContent())?.trim()
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.getByRole('button', { name: 'Copy caption' }).click()
+  await expect(page.getByRole('button', { name: 'Caption copied' })).toBeVisible()
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(captionText)
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new Error('Clipboard permission denied') } } })
+    document.execCommand = () => true
+  })
+  await page.getByRole('button', { name: 'Caption copied' }).click()
+  await expect(page.getByRole('button', { name: 'Caption copied' })).toBeVisible()
   const shareButton = page.getByRole('button', { name: 'Share team card' })
   await expectKeyboardCanReach(page, shareButton)
   await expectNoHorizontalOverflowAt200Percent(page, 'participant results')
@@ -1598,6 +1611,12 @@ test('organizer winner card picker offers each team tied for first', async ({ pa
   await expect(chooser.locator('option')).toHaveText(['Team Cedar', 'Team Maple'])
   await chooser.selectOption('55555555-5555-4555-8555-555555555555')
   await expect(page.getByRole('img', { name: 'Winner celebration card for Team Maple' })).toBeVisible()
+  const caption = page.locator('.celebration-caption')
+  await expect(caption).toContainText('Team Maple')
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.getByRole('button', { name: 'Copy caption' }).click()
+  await expect(page.getByRole('button', { name: 'Caption copied' })).toBeVisible()
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe((await caption.textContent())?.trim())
 })
 
 test('organizer chat falls back to the legacy RPC until stable cursor migration is installed', async ({ page }) => {
