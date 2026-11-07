@@ -728,3 +728,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .review-status.status-approved { color: #2f6f45; }
 .review-status.status-rejected { color: #91474c; }
 .celebration-card-actions .primary-button:not(:disabled):hover { background: #e8c653; color: #173f4c; box-shadow: 0 6px 0 #b69235; }
+
+/* Keep production and reusable challenge ordering controls aligned. */
+.draft-item{grid-template-columns:24px minmax(0,1fr) 73px 30px 30px}
+.draft-item-reorder{display:flex;flex-direction:column;gap:4px;margin-top:20px}
+.draft-item-reorder .icon-button{padding:4px}
+@media(max-width:600px){.draft-item{grid-template-columns:22px minmax(0,1fr) 55px 25px 25px;gap:6px;padding:8px}}

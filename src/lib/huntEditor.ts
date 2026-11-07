@@ -15,7 +15,7 @@ export function importChallenges(text: string, existing: Challenge[], makeId: ()
 
 }
 
-export function moveChallenge(items: Challenge[], index: number, direction: -1 | 1): Challenge[] {
+export function moveItem<T>(items: T[], index: number, direction: -1 | 1): T[] {
 
   const target = index + direction
 
@@ -25,6 +25,10 @@ export function moveChallenge(items: Challenge[], index: number, direction: -1 |
 
   return result
 
+}
+
+export function moveChallenge(items: Challenge[], index: number, direction: -1 | 1): Challenge[] {
+  return moveItem(items, index, direction)
 }
 
 export function validateHuntDraft(hunt: HuntTemplate, detailsOnly = false): string | null {

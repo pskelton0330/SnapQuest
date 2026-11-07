@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { importChallenges, moveChallenge, validateHuntDraft, discoverHunts, completedPlayCounts } from '../src/lib/huntEditor.ts'
+import { importChallenges, moveChallenge, moveItem, validateHuntDraft, discoverHunts, completedPlayCounts } from '../src/lib/huntEditor.ts'
 import { sampleWorkspace, createLocalWorkspaceRepository, LOCAL_CREATOR } from '../src/lib/workspace.ts'
 
 test('bulk import handles pasted numbered and bullet lists, blanks, CRLF, and preserves meaningful duplicates',()=>{
@@ -24,6 +24,9 @@ test('reordering keeps identity, instructions and points together and respects b
   assert.deepEqual(moved[1],items[0]); assert.notEqual(moved,items)
   assert.equal(moveChallenge(items,0,-1),items)
   assert.equal(moveChallenge(items,items.length-1,1),items)
+  const production=[{key:'first',libraryItemId:'library-a',pointValue:3},{key:'second',libraryItemId:'library-b',pointValue:8}]
+  assert.deepEqual(moveItem(production,0,1),[production[1],production[0]])
+  assert.equal(moveItem(production,0,-1),production)
 })
 test('shared hunt validation catches missing or excessive challenges, bad points, rules and duration',()=>{
   const hunt=sampleWorkspace().hunts[0]
