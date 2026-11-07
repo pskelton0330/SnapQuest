@@ -1369,7 +1369,8 @@ test('hunt chat offers retry after read failure and keeps a message after send f
   const message = page.getByRole('textbox', { name: 'Message' })
   await message.fill('Please meet by the fountain')
   await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(chatError).toContainText('simulated chat send failure')
+  await expect(chatError).toContainText('Message could not be confirmed')
+  await expect(chatError).not.toContainText('simulated chat send failure')
   await expect(message).toHaveValue('Please meet by the fountain')
   await expect.poll(() => auditReports.some(report => {
     const details = report.p_details as Record<string, unknown> | undefined

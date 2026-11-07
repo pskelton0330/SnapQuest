@@ -15,6 +15,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
   const [hasOlder, setHasOlder] = useState(false)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
+  const [errorAction, setErrorAction] = useState<'load' | null>(null)
   const [connection, setConnection] = useState<'connecting' | 'live' | 'reconnecting' | 'offline'>(() => navigator.onLine ? 'connecting' : 'offline')
   const [atLatest, setAtLatest] = useState(true)
   const [newMessageCount, setNewMessageCount] = useState(0)
@@ -42,7 +43,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
     }
     const { data, error: loadError } = result
     if (id !== requestId.current) return
-    if (loadError) { void reportOperation(huntId, crypto.randomUUID(), 'chat_load_failed', 'failure', app); setError('Messages could not be refreshed. Check your connection and retry.'); setLoading(false); setLoadingOlder(false); return }
+    if (loadError) { void reportOperation(huntId, crypto.randomUUID(), 'chat_load_failed', 'failure', app); setError('Messages could not be refreshed. Check your connection and retry.'); setErrorAction('load'); setLoading(false); setLoadingOlder(false); return }
     const rows = Array.isArray(data) ? data as HuntMessage[] : []
     const page = older ? (rows.length > 100 ? rows.slice(1) : rows) : rows.slice(-100)
     const newHunt = !older && loadedHuntId.current !== huntId
@@ -63,7 +64,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
     }
     if (older || newHunt) setHasOlder(usingLegacyPaging ? rows.length === 100 : rows.length > 100)
     if (!older) loadedHuntId.current = huntId
-    setError(''); setLoading(false); setLoadingOlder(false)
+    setError(''); setErrorAction(null); setLoading(false); setLoadingOlder(false)
   }, [app, huntId])
 
   // Chat loads from its database-backed source on mount and when the user returns online.
@@ -90,16 +91,19 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
     if (atLatestRef.current && messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight
   }, [messages, loadingOlder, atLatest])
 
-  async function send(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const body = draft.trim()
+  async function sendMessage(body: string) {
     if (!supabase || !body || sending || readOnly) return
     const operationId = crypto.randomUUID()
-    setSending(true); setError('')
+    setSending(true); setError(''); setErrorAction(null)
     const { error: sendError } = await supabase.rpc('send_hunt_message', { p_hunt_id: huntId, p_body: body })
-    if (sendError) { setError(sendError.message); void reportOperation(huntId, operationId, 'chat_send_failed', 'failure', app) }
-    else { setDraft(''); await loadMessages() }
+    if (sendError) { setError('Message could not be confirmed. Check the chat for your message before trying again; your draft is still here.'); void reportOperation(huntId, operationId, 'chat_send_failed', 'failure', app) }
+    else { setDraft(''); setErrorAction(null); await loadMessages() }
     setSending(false)
+  }
+
+  async function send(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    await sendMessage(draft.trim())
   }
 
   const oldest = messages[0]
@@ -112,6 +116,6 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
     </div>
     {!atLatest && <button type="button" className="outline-button" onClick={() => { atLatestRef.current = true; setAtLatest(true); setNewMessageCount(0); messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' }) }}>Jump to latest{newMessageCount > 0 ? ` · ${newMessageCount} new` : ''}</button>}
     {readOnly ? <p className="hunt-chat-empty">This hunt is closed. Messages are available to read.</p> : <form className="hunt-chat-form" onSubmit={send}><input maxLength={500} value={draft} onChange={event => setDraft(event.target.value)} placeholder="Write a message to the hunt…" aria-label="Message"/><button className="primary-button" type="submit" disabled={sending || !draft.trim()}>{sending ? <LoaderCircle className="spin" size={15}/> : <Send size={15}/>}<span className="sr-only">Send message</span></button></form>}
-    {error && <p className="hunt-chat-error" role="alert">{error}{error.startsWith('Messages could not be refreshed') && <> <button className="outline-button" type="button" onClick={() => void loadMessages()}>Retry</button></>}</p>}
+    {error && <p className="hunt-chat-error" role="alert">{error}{errorAction === 'load' && <> <button className="outline-button" type="button" onClick={() => void loadMessages()}>Retry</button></>}</p>}
   </section>
 }
