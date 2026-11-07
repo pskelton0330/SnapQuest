@@ -199,6 +199,11 @@ test('hunt lobby messages are shared by members and closed after review',async()
   assert.equal(organizerMessage.sender_role,'organizer'); assert.equal(organizerMessage.sender_name,'SnapQuest organizer')
   const participantMessage=(await as('authenticated',other,"select public.send_hunt_message($1,'Ready to play') data",[id])).rows[0].data
   assert.equal(participantMessage.sender_role,'participant');
+  await assert.rejects(as('anon',null,"select public.send_hunt_message($1,'Anonymous message')",[id]))
+  await assert.rejects(as('authenticated',outsider,'select public.get_hunt_messages($1)',[id]))
+  await assert.rejects(as('authenticated',outsider,"select public.send_hunt_message($1,'Outsider message')",[id]))
+  assert.equal((await as('authenticated',outsider,'select * from public.hunt_messages where hunt_id=$1',[id])).rows.length,0)
+  await assert.rejects(as('authenticated',owner,"insert into public.hunt_messages(hunt_id,sender_user_id,sender_name,sender_role,body) values($1,$2,'Organizer','organizer','Direct insert')",[id,owner]))
   const messages=(await as('authenticated',other,'select public.get_hunt_messages($1) data',[id])).rows[0].data
   assert.deepEqual(messages.map(message=>message.body),['Welcome team!','Ready to play'])
   const latest=(await as('authenticated',other,'select public.get_hunt_messages($1,1) data',[id])).rows[0].data
