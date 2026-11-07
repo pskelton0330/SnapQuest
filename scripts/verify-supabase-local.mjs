@@ -962,6 +962,32 @@ try {
   assert.ifError(closedInvitesError)
   assert.equal(closedInvites.has_active_invites, false)
   assert.equal(closedInvites.invite_codes.length, 0, 'Closed hunts must not disclose recoverable invitation tokens')
+  const { error: outsiderClosedInviteRecoveryError } = await outsider.rpc('get_hunt_invites', { p_hunt_id: huntId })
+  assert.ok(outsiderClosedInviteRecoveryError, 'An outsider must not recover invitations after a hunt closes')
+  assert.match(outsiderClosedInviteRecoveryError.message, /Organizer access required/)
+  const { data: closedInvitePreview, error: closedInvitePreviewError } = await anonymous.rpc('preview_invitation', {
+    p_token: rotatedInvites[0].invite_token,
+  })
+  assert.ifError(closedInvitePreviewError)
+  assert.equal(closedInvitePreview, null, 'Closed-hunt invite links must not reveal a preview')
+  const closedInviteIdentity = await createIdentity('closed-invite')
+  const { error: closedInviteRedeemError } = await closedInviteIdentity.rpc('redeem_invitation', {
+    p_token: rotatedInvites[0].invite_token,
+    p_display_name: 'Late Player',
+  })
+  assert.ok(closedInviteRedeemError, 'A closed-hunt invite must not admit a new participant')
+  assert.match(closedInviteRedeemError.message, /This invitation link is invalid or expired|This hunt is not accepting participants/)
+  const closedInviteUser = await closedInviteIdentity.auth.getUser()
+  assert.ifError(closedInviteUser.error)
+  const { data: lateParticipant, error: lateParticipantError } = await admin
+    .from('participants')
+    .select('id')
+    .eq('auth_user_id', closedInviteUser.data.user.id)
+    .eq('hunt_id', huntId)
+    .maybeSingle()
+  assert.ifError(lateParticipantError)
+  assert.equal(lateParticipant, null, 'A failed closed-hunt invitation redemption must not create membership')
+  console.log('Closed hunts hide recoverable invites/previews and reject outsider recovery and late participant redemption.')
   const { error: closedReviewError } = await organizer.rpc('review_submission', {
     p_submission_id: savedSubmission.id,
     p_decision: 'rejected',
