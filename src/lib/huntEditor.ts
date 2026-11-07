@@ -1,5 +1,12 @@
 import type { Challenge, Game, HuntTemplate } from './workspace'
 
+export const SUGGESTED_RULES = [
+  { id: 'participant-in-frame', text: 'Every photo should show at least one team participant together with the item.', recommended: true },
+  { id: 'stay-in-venue', text: 'Stay within the event venue and areas open to your group.', recommended: false },
+  { id: 'respect-others', text: 'Ask permission before including anyone outside your team in a photo.', recommended: false },
+  { id: 'play-safely', text: 'Walk, stay together, and skip anything that feels unsafe.', recommended: false },
+]
+
 
 export function importChallenges(text: string, existing: Challenge[], makeId: () => string, stripListMarkers = false): Challenge[] {
   const titles = text.split(/\r?\n/).map(line => stripListMarkers ? line.trim().replace(/^(?:[-*•]\s+|\d+[.)]\s+)/, '').trim() : line.trim()).filter(Boolean)

@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { ArrowUp, ArrowDown, Plus, Trash2, Search } from 'lucide-react'
-import { importChallenges, moveChallenge, validateHuntDraft } from '../lib/huntEditor'
+import { importChallenges, moveChallenge, SUGGESTED_RULES, validateHuntDraft } from '../lib/huntEditor'
 import type { SetupIntent } from '../lib/gameManagement'
 import { LOCAL_CREATOR, type Challenge, type HuntTemplate } from '../lib/workspace'
 
-const suggestions = ['Every photo should show at least one team participant together with the item.', 'Stay within the venue and areas open to your group.', 'Ask permission before including anyone outside your team.', 'Walk, stay together, and skip anything unsafe.']
+const suggestions = SUGGESTED_RULES.map(rule => rule.text)
 type Props = { initial?: HuntTemplate; ideas: Challenge[]; onSave: (hunt: HuntTemplate) => Promise<HuntTemplate>; onGame: (id: string, intent?: SetupIntent) => Promise<void> }
 export default function HuntEditor({ initial, ideas, onSave, onGame }: Props) {
   const storageKey = `snapquest-editor-v1-${initial?.id ?? 'new'}`

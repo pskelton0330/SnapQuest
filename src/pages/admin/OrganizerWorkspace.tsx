@@ -9,7 +9,7 @@ import HuntChat from '../../components/HuntChat'
 import TeamLobby from '../../components/TeamLobby'
 import InviteLinksPanel from '../../components/InviteLinksPanel'
 import HuntDiagnostics from '../../components/HuntDiagnostics'
-import { moveItem, validateHuntDraft } from '../../lib/huntEditor'
+import { moveItem, SUGGESTED_RULES, validateHuntDraft } from '../../lib/huntEditor'
 
 type OrganizerWorkspaceProps = { session: Session; onSignOut: () => void; initialHuntId?: string }
 type Organizer = { id: string }
@@ -40,13 +40,6 @@ function inviteStorageKey(huntId: string) { return `snapquest-invites-${huntId}`
 function clearSavedInvites(huntId: string) {
   try { window.localStorage.removeItem(inviteStorageKey(huntId)) } catch { /* The server is the invitation source of truth. */ }
 }
-
-const SUGGESTED_RULES = [
-  { id: 'participant-in-frame', text: 'Every photo should show at least one team participant together with the item.', recommended: true },
-  { id: 'stay-in-venue', text: 'Stay within the event venue and areas open to your group.', recommended: false },
-  { id: 'respect-others', text: 'Ask permission before including anyone outside your team in a photo.', recommended: false },
-  { id: 'play-safely', text: 'Walk, stay together, and skip anything that feels unsafe.', recommended: false },
-]
 
 export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }: OrganizerWorkspaceProps) {
   const [page, setPage] = useState<Page>('overview')
