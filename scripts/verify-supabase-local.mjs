@@ -307,6 +307,14 @@ try {
 
   const { error: endHuntError } = await organizer.rpc('end_hunt_early', { p_hunt_id: huntId })
   assert.ifError(endHuntError)
+  const { data: reviewPhoto, error: reviewPhotoError } = await participantTwo.storage.from('hunt-photos').download(currentPath)
+  assert.ifError(reviewPhotoError)
+  assert.ok(reviewPhoto, 'Participants should be able to view hunt photos after the hunt ends')
+  await expectDenied(
+    () => participantTwo.storage.from('hunt-photos').download(replacementSelfiePath),
+    'Post-hunt photo access must not reveal another team selfie',
+  )
+  console.log('After the hunt ends, participants can review hunt photos while other teams’ selfies remain private.')
   const [reviewRace, finalizeRace] = await Promise.all([
     organizer.rpc('review_submission', {
       p_submission_id: savedSubmission.id,
