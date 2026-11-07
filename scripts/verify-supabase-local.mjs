@@ -5,9 +5,11 @@ import { createClient } from '@supabase/supabase-js'
 const url = process.env.API_URL
 const serviceRoleKey = process.env.SERVICE_ROLE_KEY
 const anonKey = process.env.ANON_KEY
+const mailpitUrl = process.env.MAILPIT_URL
 assert.ok(url, 'Supabase CLI did not export API_URL')
 assert.ok(serviceRoleKey, 'Supabase CLI did not export SERVICE_ROLE_KEY')
 assert.ok(anonKey, 'Supabase CLI did not export ANON_KEY')
+assert.ok(mailpitUrl, 'Supabase CLI did not export MAILPIT_URL')
 
 const authOptions = { auth: { persistSession: false, autoRefreshToken: false } }
 const admin = createClient(url, serviceRoleKey, authOptions)
@@ -39,6 +41,55 @@ async function expectDenied(operation, message) {
   assert.ok(error, message)
 }
 
+async function verifyEmailMagicLinkReturnPath() {
+  const email = `snapquest-magic-link-${randomUUID()}@example.test`
+  const callbackUrl = 'http://127.0.0.1:5173/'
+  const { error: sendError } = await anonymous.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: callbackUrl },
+  })
+  assert.ifError(sendError)
+
+  let messageId
+  for (let attempt = 0; attempt < 40 && !messageId; attempt += 1) {
+    const response = await fetch(`${mailpitUrl}/api/v1/messages?start=0&limit=50`)
+    assert.equal(response.ok, true, `Mailpit message listing failed: ${response.status}`)
+    const mailbox = await response.json()
+    const message = mailbox.messages?.find((candidate) =>
+      candidate.To?.some((recipient) => recipient.Address?.toLowerCase() === email.toLowerCase()),
+    )
+    messageId = message?.ID
+    if (!messageId) await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  assert.ok(messageId, 'Supabase auth email should arrive in the isolated Mailpit inbox')
+
+  const textResponse = await fetch(`${mailpitUrl}/view/${encodeURIComponent(messageId)}.txt`)
+  assert.equal(textResponse.ok, true, `Mailpit email body request failed: ${textResponse.status}`)
+  const emailBody = await textResponse.text()
+  const confirmationLink = emailBody.match(/https?:\/\/[^\s<>"']+/)?.[0]?.replace(/[),.;]+$/, '')
+  assert.ok(confirmationLink, 'Magic-link email should contain a confirmation URL')
+  const confirmationUrl = new URL(confirmationLink)
+  assert.equal(confirmationUrl.searchParams.get('redirect_to'), callbackUrl, 'Magic-link should return to the app root')
+
+  const callbackClient = createClient(url, anonKey, authOptions)
+  const verificationResponse = await fetch(confirmationUrl, { redirect: 'manual' })
+  assert.ok(verificationResponse.status >= 300 && verificationResponse.status < 400, 'Auth should verify the email link and redirect to the app')
+  const returnLocation = verificationResponse.headers.get('location')
+  assert.ok(returnLocation, 'Verified magic link should return an app callback URL')
+  const returnedUrl = new URL(returnLocation, callbackUrl)
+  assert.equal(`${returnedUrl.origin}${returnedUrl.pathname}`, callbackUrl, 'Auth should return to the configured app root')
+  const callbackParams = new URLSearchParams(returnedUrl.hash.slice(1))
+  const accessToken = callbackParams.get('access_token') ?? returnedUrl.searchParams.get('access_token')
+  const refreshToken = callbackParams.get('refresh_token') ?? returnedUrl.searchParams.get('refresh_token')
+  assert.ok(accessToken && refreshToken, 'Verified email return should include session tokens for the app callback')
+  const { data, error } = await callbackClient.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+  assert.ifError(error)
+  assert.ok(data.session, 'Email verification should establish an authenticated session')
+  assert.equal(data.user?.email?.toLowerCase(), email.toLowerCase())
+  identities.push(data.user.id)
+  console.log('Magic-link email delivery, app callback URL, one-time link verification, and authenticated return session pass through local Supabase Auth and Mailpit.')
+}
+
 async function assertObjectExists(path, message) {
   const { data, error } = await admin.storage.from('hunt-photos').download(path)
   assert.ifError(error)
@@ -51,6 +102,7 @@ async function assertObjectMissing(path, message) {
 }
 
 try {
+  await verifyEmailMagicLinkReturnPath()
   const organizer = await createIdentity('organizer')
   const organizerConcurrent = createClient(url, anonKey, authOptions)
   const { data: organizerSession } = await organizer.auth.getSession()
