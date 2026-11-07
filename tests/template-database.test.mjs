@@ -117,7 +117,9 @@ test('organizer audit events record timing operations and stay owner-scoped',asy
 })
 test('client audit events are source-labeled, sanitized, and expire after one year',async()=>{
   assert.doesNotMatch(auditSafetyMigration,/delete\s+from\s+public\.audit_events/i)
+  assert.match(auditSafetyMigration,/notify\s+pgrst\s*,\s*'reload schema'/i)
   assert.match(auditRetentionMigration,/delete\s+from\s+public\.audit_events[\s\S]*interval '365 days'/i)
+  assert.match(auditRetentionMigration,/notify\s+pgrst\s*,\s*'reload schema'/i)
   const legacy=(await db.query("select id from public.hunt_templates where legacy_game_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'")).rows[0].id
   const id=(await as('authenticated',owner,'select public.create_game_from_template($1) id',[legacy])).rows[0].id
   await as('authenticated',owner,"select * from public.configure_game($1,'Audit privacy',60,array['Red','Blue'],'organizer',clock_timestamp()+interval '1 hour')",[id])
@@ -190,6 +192,7 @@ test('hunt lobby messages are shared by members and closed after review',async()
   await assert.rejects(as('authenticated',other,"select public.send_hunt_message($1,'Too late')",[id]))
 })
 test('chat keyset pagination returns every message when timestamps are identical',async()=>{
+  assert.match(chatCursorMigration,/notify\s+pgrst\s*,\s*'reload schema'/i)
   const template=(await as('authenticated',owner,"select public.save_hunt_template('Chat paging','Shop','',array[]::text[],$1::jsonb,60,'personal') id",[JSON.stringify([{title:'Chat item'}])])).rows[0].id
   const huntId=(await as('authenticated',owner,'select public.create_game_from_template($1) id',[template])).rows[0].id
   await as('authenticated',owner,"select * from public.configure_game($1,'Chat paging',60,array['Red','Blue'],'organizer',null)",[huntId])

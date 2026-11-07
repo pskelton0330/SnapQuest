@@ -74,4 +74,6 @@ $$;
 revoke all on function public.list_hunt_audit_events(uuid,integer) from public, anon;
 grant execute on function public.list_hunt_audit_events(uuid,integer) to authenticated;
 
+notify pgrst, 'reload schema';
+
 commit;

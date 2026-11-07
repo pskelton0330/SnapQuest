@@ -38,4 +38,6 @@ $$;
 revoke all on function public.get_hunt_messages(uuid,integer,timestamptz,uuid) from public;
 grant execute on function public.get_hunt_messages(uuid,integer,timestamptz,uuid) to authenticated;
 
+notify pgrst, 'reload schema';
+
 commit;
