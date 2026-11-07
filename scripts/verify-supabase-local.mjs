@@ -22,6 +22,45 @@ assert.ifError(bucketError)
 assert.equal(bucket?.public, false, 'hunt-photos must remain private')
 console.log('Private hunt-photos bucket is available through Storage HTTP.')
 
+async function verifyAuditRetention() {
+  const marker = randomUUID()
+  const recentId = randomUUID()
+  const expiredId = randomUUID()
+  const now = Date.now()
+  const hour = 60 * 60 * 1000
+  const rows = [
+    {
+      id: recentId,
+      created_at: new Date(now - 364 * 24 * hour).toISOString(),
+      event_type: 'retention_test',
+      outcome: 'notice',
+      details: { retention_test_id: marker, age: 'recent' },
+    },
+    {
+      id: expiredId,
+      created_at: new Date(now - 366 * 24 * hour).toISOString(),
+      event_type: 'retention_test',
+      outcome: 'notice',
+      details: { retention_test_id: marker, age: 'expired' },
+    },
+  ]
+
+  try {
+    const { error: insertError } = await admin.from('audit_events').insert(rows)
+    assert.ifError(insertError, 'Synthetic retention rows should be insertable in the isolated stack')
+
+    const { data, error } = await admin.from('audit_events').select('id').in('id', [recentId, expiredId])
+    assert.ifError(error)
+    assert.deepEqual(data.map(({ id }) => id), [recentId], 'Retention must prune expired audit rows and preserve recent rows')
+    console.log('Audit retention prunes a synthetic 366-day-old row and preserves a recent row in the isolated database.')
+  } finally {
+    const { error: cleanupError } = await admin.from('audit_events').delete().in('id', [recentId, expiredId])
+    assert.ifError(cleanupError, 'Synthetic retention rows should be cleaned up')
+  }
+}
+
+await verifyAuditRetention()
+
 const identities = []
 const testCredentials = new Map()
 const objectPaths = []
