@@ -1,8 +1,8 @@
-﻿# PRD v2 to remediation backlog crosswalk
+# PRD v2 to remediation backlog crosswalk
 
 Updated November 7, 2026. This index maps all 56 requirements in the [PRD v2 checklist](PRD_V2_CHECKLIST.md) to the current deep-review backlog, verification gate, or deferred product decision. A mapping is traceability only; it does not change the requirement status or imply acceptance.
 
-Status evidence is maintained in the [checklist](PRD_V2_CHECKLIST.md), [improvement backlog](reviews/2026-11-06-improvement-backlog.md), [remediation status](reviews/2026-11-06-remediation-status.md), and [test evidence](PRD_V2_TEST_EVIDENCE.md). The backlog addresses the 20 findings from the review. PRD v2 contains additional scope, especially hunt discovery, completed-play tracking, quick review, montage/video, media lifecycle, and permanent account flows; those are tracked below as product-scope work, not as completed review fixes.
+Status evidence is maintained in the [checklist](PRD_V2_CHECKLIST.md), [improvement backlog](reviews/2026-11-06-improvement-backlog.md), [remediation status](reviews/2026-11-06-remediation-status.md), and [test evidence](PRD_V2_TEST_EVIDENCE.md). The backlog addresses the 20 findings from the original review plus follow-up findings R21–R22 discovered during remediation. PRD v2 contains additional scope, especially hunt discovery, completed-play tracking, quick review, montage/video, media lifecycle, and permanent account flows; those are tracked below as product-scope work, not as completed review fixes.
 
 | PRD requirement | Related remediation or decision | Coverage and next action |
 | --- | --- | --- |
@@ -52,14 +52,14 @@ Status evidence is maintained in the [checklist](PRD_V2_CHECKLIST.md), [improvem
 | MEDIA-02 | IMP-22, IMP-24; roadmap | Deferred; requires authorized media selection and rights/consent policy. |
 | MEDIA-03 | IMP-22, IMP-24; roadmap | Deferred; requires output expiry, deletion, and retry semantics. |
 | MEDIA-04 | IMP-08, IMP-22 | Stored score snapshot is independent of image bytes; verify a coordinated deletion workflow preserves results. |
-| SEC-01 | IMP-05, IMP-15 | Local ownership boundaries pass; full live role matrix remains. |
+| SEC-01 | IMP-05, IMP-15, IMP-26 | Local ownership boundaries pass; anon RPC grants are hardened in production; full hosted role matrix remains. |
 | SEC-02 | IMP-05, IMP-09, IMP-15, IMP-25 | The bucket is private and signed URLs are used. Targeted migration 026 is live and excludes selfie paths from the general post-hunt photo helper. Actual Storage HTTP allow/deny, deletion, and revocation tests remain pending. |
 | SEC-03 | IMP-14, IMP-15, IMP-24 | SQL validation exists; public abuse controls and expensive-output rate limits need a threat/cost design. |
-| SEC-04 | IMP-05, IMP-15 | Local role-boundary checks pass; confirm live permissions and progress-data exposure. |
+| SEC-04 | IMP-05, IMP-15, IMP-26 | Local role-boundary checks pass; migration 027 is live and only public template listing/invite preview retain anon EXECUTE; hosted progress-data and role-matrix checks remain. |
 | PRIV-01 | IMP-03, IMP-15, IMP-22 | Data inventory exists; owner decisions, deletion controls, device checks, and assistive-technology review remain. |
 | A11Y-01 | IMP-03, IMP-19 | Automated scans cover tested routes; keyboard navigation and 200% text-size browser checks now cover home, participant lobby/play/review/results, and organizer lobby/review/results. Physical screen-reader and device acceptance remain. |
 | MIG-01 | IMP-21 | PRD v2 was reviewed; requirement traceability is now indexed here. |
-| MIG-02 | IMP-05, IMP-13, IMP-14, IMP-22, IMP-25 | Production has 001–022 and targeted 026 applied; 023/024 need isolated acceptance and 025 needs retention approval. |
+| MIG-02 | IMP-05, IMP-13, IMP-14, IMP-22, IMP-25, IMP-26 | Production has 001–022 and targeted 026–027 applied; 023/024 need isolated acceptance and 025 needs retention approval. |
 | MIG-03 | IMP-05, IMP-06, IMP-13, IMP-15, IMP-25 | Migration source and local coverage exist; legacy-data mapping, forward repair, rollback, and hosted acceptance remain. Migration 026 fixes the newly observed cross-team selfie-policy gap in source. |
 | MIG-04 | IMP-05, IMP-13, IMP-14, IMP-22, IMP-25 | Additive migrations are locally repeatable; hosted acceptance is required, 025 remains owner-gated, and targeted 026 is live pending hosted Storage HTTP verification. |
 | MIG-05 | IMP-05, IMP-06, IMP-15, IMP-25 | Production has 001–022 and targeted 026 applied; hosted authorization, Storage, and concurrency tests remain. |

@@ -8,7 +8,7 @@ import { calculateTeamScores, normalizeFinalScores, winningTeams } from '../src/
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222', outsider='12345678-1234-4234-9234-123456789abc'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration
+let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -18,7 +18,7 @@ async function as(role, uid, sql, params=[]) {
 }
 before(async () => {
   db=new PGlite({extensions:{pgcrypto}})
-  await db.exec(`create role anon; create role authenticated;
+  await db.exec(`create role anon; create role authenticated; create role service_role;
     create schema auth; create schema storage; create schema extensions; create schema vault;
     create table vault.test_secrets(name text primary key,decrypted_secret text not null);
     create view vault.decrypted_secrets as select name,decrypted_secret from vault.test_secrets;
@@ -30,6 +30,7 @@ before(async () => {
     create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
     create table storage.objects(id uuid default gen_random_uuid(),bucket_id text,name text);
     grant usage on schema storage to anon,authenticated; grant select,insert,update,delete on storage.objects to authenticated;
+    alter default privileges for role postgres in schema public grant execute on functions to anon,authenticated,service_role;
     alter table storage.objects enable row level security;`)
   for(const file of (await readdir(migrationUrl)).filter(f=>f.endsWith('.sql')).sort()) {
     const sql=await readFile(new URL(file,migrationUrl),'utf8')
@@ -49,6 +50,7 @@ before(async () => {
     if(file.includes('0023')) { auditSafetyMigration=sql; continue }
     if(file.includes('0024')) { chatCursorMigration=sql; continue }
     if(file.includes('0025')) { auditRetentionMigration=sql; continue }
+    if(file.includes('0027')) { rpcPrivilegeMigration=sql; continue }
     await db.exec(sql)
   }
   await db.query('insert into auth.users(id) values ($1),($2),($3)',[owner,other,outsider])
@@ -77,8 +79,25 @@ before(async () => {
   await db.exec(auditSafetyMigration)
   await db.exec(chatCursorMigration)
   await db.exec(auditRetentionMigration)
+  await db.exec(rpcPrivilegeMigration)
 })
 after(async()=> { await db?.close() })
+test('anonymous role can execute only explicitly public security-definer RPCs', async () => {
+  const exposed = await db.query(`select p.proname,pg_get_function_identity_arguments(p.oid) args
+    from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname='public' and p.prosecdef
+      and has_function_privilege('anon',p.oid,'execute')
+    order by p.proname,args`)
+  assert.deepEqual(exposed.rows, [
+    { proname: 'list_hunt_templates', args: 'p_owned boolean' },
+    { proname: 'preview_invitation', args: 'p_token text' },
+  ])
+  await assert.rejects(as('anon', null, 'select public.get_hunt_invites($1)', ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']))
+  await db.exec(`create function public.future_test_rpc() returns boolean language sql security definer as $$ select true $$; revoke all on function public.future_test_rpc() from public`)
+  const futureGrant = await db.query("select has_function_privilege('anon','public.future_test_rpc()','execute') allowed")
+  assert.equal(futureGrant.rows[0].allowed, false, 'default privileges must not expose future security-definer functions to anon')
+  await db.exec('drop function public.future_test_rpc()')
+})
 async function snapshot() {
   const result={}
   for(const table of ['teams','participants','hunt_items','submissions','hunt_votes']) result[table]=(await db.query(`select to_jsonb(t) data from public.${table} t`)).rows
