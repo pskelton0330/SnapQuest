@@ -452,6 +452,12 @@ try {
 
   const { error: endHuntError } = await organizer.rpc('end_hunt_early', { p_hunt_id: huntId })
   assert.ifError(endHuntError)
+  const { error: closedChatSendError } = await participantOne.rpc('send_hunt_message', {
+    p_hunt_id: huntId,
+    p_body: 'Chat should be closed with the hunt',
+  })
+  assert.ok(closedChatSendError, 'Participants must not send chat messages after the hunt enters review')
+  assert.match(closedChatSendError.message, /Chat is only open before or during the hunt/)
   const { data: reviewPhoto, error: reviewPhotoError } = await participantTwo.storage.from('hunt-photos').download(currentPath)
   assert.ifError(reviewPhotoError)
   assert.ok(reviewPhoto, 'Participants should be able to view hunt photos after the hunt ends')
