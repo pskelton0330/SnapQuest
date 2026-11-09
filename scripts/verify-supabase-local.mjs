@@ -842,11 +842,12 @@ try {
     assert.equal(raceResults.find((result) => !result.error).data?.accepted, true)
     const { data, error } = await admin
       .from('submissions')
-      .select('id,storage_path')
+      .select('id,storage_path,approval_status')
       .eq('hunt_id', huntId)
       .single()
     assert.ifError(error)
     savedSubmission = data
+    assert.equal(savedSubmission.approval_status, 'approved', 'Accepted and replacement photos should count by default')
     const winningPath = resultOne.error ? candidateTwo : candidateOne
     const losingPath = resultOne.error ? candidateOne : candidateTwo
     assert.equal(savedSubmission.storage_path, winningPath, `Attempt ${attempt} must leave the accepted path referenced`)
@@ -904,6 +905,13 @@ try {
     'Post-hunt photo access must not reveal another team selfie',
   )
   console.log('After the hunt ends, participants can review hunt photos while other teams’ selfies remain private.')
+  const { error: markLegacyPendingError } = await admin
+    .from('submissions')
+    .update({ approval_status: 'pending' })
+    .eq('hunt_id', huntId)
+    .eq('hunt_item_id', secondItem.id)
+  assert.ifError(markLegacyPendingError)
+  console.log('Explicitly restore one pending legacy submission to verify the finalization safety guard.')
   const [reviewRace, finalizeRace] = await Promise.all([
     organizer.rpc('review_submission', {
       p_submission_id: savedSubmission.id,

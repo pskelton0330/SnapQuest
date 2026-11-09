@@ -25,7 +25,7 @@ let organizerDraft: { id: string; title: string; venue: string; rules: string[];
 let organizerDraftItems: { id: string; title_snapshot: string; description_snapshot: string | null; point_value: number; display_order: number; library_item_id: string | null }[] = []
 let savedDraftPayloads: Record<string, unknown>[] = []
 let organizerReviewStatus: 'review' | 'completed' = 'review'
-let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'pending'
+let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'approved'
 let organizerLobbyStatus: 'scheduled' | 'active' | 'ended' | 'review' = 'scheduled'
 let organizerLobbyParticipantName = 'Taylor'
 
@@ -129,7 +129,7 @@ test.beforeEach(async ({ page }) => {
   organizerDraftItems = []
   savedDraftPayloads = []
   organizerReviewStatus = 'review'
-  organizerReviewDecision = 'pending'
+  organizerReviewDecision = 'approved'
   organizerLobbyStatus = 'scheduled'
   organizerLobbyParticipantName = 'Taylor'
   organizerStartCalls = 0
@@ -289,13 +289,13 @@ test.beforeEach(async ({ page }) => {
       const requestedPath = new URL(request.url()).searchParams.get('storage_path')?.replace(/^eq\./, '')
       if (photoReplacementRaceMode) {
         const row = raceCurrentPhotoPath && (!requestedPath || requestedPath === raceCurrentPhotoPath)
-          ? [{ id: '99999999-9999-4999-8999-999999999999', hunt_item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: raceCurrentPhotoPath, submitted_at: new Date().toISOString(), approval_status: 'pending' }]
+          ? [{ id: '99999999-9999-4999-8999-999999999999', hunt_item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: raceCurrentPhotoPath, submitted_at: new Date().toISOString(), approval_status: 'approved' }]
           : []
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(row) })
         return
       }
       const row = photoFaultMode === 'committed-rpc-response-lost' && requestedPath === uploadedPhotoPath
-        ? [{ id: '99999999-9999-4999-8999-999999999999', hunt_item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: uploadedPhotoPath, submitted_at: new Date().toISOString(), approval_status: 'pending' }]
+        ? [{ id: '99999999-9999-4999-8999-999999999999', hunt_item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: uploadedPhotoPath, submitted_at: new Date().toISOString(), approval_status: 'approved' }]
         : []
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(row) })
       return
@@ -817,7 +817,7 @@ test('photo upload reconciles a committed submission after its RPC response is l
   await page.getByRole('button', { name: 'Join the hunt' }).click()
   const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
   await page.getByRole('article').filter({ hasText: 'A red leaf' }).locator('input[type="file"]').setInputFiles({ name: 'leaf.png', mimeType: 'image/png', buffer: image })
-  await expect(page.getByText('Photo submitted · awaiting review')).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByText('Photo submitted · approved')).toBeVisible({ timeout: 10_000 })
   expect(photoSubmissionRpcCalls).toBe(1)
   await expect(page.getByText(/Submitted successfully, but the photo preview is unavailable right now/)).toHaveCount(0)
   await page.getByRole('checkbox', { name: /Show submitted photo previews/ }).check()
@@ -1320,28 +1320,35 @@ test('organizer reviews a photo, changes its decision, and finalizes results', a
   await hunt.getByRole('button', { name: 'Review photos' }).click()
   await expect(page.getByRole('heading', { name: 'Spring Photo Hunt' })).toBeVisible()
   await expect(page.getByText('Preview unavailable')).toBeVisible()
-  const approveButton = page.getByRole('button', { name: 'Approve' })
-  await expectKeyboardCanReach(page, approveButton)
-  await approveButton.click()
-  await expect(page.getByRole('button', { name: 'Change decision to rejected' })).toBeVisible()
-  await expect(page.getByText('1 reviewed / 1 submitted', { exact: false })).toBeVisible()
-  await page.getByLabel('Show photos').selectOption('pending')
-  await expect(page.getByText('No photos match this filter.')).toBeVisible()
+  const approvalToggle = page.getByRole('checkbox', { name: 'Photo meets hunt rules: Team Cedar photo for A red leaf' })
+  await expect(approvalToggle).toBeChecked()
+  await expect(page.getByText('Photos are approved by default')).toBeVisible()
+  await expectKeyboardCanReach(page, approvalToggle)
+  await approvalToggle.click()
+  await expect(approvalToggle).not.toBeChecked()
+  await expect(page.getByText('rejected', { exact: true })).toBeVisible()
+  await expect(page.getByText('0 approved / 1 rejected / 1 submitted')).toBeVisible()
   await page.getByLabel('Show photos').selectOption('approved')
-  await expect(page.getByRole('button', { name: 'Change decision to rejected' })).toBeVisible()
-  await page.getByLabel('Show photos').selectOption('all')
+  await expect(page.getByText('No photos match this filter.')).toBeVisible()
+  await page.getByLabel('Show photos').selectOption('rejected')
+  await expect(approvalToggle).toBeVisible()
   await expect.poll(() => auditReports.some(report => {
     const details = report.p_details as Record<string, unknown> | undefined
-    return details?.app === 'organizer_web' && details?.stage === 'review_approved_confirmed'
+    return details?.app === 'organizer_web' && details?.stage === 'review_rejected_confirmed'
   })).toBe(true)
-  await page.getByRole('button', { name: 'Change decision to rejected' }).click()
-  await expect(page.getByRole('button', { name: 'Change decision to approved' })).toBeVisible()
-  await page.getByRole('button', { name: 'Change decision to approved' }).click()
-  await expect(page.getByRole('button', { name: 'Change decision to rejected' })).toBeVisible()
+  await page.getByLabel('Show photos').selectOption('all')
+  await approvalToggle.click()
+  await expect(approvalToggle).toBeChecked()
+  await expect(page.getByText('1 approved / 0 rejected / 1 submitted')).toBeVisible()
   await page.getByLabel('Show photos').selectOption('pending')
   await page.getByRole('button', { name: 'Finalize results' }).click()
+  await page.evaluate(() => { document.body.style.minHeight = '200vh' })
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0)
   await page.getByRole('button', { name: 'Confirm final results' }).click()
   await expect(page.getByRole('heading', { name: 'Hunt complete' })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
+  await expect(page.locator('.celebration-card-panel').first()).toBeVisible()
   await expect(page.getByLabel('Show photos')).toHaveCount(0)
   await expect(page.locator('.review-photo-card')).toHaveCount(1)
   await expect(page.getByText('#1 Team Cedar')).toBeVisible()
@@ -1366,8 +1373,7 @@ test('finalization retry after a lost response is traced to the original operati
   await page.getByRole('button', { name: 'My hunts' }).click()
   const hunt = page.getByRole('article').filter({ hasText: 'Spring Photo Hunt' })
   await hunt.getByRole('button', { name: 'Review photos' }).click()
-  await page.getByRole('button', { name: 'Approve' }).click()
-  await expect(page.getByRole('button', { name: 'Change decision to rejected' })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Photo meets hunt rules: Team Cedar photo for A red leaf' })).toBeChecked()
 
   await page.getByRole('button', { name: 'Finalize results' }).click()
   await page.getByRole('button', { name: 'Confirm final results' }).click()
@@ -1688,8 +1694,8 @@ test('organizer can start a scheduled hunt immediately, end it, and open photo r
   await expect(controls.getByRole('button', { name: 'Add 15 minutes' })).toBeVisible()
   await expect(controls.getByRole('button', { name: 'End hunt now and review' })).toBeVisible()
   await controls.getByRole('button', { name: 'End hunt now and review' }).click()
-  await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Finalize results' })).toBeDisabled()
+  await expect(page.getByRole('checkbox', { name: 'Photo meets hunt rules: Team Cedar photo for A red leaf' })).toBeChecked()
+  await expect(page.getByRole('button', { name: 'Finalize results' })).toBeEnabled()
 })
 
 test('organizer lobby follows the server when a scheduled hunt starts', async ({ page }) => {

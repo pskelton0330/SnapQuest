@@ -514,7 +514,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       setSubmissions(current => ({ ...current, [item.id]: {
         id: reconciledRow?.id ?? current[item.id]?.id ?? crypto.randomUUID(), hunt_item_id: item.id, team_id: context.team.id,
         participant_id: reconciledRow?.participant_id ?? context.participant.id, storage_path: displayPath, submitted_at: result.submitted_at,
-        approval_status: reconciledRow?.approval_status ?? 'pending', ...(previewUrl ? { photoUrl: previewUrl } : {}),
+        approval_status: reconciledRow?.approval_status ?? 'approved', ...(previewUrl ? { photoUrl: previewUrl } : {}),
       } }))
       if (previewUnavailable) { setUploadErrors(current => ({ ...current, [item.id]: 'Submitted successfully, but the preview could not load yet.' })); void reportOperation(huntId, operationId, 'photo_preview_unavailable') }
       else setUploadErrors(current => ({ ...current, [item.id]: '' }))

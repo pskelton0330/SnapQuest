@@ -8,7 +8,7 @@ import { calculateTeamScores, normalizeFinalScores, winningTeams } from '../src/
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222', outsider='12345678-1234-4234-9234-123456789abc'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration
+let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -52,6 +52,7 @@ before(async () => {
     if(file.includes('0025')) { auditRetentionMigration=sql; continue }
     if(file.includes('0029')) { disableAuditRetentionMigration=sql; continue }
     if(file.includes('0027')) { rpcPrivilegeMigration=sql; continue }
+    if(file.includes('0030')) { photoApprovalMigration=sql; continue }
     await db.exec(sql)
   }
   await db.query('insert into auth.users(id) values ($1),($2),($3)',[owner,other,outsider])
@@ -82,6 +83,7 @@ before(async () => {
   await db.exec(auditRetentionMigration)
   await db.exec(disableAuditRetentionMigration)
   await db.exec(rpcPrivilegeMigration)
+  await db.exec(photoApprovalMigration)
 })
 after(async()=> { await db?.close() })
 test('anonymous role can execute only explicitly public security-definer RPCs', async () => {
@@ -646,9 +648,22 @@ test('timing changes preserve photo acceptance, replacement, attribution and clo
   await assert.rejects(as('authenticated',other,'select public.submit_hunt_photo($1,$2,$3)',[item,stalePath,path1]),/teammate changed this photo slot/)
   assert.equal((await db.query('select storage_path from public.submissions where hunt_id=$1',[id])).rows[0].storage_path,path2)
   const rows=(await db.query('select * from public.submissions where hunt_id=$1',[id])).rows
-  assert.equal(rows.length,1);assert.equal(rows[0].participant_id,participant.id)
+  assert.equal(rows.length,1);assert.equal(rows[0].participant_id,participant.id);assert.equal(rows[0].approval_status,'approved')
   await as('authenticated',owner,'select public.end_hunt_early($1)',[id])
   await assert.rejects(as('authenticated',other,'select public.submit_hunt_photo($1,$2,null)',[item,path1]))
+})
+
+test('hunt photos default to approved, backfill open hunts, and preserve finalized history',async()=>{
+  const defaultStatus=(await db.query("select column_default from information_schema.columns where table_schema='public' and table_name='submissions' and column_name='approval_status'")).rows[0].column_default
+  assert.match(defaultStatus,/approved/)
+  const {huntId,participant}=await createReliabilityHunt('Auto-approved photos',new Date(Date.now()+60*60*1000).toISOString())
+  const item=(await db.query('select id from public.hunt_items where hunt_id=$1 limit 1',[huntId])).rows[0].id
+  const pendingPath=`${huntId}/${participant.team_id}/${item}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg`
+  await db.query("insert into public.submissions(hunt_id,hunt_item_id,team_id,participant_id,storage_path,approval_status) values($1,$2,$3,$4,$5,'pending')",[huntId,item,participant.team_id,participant.participant_id,pendingPath])
+  await db.query("update public.submissions set approval_status='pending' where storage_path='original/photo.jpg'")
+  await db.exec(photoApprovalMigration)
+  assert.equal((await db.query('select approval_status from public.submissions where storage_path=$1',[pendingPath])).rows[0].approval_status,'approved')
+  assert.equal((await db.query("select approval_status from public.submissions where storage_path='original/photo.jpg'")).rows[0].approval_status,'pending','Finalized games keep their immutable review history')
 })
 
 

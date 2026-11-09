@@ -101,10 +101,25 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     if (!supabase) return
     const operationId = crypto.randomUUID()
     setBusy(id); setError('')
-    const { error: actionError } = await supabase.rpc('review_submission', { p_submission_id: id, p_decision: decision })
-    if (actionError) { setError(actionError.message); reportOperationFailure(huntId, operationId, 'review_decision_failed', actionError, 'organizer_web') }
-    else { void reportOperation(huntId, operationId, `review_${decision}_confirmed`, 'success', 'organizer_web'); await load(); onChanged() }
-    setBusy('')
+    try {
+      const { error: actionError } = await supabase.rpc('review_submission', { p_submission_id: id, p_decision: decision })
+      if (actionError) {
+        setError(actionError.message)
+        reportOperationFailure(huntId, operationId, 'review_decision_failed', actionError, 'organizer_web')
+        return
+      }
+      void reportOperation(huntId, operationId, `review_${decision}_confirmed`, 'success', 'organizer_web')
+      // The decision RPC has committed. Reflect it immediately so a slow gallery
+      // refresh cannot leave the control disabled or make the organizer retry.
+      setData(current => current ? { ...current, submissions: current.submissions.map(photo => photo.id === id ? { ...photo, status: decision } : photo) } : current)
+      onChanged()
+      void load()
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'The photo decision could not be saved. Please try again.')
+      reportOperationFailure(huntId, operationId, 'review_decision_failed', actionError, 'organizer_web')
+    } finally {
+      setBusy('')
+    }
   }
 
   async function startReview() {
@@ -159,6 +174,8 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
       )
     : []
   const pendingCount = data?.submissions.filter(row => row.status === 'pending').length ?? 0
+  const approvedCount = data?.submissions.filter(row => row.status === 'approved').length ?? 0
+  const rejectedCount = data?.submissions.filter(row => row.status === 'rejected').length ?? 0
   const reviewStarted = ['review', 'completed'].includes(data?.status ?? '')
   const canBeginReview = Boolean(data?.can_begin_review)
   const ended = ['ended', 'review', 'completed'].includes(status) || reviewStarted || canBeginReview
@@ -180,6 +197,10 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, title, winner?.teamId, winner?.teamName, winner?.total, winner?.rank, tiedWinner])
+
+  useEffect(() => {
+    if (data?.status === 'completed') window.scrollTo(0, 0)
+  }, [data?.status])
 
   async function buildCelebrationCard() {
     if (!data || !winner) return null
@@ -245,19 +266,19 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
 
   return <section className="workspace-content hunt-review-content">
     <button className="back-link" onClick={onBack}><ArrowLeft size={15}/> Back to hunt</button>
-    <div className="new-hunt-heading"><div className="eyebrow"><Medal size={14}/> PHOTO REVIEW</div><h1>{title}</h1><p>Approve the photos that meet your hunt rules. Approved photos earn the item’s points.</p></div>
+    <div className="new-hunt-heading"><div className="eyebrow"><Medal size={14}/> PHOTO REVIEW</div><h1>{title}</h1><p>Photos start approved. Uncheck any photo that does not meet your hunt rules. Approved photos earn points.</p></div>
     {error && <div className="form-error" role="alert"><CircleHelp size={15}/>{error}</div>}
     {!data ? <div className="workspace-loading"><LoaderCircle className="spin" size={20}/> Loading the private photo gallery…</div> : <>
       {canBeginReview && <div className="review-action-banner"><Clock3 size={18}/><div><b>Hunt time is up</b><span>Start photo review when you’re ready. This does not change the hunt’s end time.</span></div><button className="outline-button" disabled={busy === 'review'} onClick={() => void startReview()}>{busy === 'review' ? 'Opening review…' : 'Start photo review'}</button></div>}
       {!ended && <div className="review-action-banner"><Clock3 size={18}/><div><b>Hunt is still running</b><span>Photo review opens after the hunt ends. You can end the hunt from its lobby.</span></div></div>}
-      {completedResults}
       {data.status === 'completed' && (winner ? <section className="celebration-card-panel"><div className="eyebrow"><Trophy size={14}/> {winningTeams.length > 1 ? 'TIED WINNERS' : 'WINNER CELEBRATION'}</div><h2>{winningTeams.length > 1 ? `${winningTeams.length} teams share first place` : 'Make the win shareable'}</h2>{winningTeams.length > 1 && <label>Choose a team card<select value={winner.teamId} onChange={event => setCelebrationTeamId(event.target.value)}>{winningTeams.map(team => <option key={team.teamId} value={team.teamId}>{team.teamName}</option>)}</select></label>}{celebrationPreviewUrl && <img className="celebration-card-preview" src={celebrationPreviewUrl} alt={`Winner celebration card for ${winner.teamName}`}/>}<p>Create a branded winner card using {winner.teamName}’s team selfie. If no selfie was submitted, the card uses the team color as a placeholder.</p><p className="celebration-caption">{celebrationCaption}</p><div className="celebration-card-actions"><button className="primary-button" disabled={celebrationBusy} onClick={() => void shareCelebrationCard()}><Share2 size={15}/> {celebrationBusy ? 'Preparing card?' : 'Share winner card'}</button><button className="outline-button" disabled={celebrationBusy} onClick={() => void downloadCelebrationCard()}><Download size={15}/> Download card</button><button className="outline-button" onClick={() => void copyCelebrationCaption()}><Copy size={15}/> {copiedCaption === celebrationCaption ? 'Caption copied' : 'Copy caption'}</button></div>{celebrationError && <p className="photo-upload-error" role="alert">{celebrationError}</p>}<small className="celebration-card-note">The image is created in this browser and is not uploaded to SnapQuest.</small></section> : <section className="celebration-card-panel"><div className="eyebrow"><Trophy size={14}/> RESULTS</div><h2>No winning team this time</h2><p>Every team finished with zero points. Celebrate the teams’ effort and try another hunt.</p></section>)}
-      {reviewStarted && <div className="review-summary"><b>{pendingCount ? `${pendingCount} photos need review` : 'All submitted photos reviewed'}</b><span>{data.submissions.length - pendingCount} reviewed / {data.submissions.length} submitted · {data.teams.length} teams · {data.items.length} challenges</span></div>}
+      {completedResults}
+      {data.status === 'review' && <div className="review-summary"><b>{pendingCount ? `${pendingCount} photos still need a decision` : 'Photos are approved by default'}</b><span>Uncheck photos that do not meet the hunt rules. {approvedCount} approved / {rejectedCount} rejected / {data.submissions.length} submitted.</span></div>}
       {data.status === 'review' && <label className="review-filter">Show photos <select value={reviewFilter} onChange={event => setReviewFilter(event.target.value as typeof reviewFilter)}><option value="all">All photos</option><option value="pending">Needs review</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></label>}
       {data.status === 'review' && reviewFilter !== 'all' && !data.submissions.some(photo => photo.status === reviewFilter) && <p>No photos match this filter.</p>}
       <div className="review-item-list">{data.items.filter(item => data.status !== 'review' || reviewFilter === 'all' || data.submissions.some(photo => photo.item_id === item.id && photo.status === reviewFilter)).map(item => <section className="review-item" key={item.id}><header><div><span>CHALLENGE {item.display_order + 1}</span><h2>{item.title}</h2></div><b>{item.points} pts</b></header><div className="review-photos">{data.teams.filter(team => data.status !== 'review' || reviewFilter === 'all' || data.submissions.some(photo => photo.item_id === item.id && photo.team_id === team.id && photo.status === reviewFilter)).map(team => {
         const photo = data.submissions.find(row => row.item_id === item.id && row.team_id === team.id)
-        return <article className="review-photo-card" key={team.id}><div className="review-photo-team"><span className="team-swatch" style={{ backgroundColor: team.display_color }}/><b>{team.name}</b></div>{photo?.photo_url ? <a href={photo.photo_url} target="_blank" rel="noreferrer"><img src={photo.photo_url} alt={`${team.name} photo for ${item.title}`} onError={() => markPreviewUnavailable(photo.storage_path)}/></a> : <div className="review-photo-empty">{photo ? <>Preview unavailable<button className="outline-button" disabled={previewRetryingPath === photo.storage_path} onClick={() => void retryReviewPhoto(photo.storage_path)}>{previewRetryingPath === photo.storage_path ? 'Retrying preview…' : 'Retry preview'}</button></> : 'No photo submitted'}</div>}{photo && <><div className={`review-status status-${photo.status}`}>{photo.status}</div>{data.status === 'review' && <div className="review-photo-actions">{photo.status === 'pending' ? <><button className="approve-button" disabled={busy === photo.id} onClick={() => void decide(photo.id, 'approved')}><Check size={14}/> Approve</button><button className="reject-button" disabled={busy === photo.id} onClick={() => void decide(photo.id, 'rejected')}><X size={14}/> Reject</button></> : <button className={photo.status === 'approved' ? 'reject-button' : 'approve-button'} disabled={busy === photo.id} aria-label={photo.status === 'approved' ? 'Change decision to rejected' : 'Change decision to approved'} onClick={() => void decide(photo.id, photo.status === 'approved' ? 'rejected' : 'approved')}>{photo.status === 'approved' ? <><X size={14}/> Change to rejected</> : <><Check size={14}/> Change to approved</>}</button>}</div>}</>}</article>
+        return <article className="review-photo-card" key={team.id}><div className="review-photo-team"><span className="team-swatch" style={{ backgroundColor: team.display_color }}/><b>{team.name}</b></div>{photo?.photo_url ? <a href={photo.photo_url} target="_blank" rel="noreferrer"><img src={photo.photo_url} alt={`${team.name} photo for ${item.title}`} onError={() => markPreviewUnavailable(photo.storage_path)}/></a> : <div className="review-photo-empty">{photo ? <>Preview unavailable<button className="outline-button" disabled={previewRetryingPath === photo.storage_path} onClick={() => void retryReviewPhoto(photo.storage_path)}>{previewRetryingPath === photo.storage_path ? 'Retrying preview…' : 'Retry preview'}</button></> : 'No photo submitted'}</div>}{photo && <><div className={`review-status status-${photo.status}`}>{photo.status}</div>{data.status === "review" && <div className="review-photo-actions">{photo.status === "pending" ? <><button className="approve-button" disabled={busy === photo.id} onClick={() => void decide(photo.id, "approved")}><Check size={14}/> Approve</button><button className="reject-button" disabled={busy === photo.id} onClick={() => void decide(photo.id, "rejected")}><X size={14}/> Reject</button></> : <label className={"review-approval-toggle " + photo.status}><input type="checkbox" checked={photo.status === "approved"} disabled={busy === photo.id} aria-label={"Photo meets hunt rules: " + team.name + " photo for " + item.title} onChange={event => void decide(photo.id, event.currentTarget.checked ? "approved" : "rejected")}/><span>{photo.status === "approved" ? "Approved and counted" : "Rejected and not counted"}</span></label>}</div>}</>}</article>
       })}</div></section>)}</div>
       {data.status !== 'completed' && ended ? (
         <div className="review-finish">
