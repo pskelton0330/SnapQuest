@@ -819,7 +819,9 @@ test('photo upload reconciles a committed submission after its RPC response is l
   await page.getByRole('article').filter({ hasText: 'A red leaf' }).locator('input[type="file"]').setInputFiles({ name: 'leaf.png', mimeType: 'image/png', buffer: image })
   await expect(page.getByText('Photo submitted · awaiting review')).toBeVisible({ timeout: 10_000 })
   expect(photoSubmissionRpcCalls).toBe(1)
-  await expect(page.getByText(/Submitted successfully, but the preview could not load yet/)).toBeVisible()
+  await expect(page.getByText(/Submitted successfully, but the photo preview is unavailable right now/)).toHaveCount(0)
+  await page.getByRole('checkbox', { name: /Show submitted photo previews/ }).check()
+  await expect(page.getByText(/Submitted successfully, but the photo preview is unavailable right now/)).toBeVisible()
 })
 
 test('photo upload reports a Storage policy denial without calling the submission RPC', async ({ page }) => {
@@ -874,10 +876,24 @@ test('stale device photo replacement reloads the winning photo and cleans only i
   await page.getByRole('button', { name: 'Join the hunt' }).click()
   const firstSlot = page.locator('.participant-item-card').filter({ hasText: 'A red leaf' })
   await expect(firstSlot.locator('.photo-submission-status')).toContainText('Photo submitted')
+  const previewToggle = page.getByRole('checkbox', { name: 'Show submitted photo previews' })
+  await expect(firstSlot.locator('.submission-preview')).toHaveCount(0)
+  expect(raceSignedPaths).toHaveLength(0)
+  await previewToggle.check()
+  await expect(firstSlot.locator('.submission-preview')).toBeVisible()
+  await expect.poll(() => raceSignedPaths.length).toBe(1)
+  await previewToggle.uncheck()
+  await expect(firstSlot.locator('.submission-preview')).toHaveCount(0)
+  await previewToggle.check()
+  await expect(firstSlot.locator('.submission-preview')).toBeVisible()
   const staleDevice = await page.context().newPage()
   await staleDevice.goto('/#/play/33333333-3333-4333-8333-333333333333')
   const secondSlot = staleDevice.locator('.participant-item-card').filter({ hasText: 'A red leaf' })
   await expect(secondSlot.locator('.photo-submission-status')).toContainText('Photo submitted')
+  const stalePreviewToggle = staleDevice.getByRole('checkbox', { name: 'Show submitted photo previews' })
+  await expect(secondSlot.locator('.submission-preview')).toHaveCount(0)
+  await stalePreviewToggle.check()
+  await expect(secondSlot.locator('.submission-preview')).toBeVisible()
 
   await firstSlot.locator('input[type="file"]').setInputFiles({ name: 'first-replacement.png', mimeType: 'image/png', buffer: image })
   await expect.poll(() => raceAcceptedPaths.length).toBe(1)
@@ -886,7 +902,7 @@ test('stale device photo replacement reloads the winning photo and cleans only i
   await expect(firstSlot.locator('.photo-submission-status')).toContainText('Photo submitted')
 
   await secondSlot.locator('input[type="file"]').setInputFiles({ name: 'stale-replacement.png', mimeType: 'image/png', buffer: image })
-  await expect(secondSlot.getByRole('status')).toContainText('A teammate replaced this photo first. Their saved photo is now shown; your replacement was not saved.')
+  await expect(secondSlot.getByRole('status')).toContainText('A teammate replaced this photo first. Their saved photo is still in place; your replacement was not saved.')
   await expect(secondSlot.locator('.photo-submission-status')).toContainText('Photo submitted')
   const displayedSource = await secondSlot.locator('.submission-preview').getAttribute('src')
   expect(decodeURIComponent(displayedSource ?? '')).toContain(winningPath)
@@ -1262,13 +1278,35 @@ test('participant signed-preview failures create a privacy-safe diagnostic event
   expect(Object.keys(report?.p_details as Record<string, unknown>).sort()).toEqual(['app', 'client_report', 'operation_id', 'stage'])
 })
 
-test('organizer next step opens review when a hunt is ready for review', async ({ page }) => {
-  organizerReviewMode = true
+test('overview lists live hunts with direct organizer management access', async ({ page }) => {
+  organizerLobbyMode = true
+  organizerLobbyStatus = 'active'
   await restoreOrganizerSession(page)
   await page.goto('/#/')
-  await page.locator('.next-action-card').getByRole('button', { name: 'Review photos' }).click()
-  await expect(page.getByRole('heading', { name: 'Spring Photo Hunt' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible()
+  const panel = page.getByRole('region', { name: 'Manage a hunt in progress' })
+  await expect(panel.getByText('1 live hunt')).toBeVisible()
+  const hunt = panel.getByRole('article', { name: 'Active hunt: Spring Photo Hunt' })
+  await expect(hunt.getByText('Town Park')).toBeVisible()
+  await hunt.getByRole('button', { name: 'Manage hunt' }).click()
+  await expect(page.getByRole('heading', { name: 'Hunt in progress' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'End hunt now and review' })).toBeVisible()
+  for (const width of [320, 375, 390]) {
+    await page.setViewportSize({ width, height: 844 })
+    const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
+    expect(dimensions.content, `active hunt management horizontal overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewport)
+  }
+})
+
+test('overview plan-a-new-hunt card opens the hunt builder when no hunt is live', async ({ page }) => {
+  organizerReviewMode = true
+  organizerReviewStatus = 'review'
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await expect(page.getByRole('region', { name: 'Manage a hunt in progress' })).toContainText('No hunts are running right now')
+  const planningCard = page.locator('.plan-hunt-panel')
+  await expect(planningCard.getByRole('heading', { name: 'Plan a new hunt' })).toBeVisible()
+  await planningCard.getByRole('button', { name: 'Start planning' }).click()
+  await expect(page.getByRole('heading', { name: 'Create a venue hunt' })).toBeVisible()
 })
 
 test('organizer reviews a photo, changes its decision, and finalizes results', async ({ page }) => {
@@ -1421,14 +1459,14 @@ test('organizer email callback restores the session at the site root', async ({ 
   await expect(page.getByRole('status')).toContainText('Check your email')
   await page.goto('/?email-callback=1#access_token=callback-access-token&refresh_token=callback-refresh-token&expires_in=3600&token_type=bearer&type=magiclink')
   await expect(page.getByRole('heading', { name: /Welcome in/ })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Create your first hunt' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Manage a hunt in progress' })).toContainText('No hunts are running right now')
 })
 
 test('restored organizer session opens the production organizer workspace', async ({ page }) => {
   await restoreOrganizerSession(page)
   await page.goto('/#/')
   await expect(page.getByRole('heading', { name: /Welcome in/ })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Create your first hunt' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Manage a hunt in progress' })).toContainText('No hunts are running right now')
   const returnToTeam = page.getByRole('link', { name: /Return to Team Cedar/ })
   await expect(returnToTeam).toHaveAttribute('href', '#/play/33333333-3333-4333-8333-333333333333')
 })
@@ -1436,7 +1474,7 @@ test('restored organizer session opens the production organizer workspace', asyn
 test('organizer hunt editor fits phone widths, passes axe, and reorders challenges', async ({ page }) => {
   await restoreOrganizerSession(page)
   await page.goto('/#/')
-  await page.getByRole('button', { name: 'Create a hunt' }).first().click()
+  await page.locator('.plan-hunt-panel').getByRole('button', { name: 'Start planning' }).click()
   await expect(page.getByRole('heading', { name: 'Create a venue hunt' })).toBeVisible()
   for (const width of [320, 375, 390]) {
     await page.setViewportSize({ width, height: 844 })
@@ -1464,7 +1502,7 @@ test('organizer can save, reopen, edit, and save a production draft', async ({ p
   organizerDraftMode = true
   await restoreOrganizerSession(page)
   await page.goto('/#/')
-  await page.getByRole('button', { name: 'Create a hunt' }).first().click()
+  await page.locator('.plan-hunt-panel').getByRole('button', { name: 'Start planning' }).click()
   await page.getByLabel('Venue name').fill('Riverside Park')
   await page.getByLabel(/Hunt title/).fill('Saturday Adventure')
   await page.getByRole('button', { name: 'Add first item' }).click()
@@ -1621,8 +1659,14 @@ test('organizer can start a scheduled hunt immediately, end it, and open photo r
   await page.getByRole('button', { name: 'My hunts' }).click()
   await page.getByRole('button', { name: 'Open lobby' }).click()
   await expect(page.getByRole('heading', { name: 'Ready to start?' })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Hunt status' })).toContainText('joined across')
-  await expect(page.getByRole('region', { name: 'Hunt status' }).locator('[aria-current="step"]')).toHaveText('Waiting')
+  const huntStatus = page.getByRole('region', { name: 'Hunt status' })
+  const huntFlow = huntStatus.getByRole('list', { name: 'Hunt progress' })
+  await expect(huntStatus).toContainText('joined across')
+  await expect(huntFlow.getByRole('listitem')).toHaveCount(5)
+  await expect(huntFlow.locator('[aria-current="step"]')).toHaveText(/2\s*Waiting/)
+  await expect(huntFlow.getByRole('button')).toHaveCount(0)
+  const flowArrow = await huntFlow.getByRole('listitem').nth(0).evaluate(element => getComputedStyle(element, '::after').content)
+  expect(flowArrow).toContain(await page.evaluate(() => window.innerWidth <= 600 ? '↓' : '→'))
   await expect(page.getByText('More hunt controls')).toBeVisible()
   const sectionNav = page.getByRole('navigation', { name: 'Hunt sections' })
   await expect(sectionNav.getByRole('button', { name: 'Teams & invitations' })).toBeVisible()
@@ -1636,7 +1680,7 @@ test('organizer can start a scheduled hunt immediately, end it, and open photo r
   await page.getByRole('button', { name: 'Start hunt now' }).click()
   await expect.poll(() => organizerStartCalls).toBe(1)
   await expect(controls.getByRole('heading', { name: 'Hunt in progress' })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Hunt status' }).locator('[aria-current="step"]')).toHaveText('Playing')
+  await expect(huntFlow.locator('[aria-current="step"]')).toHaveText(/3\s*Playing/)
   await expect(controls.getByRole('button', { name: 'Add 15 minutes' })).toBeVisible()
   await expect(controls.getByRole('button', { name: 'End hunt now and review' })).toBeVisible()
   await controls.getByRole('button', { name: 'End hunt now and review' }).click()
@@ -1652,10 +1696,10 @@ test('organizer lobby follows the server when a scheduled hunt starts', async ({
   organizerLobbyStatus = 'active'
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
   await expect(page.getByRole('heading', { name: 'Hunt in progress' })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Hunt status' }).locator('[aria-current="step"]')).toHaveText('Playing')
+  await expect(page.getByRole('region', { name: 'Hunt status' }).locator('[aria-current="step"]')).toHaveText(/3\s*Playing/)
   organizerLobbyStatus = 'ended'
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-  await expect(page.getByRole('region', { name: 'Hunt status' }).locator('[aria-current="step"]')).toHaveText('Review')
+  await expect(page.getByRole('region', { name: 'Hunt status' }).locator('[aria-current="step"]')).toHaveText(/4\s*Review/)
   await expect(page.getByRole('region', { name: 'Hunt status' }).getByRole('button', { name: 'Review photos' })).toBeVisible()
 })
 
