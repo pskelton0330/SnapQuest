@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { Archive, ArrowDownUp, ArrowRight, Camera, Check, CircleHelp, Clock3, House, Library, LogOut, Plus, Search, ShieldCheck, Sparkles, Users, X, MapPin, ClipboardList, ArrowLeft, QrCode, Copy, RefreshCw, CalendarDays, Settings2, UserRound, Play } from 'lucide-react'
-import { QRCodeSVG } from 'qrcode.react'
+import { Archive, ArrowDownUp, ArrowRight, Camera, Check, CircleHelp, Clock3, House, Library, LogOut, Plus, Search, ShieldCheck, Sparkles, Users, X, MapPin, ClipboardList, ArrowLeft, QrCode, CalendarDays, Settings2, UserRound, Play } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase'
 import { reportOperationFailure } from '../../lib/operationLog'
@@ -10,6 +9,7 @@ import HuntChat from '../../components/HuntChat'
 import TeamLobby from '../../components/TeamLobby'
 import InviteLinksPanel from '../../components/InviteLinksPanel'
 import HuntDiagnostics from '../../components/HuntDiagnostics'
+import ConfirmDialog from '../../components/ConfirmDialog'
 import ChallengeListEditor from '../../components/ChallengeListEditor'
 import { importChallenges, SUGGESTED_RULES, validateHuntDraft } from '../../lib/huntEditor'
 import type { Challenge } from '../../lib/workspace'
@@ -23,7 +23,7 @@ type Team = { id: string; hunt_id: string; name: string; display_color: string; 
 type Participant = { id: string; hunt_id: string; team_id: string; display_name: string; joined_at: string }
 type PlayerGame = { hunt_id: string; team_id: string; team_name: string; hunt_title: string }
 type InviteCode = { team_id: string | null; team_name: string; invite_token: string }
-type Page = 'overview' | 'library' | 'hunts' | 'new-hunt' | 'manage-hunt' | 'review-hunt'
+type Page = 'overview' | 'library' | 'hunts' | 'new-hunt' | 'manage-hunt' | 'review-hunt' | 'account'
 
 function localDateTimeValue(value?: string | null) {
   const date = value ? new Date(value) : new Date(Date.now() + 60 * 60 * 1000)
@@ -45,7 +45,10 @@ function clearSavedInvites(huntId: string) {
 }
 
 export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }: OrganizerWorkspaceProps) {
-  const [page, setPage] = useState<Page>('overview')
+  const [page, setPageState] = useState<Page>('hunts')
+  const [mobileLayout, setMobileLayout] = useState(() => window.matchMedia('(max-width: 600px)').matches)
+  const draftBaseline = useRef('')
+  const [pendingPage, setPendingPage] = useState<Page | null>(null)
   const [organizer, setOrganizer] = useState<Organizer | null>(null)
   const [items, setItems] = useState<LibraryItem[]>([])
   const [hunts, setHunts] = useState<Hunt[]>([])
@@ -63,9 +66,13 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const [selectedRules, setSelectedRules] = useState<string[]>([SUGGESTED_RULES[0].text])
   const [draftItems, setDraftItems] = useState<DraftItem[]>([])
   const [challengePaste, setChallengePaste] = useState('')
+  const [libraryPickerSearch, setLibraryPickerSearch] = useState('')
+  const [libraryAddedMessage, setLibraryAddedMessage] = useState('')
   const [stripListMarkers, setStripListMarkers] = useState(false)
   const [huntSaving, setHuntSaving] = useState(false)
   const [editingDraftId, setEditingDraftId] = useState('')
+  const [reuseSourceTitle, setReuseSourceTitle] = useState('')
+  const [reusingHuntId, setReusingHuntId] = useState('')
   const [huntMessage, setHuntMessage] = useState('')
   const [managedHunt, setManagedHunt] = useState<Hunt | null>(null)
   const [lobbyStatusStale, setLobbyStatusStale] = useState(false)
@@ -90,13 +97,20 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const [manageMessage, setManageMessage] = useState('')
   const [timingBusy, setTimingBusy] = useState(false)
   const [copiedInvite, setCopiedInvite] = useState('')
+  const [creatorDisplayName, setCreatorDisplayName] = useState('Organizer')
+  const [displayNameDraft, setDisplayNameDraft] = useState('')
+  const [accountMessage, setAccountMessage] = useState('')
+  const [accountError, setAccountError] = useState('')
+  const [accountBusy, setAccountBusy] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const lobbyRequestId = useRef(0)
   const lobbyRefreshTimer = useRef<number | undefined>(undefined)
   const lobbySelfieUrlCache = useRef(new Map<string, { url: string; expiresAt: number }>())
 
   const loadWorkspace = useCallback(async () => {
     if (!supabase) return
-    const profile = await supabase.from('organizers').select('id').eq('auth_user_id', session.user.id).maybeSingle()
+    let profile = await supabase.from('organizers').select('id').eq('auth_user_id', session.user.id).maybeSingle()
     setLoadError('')
     if (profile.error) {
       setLoadError(profile.error.message)
@@ -104,11 +118,14 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       return
     }
     if (!profile.data) {
-      setLoadError('Your account is signed in but has not been provisioned as an organizer.')
-      setLoading(false)
-      return
+      const { error: provisionError } = await supabase.rpc('ensure_my_organizer_profile')
+      if (provisionError) {
+        setLoadError(provisionError.message)
+        setLoading(false)
+        return
+      }
+      profile = await supabase.from('organizers').select('id').eq('auth_user_id', session.user.id).maybeSingle()
     }
-    setOrganizer(profile.data)
     const memberships = await supabase.from('participants').select('hunt_id,team_id').eq('auth_user_id', session.user.id)
     if (!memberships.error && memberships.data?.length) {
       const huntIds = [...new Set(memberships.data.map(row => row.hunt_id))]
@@ -127,6 +144,12 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
         }))
       } else setPlayerGames([])
     } else setPlayerGames([])
+    if (!profile.data) {
+      setLoadError('Your account is signed in but has not been provisioned as an organizer.')
+      setLoading(false)
+      return
+    }
+    setOrganizer(profile.data)
     const library = await supabase.from('library_items').select('id,title,description,category,archived,created_at').eq('organizer_id', profile.data.id).order('created_at', { ascending: false })
     if (library.error) setLoadError(library.error.message)
     else setItems(library.data ?? [])
@@ -150,6 +173,20 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   // Loading the organizer's remote data when the authenticated session changes is intentional.
   // eslint-disable-next-line react/set-state-in-effect
   useEffect(() => { void loadWorkspace() }, [loadWorkspace])
+
+  const organizerId = organizer?.id
+  useEffect(() => {
+    if (!supabase || !organizerId) return
+    let cancelled = false
+    void supabase.from('hunt_creator_profiles').select('display_name').eq('organizer_id', organizerId).maybeSingle().then(({ data, error }) => {
+      if (cancelled) return
+      if (error) { setAccountError('Your display name could not be loaded. Try again from Account settings.'); return }
+      const name = data?.display_name && data.display_name !== 'SnapQuest organizer' ? data.display_name : ''
+      setCreatorDisplayName(name || 'Organizer')
+      setDisplayNameDraft(name)
+    })
+    return () => { cancelled = true }
+  }, [organizerId])
 
   useEffect(() => {
     if (!initialHuntId || loading || initialHuntId === processedRouteHuntId) return
@@ -202,6 +239,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     setDraftItems(current => current.some(draft => draft.libraryItemId === item.id) ? current : [...current, {
       key: crypto.randomUUID(), title: item.title, description: item.description ?? '', pointValue: 1, libraryItemId: item.id,
     }])
+    setLibraryAddedMessage(`${item.title} added to this hunt.`)
   }
 
   function updateDraftChallengeList(challenges: Challenge[]) {
@@ -230,7 +268,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     event.preventDefault()
     setHuntMessage('')
     if (!supabase) return
-    if (!huntSchemaReady) { setHuntMessage('The venue-hunt database setup is not active yet.'); return }
+    if (!huntSchemaReady) { setHuntMessage('Hunt setup is not available yet. Try again later or contact support.'); return }
     if (!venue.trim()) { setHuntMessage('Enter a venue before adding the hunt list.'); return }
     const readyItems = draftItems.filter(item => item.title.trim())
     const title = huntTitle.trim() || `${venue.trim()} Photo Hunt`
@@ -249,15 +287,31 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
         p_items: readyItems.map(({ title: itemTitle, description, pointValue, libraryItemId }) => ({ title: itemTitle.trim(), description: description.trim() || null, pointValue, libraryItemId })),
         p_duration_minutes: huntDuration,
       }
-      const { error } = editingDraftId
-        ? await supabase.rpc('update_hunt_draft', { p_hunt_id: editingDraftId, ...payload })
-        : await supabase.rpc('create_hunt_draft', payload)
-      if (error) { setHuntMessage(error.message); return }
-      setVenue(''); setHuntTitle(''); setHuntDuration(60); setDraftItems([]); setChallengePaste('')
+      let savedHuntId = editingDraftId
+      if (editingDraftId) {
+        const { error } = await supabase.rpc('update_hunt_draft', { p_hunt_id: editingDraftId, ...payload })
+        if (error) { setHuntMessage(error.message); return }
+      } else {
+        const { data, error } = await supabase.rpc('create_hunt_draft', payload)
+        if (error) { setHuntMessage(error.message); return }
+        if (typeof data !== 'string' || !data) { setHuntMessage('Your draft may have been saved, but SnapQuest did not return its ID. Open My hunts and continue the saved draft before trying again.'); return }
+        savedHuntId = data
+      }
+      const { data: savedHunt, error: savedHuntError } = await supabase.from('hunts').select('id,title,venue,status,created_at,start_at,duration_minutes,team_assignment_mode,voting_enabled,voting_bonus_points').eq('id', savedHuntId).maybeSingle()
+      if (savedHuntError || !savedHunt) {
+        setEditingDraftId(savedHuntId)
+        draftBaseline.current = JSON.stringify({ venue, huntTitle, huntDuration, selectedRules, draftItems, challengePaste, stripListMarkers })
+        await loadWorkspace()
+        setHuntMessage('Your draft is saved. SnapQuest could not open the next setup step yet. Retry saving to continue; your changes are kept.')
+        return
+      }
+      draftBaseline.current = JSON.stringify({ venue, huntTitle, huntDuration, selectedRules, draftItems, challengePaste, stripListMarkers })
+      setVenue(''); setHuntTitle(''); setHuntDuration(60); setDraftItems([]); setChallengePaste(''); setStripListMarkers(false)
       setEditingDraftId('')
       setSelectedRules([SUGGESTED_RULES[0].text])
+      setReuseSourceTitle('')
       await loadWorkspace()
-      setPage('hunts')
+      openManageHunt(savedHunt as Hunt)
     } catch (error) {
       setHuntMessage(error instanceof Error ? error.message : 'Could not save the draft hunt.')
     } finally {
@@ -276,10 +330,45 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       setHuntMessage(huntResult.error?.message ?? itemResult.error?.message ?? 'This hunt is no longer an editable draft.')
       setHuntSaving(false); return
     }
+    const restoredItems = (itemResult.data ?? []).map(item => ({ key: item.id, title: item.title_snapshot, description: item.description_snapshot ?? '', pointValue: item.point_value, libraryItemId: item.library_item_id ?? undefined }))
+    draftBaseline.current = JSON.stringify({ venue: huntResult.data.venue, huntTitle: huntResult.data.title, huntDuration: huntResult.data.duration_minutes, selectedRules: huntResult.data.rules ?? [], draftItems: restoredItems, challengePaste: '', stripListMarkers: false })
     setEditingDraftId(hunt.id); setHuntTitle(huntResult.data.title); setVenue(huntResult.data.venue)
+    setReuseSourceTitle('')
     setSelectedRules(huntResult.data.rules ?? []); setHuntDuration(huntResult.data.duration_minutes)
-    setDraftItems((itemResult.data ?? []).map(item => ({ key: item.id, title: item.title_snapshot, description: item.description_snapshot ?? '', pointValue: item.point_value, libraryItemId: item.library_item_id ?? undefined })))
-    setHuntSaving(false); setPage('new-hunt')
+    setDraftItems(restoredItems)
+    setHuntSaving(false); setPageState('new-hunt')
+  }
+
+  async function reuseCompletedHunt(hunt: Hunt) {
+    if (!supabase) return
+    setReusingHuntId(hunt.id); setHuntMessage('')
+    try {
+      const [huntResult, itemResult] = await Promise.all([
+        supabase.from('hunts').select('id,title,venue,rules,duration_minutes,status').eq('id', hunt.id).maybeSingle(),
+        supabase.from('hunt_items').select('id,title_snapshot,description_snapshot,point_value,display_order').eq('hunt_id', hunt.id).order('display_order'),
+      ])
+      if (huntResult.error || itemResult.error || !huntResult.data || huntResult.data.status !== 'completed') {
+        setHuntMessage(huntResult.error?.message ?? itemResult.error?.message ?? 'Only a completed hunt can be used as a starting point.')
+        return
+      }
+      if (!itemResult.data?.length) {
+        setHuntMessage('This hunt has no saved photo challenges to copy.')
+        return
+      }
+      const copiedItems = itemResult.data.map(item => ({ key: crypto.randomUUID(), title: item.title_snapshot, description: item.description_snapshot ?? '', pointValue: item.point_value }))
+      setEditingDraftId('')
+      setReuseSourceTitle(huntResult.data.title)
+      setHuntTitle(`${huntResult.data.title} (Rematch)`)
+      setVenue(huntResult.data.venue)
+      setSelectedRules(huntResult.data.rules ?? [])
+      setHuntDuration(huntResult.data.duration_minutes)
+      setDraftItems(copiedItems)
+      setChallengePaste(''); setStripListMarkers(false); setLibraryAddedMessage('')
+      setHuntMessage('')
+      setPageState('new-hunt')
+    } catch (error) {
+      setHuntMessage(error instanceof Error ? error.message : 'Could not load this hunt to reuse it.')
+    } finally { setReusingHuntId('') }
   }
 
   async function openManageHunt(hunt: Hunt) {
@@ -504,7 +593,22 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     }
   }
 
-  function inviteUrl(token: string) { return `${window.location.origin}${window.location.pathname}#/join/${token}` }
+  function inviteUrl(token: string) {
+    const hostname = window.location.hostname
+    const onLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+    const base = import.meta.env.DEV && onLoopback && import.meta.env.VITE_LOCAL_NETWORK_ORIGIN
+      ? import.meta.env.VITE_LOCAL_NETWORK_ORIGIN
+      : `${window.location.origin}${window.location.pathname}`
+    return `${base.replace(/\/$/, '')}${window.location.pathname === '/' ? '/' : ''}#/join/${token}`
+  }
+
+  function openManagementSection(id: string) {
+    const target = document.getElementById(id)
+    if (!target) return
+    const disclosure = target instanceof HTMLDetailsElement ? target : target.closest('details')
+    if (disclosure) disclosure.open = true
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   function testInvite(token: string) { window.open(inviteUrl(token), '_blank', 'noopener,noreferrer') }
 
@@ -524,6 +628,39 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     } finally {
       setManageSaving(false)
     }
+  }
+
+  async function saveCreatorDisplayName(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!supabase || !organizer) return
+    const name = displayNameDraft.trim()
+    if (!name || name.length > 80) { setAccountError('Enter a display name between 1 and 80 characters.'); return }
+    setAccountBusy(true); setAccountError(''); setAccountMessage('')
+    try {
+      const { error } = await supabase.rpc('set_hunt_creator_name', { p_display_name: name })
+      if (error) { setAccountError(error.message); return }
+      setCreatorDisplayName(name)
+      setDisplayNameDraft(name)
+      setAccountMessage('Display name saved. Your email remains private.')
+    } catch (error) {
+      setAccountError(error instanceof Error ? error.message : 'Could not save your display name.')
+    } finally { setAccountBusy(false) }
+  }
+
+  async function saveAccountPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!supabase) return
+    if (newPassword.length < 8) { setAccountError('Use at least 8 characters for your password.'); return }
+    if (newPassword !== confirmPassword) { setAccountError('The passwords do not match.'); return }
+    setAccountBusy(true); setAccountError(''); setAccountMessage('')
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword })
+      if (error) { setAccountError(error.message); return }
+      setNewPassword(''); setConfirmPassword('')
+      setAccountMessage('Password updated.')
+    } catch (error) {
+      setAccountError(error instanceof Error ? error.message : 'Could not update your password.')
+    } finally { setAccountBusy(false) }
   }
 
   const visibleItems = items.filter(item => item.archived === showArchived && `${item.title} ${item.description ?? ''} ${item.category ?? ''}`.toLowerCase().includes(search.toLowerCase()))
@@ -564,29 +701,71 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const inviteWindowOpen = Boolean(managedHunt && ['scheduled','active'].includes(managedHunt.status))
 
   const selectableLibraryItems = items.filter(item => !item.archived && !draftItems.some(draft => draft.libraryItemId === item.id))
+  const filteredLibraryItems = selectableLibraryItems.filter(item => `${item.title} ${item.description ?? ''} ${item.category ?? ''}`.toLowerCase().includes(libraryPickerSearch.trim().toLowerCase()))
   const activeCount = items.filter(item => !item.archived).length
-  const displayName = session.user.email?.split('@')[0] || 'Organizer'
+  const displayName = creatorDisplayName || 'Organizer'
   const selectedResumeGame = playerGames.find(game => game.hunt_id === resumeHuntId)
     ?? playerGames.find(game => game.hunt_id === initialHuntId)
     ?? playerGames[0]
   const stageIndex = managedHunt ? ({ draft: 0, scheduled: 1, active: 2, ended: 3, review: 3, completed: 4 } as Record<string, number>)[managedHunt.status] : undefined
   const activeHunts = hunts.filter(hunt => hunt.status === 'active')
+  const huntPriority: Record<string, number> = { active: 0, scheduled: 1, ended: 2, review: 2, draft: 3 }
+  const unfinishedHunts = hunts.filter(hunt => hunt.status !== 'completed').sort((left, right) => (huntPriority[left.status] ?? 4) - (huntPriority[right.status] ?? 4) || Date.parse(right.created_at) - Date.parse(left.created_at))
+  const completedHunts = hunts.filter(hunt => hunt.status === 'completed').sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
+
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 600px)')
+    const update = () => setMobileLayout(query.matches)
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
+  const draftSnapshot = JSON.stringify({ venue, huntTitle, huntDuration, selectedRules, draftItems, challengePaste, stripListMarkers })
+  const draftIsDirty = page === 'new-hunt' && draftSnapshot !== draftBaseline.current
+
+  function setPage(nextPage: Page) {
+    if (nextPage === 'new-hunt' && page !== 'new-hunt') draftBaseline.current = draftSnapshot
+    if (page === 'new-hunt' && nextPage !== page && draftSnapshot !== draftBaseline.current) { setPendingPage(nextPage); return }
+    setPageState(nextPage)
+  }
+
+  useEffect(() => {
+    if (!draftIsDirty) return
+    const protect = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', protect)
+    return () => window.removeEventListener('beforeunload', protect)
+  }, [draftIsDirty])
+
+  function discardDraftAndNavigate() {
+    setVenue(''); setHuntTitle(''); setHuntDuration(60); setDraftItems([]); setChallengePaste(''); setStripListMarkers(false)
+    setSelectedRules([SUGGESTED_RULES[0].text]); setEditingDraftId(''); setReuseSourceTitle('')
+    setPendingPage(null); draftBaseline.current = ''
+    if (pendingPage) setPageState(pendingPage)
+  }
+
+  function renderHuntCard(hunt: Hunt) {
+    return <article className="hunt-card" key={hunt.id}><span className="hunt-card-mark"><Camera size={21}/></span><div className="hunt-card-info"><div className="hunt-card-meta"><span className="draft-badge">{huntStatusLabel(hunt.status)}</span><span>{new Date(hunt.created_at).toLocaleDateString()}</span></div><h2>{hunt.title}</h2><p><MapPin size={14}/> {hunt.venue}</p></div>
+      {hunt.status === 'draft' && <button className="outline-button" onClick={() => void editSavedDraft(hunt)}>Continue setup</button>}
+      {hunt.status === 'scheduled' && <button className="outline-button" onClick={() => void openManageHunt(hunt)}>Open lobby</button>}
+      {hunt.status === 'active' && <button className="outline-button" onClick={() => void openManageHunt(hunt)}>Manage live hunt</button>}
+      {['ended','review'].includes(hunt.status) && <button className="outline-button" onClick={() => { setManagedHunt(hunt); setResumeHuntId(hunt.id); setPage('review-hunt') }}>Review photos</button>}
+      {hunt.status === 'completed' && <><button className="outline-button" onClick={() => { setManagedHunt(hunt); setResumeHuntId(hunt.id); setPage('review-hunt') }}>View results</button><button className="outline-button" disabled={Boolean(reusingHuntId)} onClick={() => void reuseCompletedHunt(hunt)}>{reusingHuntId === hunt.id ? 'Loading hunt...' : 'Use this hunt again'}</button></>}
+    </article>
+  }
 
   return <div className="workspace">
     <aside className="workspace-sidebar">
       <a className="workspace-brand" href="#"><span><Camera size={18}/></span> SnapQuest</a>
       <div className="workspace-section-label">WORKSPACE</div>
-      <button className={`side-link ${page === 'overview' ? 'selected' : ''}`} onClick={() => setPage('overview')}><House size={17}/> Overview</button>
-      <button className={`side-link ${page === 'hunts' || page === 'new-hunt' || page === 'manage-hunt' || page === 'review-hunt' ? 'selected' : ''}`} onClick={() => setPage('hunts')}><ClipboardList size={17}/> My hunts <span className="side-count">{hunts.length}</span></button>
-      <button className={`side-link ${page === 'library' ? 'selected' : ''}`} onClick={() => setPage('library')}><Library size={17}/> Challenge library <span className="side-count">{activeCount}</span></button>
+      <button className={`side-link ${page === 'overview' ? 'selected' : ''}`} aria-current={page === 'overview' ? 'page' : undefined} onClick={() => setPage('overview')}><House size={17}/> Overview</button>
+      <button className={`side-link ${page === 'hunts' || page === 'new-hunt' || page === 'manage-hunt' || page === 'review-hunt' ? 'selected' : ''}`} aria-current={['hunts','new-hunt','manage-hunt','review-hunt'].includes(page) ? 'page' : undefined} onClick={() => setPage('hunts')}><ClipboardList size={17}/> My hunts <span className="side-count">{hunts.length}</span></button>
+      <button className={`side-link ${page === 'library' ? 'selected' : ''}`} aria-current={page === 'library' ? 'page' : undefined} onClick={() => setPage('library')}><Library size={17}/> Challenge library <span className="side-count">{activeCount}</span></button>
       <div className="workspace-section-label space-top">ACCOUNT</div>
-      <button className="side-link" onClick={onSignOut}><LogOut size={17}/> Sign out</button>
       <div className="sidebar-bottom"><span className="sidebar-avatar">{displayName.slice(0, 1).toUpperCase()}</span><span className="sidebar-user"><b>{displayName}</b><small>Organizer account</small></span></div>
     </aside>
     <main className="workspace-main">
-      <header className="workspace-topbar"><div className="breadcrumb">Workspace <span>/</span> {page === 'overview' ? 'Home' : page === 'library' ? 'Challenge library' : page === 'new-hunt' ? 'New hunt' : page === 'manage-hunt' ? 'Hunt lobby' : page === 'review-hunt' ? 'Photo review' : 'My hunts'}</div><div className="topbar-actions">{playerGames.length > 1 && <label className="resume-game-picker"><span className="sr-only">Choose team game</span><select value={selectedResumeGame?.hunt_id ?? ''} onChange={event => setResumeHuntId(event.target.value)}>{playerGames.map(game => <option value={game.hunt_id} key={game.hunt_id}>{game.team_name} · {game.hunt_title}</option>)}</select></label>}{selectedResumeGame && <a className="outline-button" href={`#/play/${selectedResumeGame.hunt_id}`}><Camera size={14}/> Return to {selectedResumeGame.team_name}</a>}<div className="topbar-badge"><ShieldCheck size={15}/> Private organizer space</div></div></header>
+      <header className="workspace-topbar"><div className="breadcrumb">Workspace <span>/</span> {page === 'overview' ? 'Home' : page === 'library' ? 'Challenge library' : page === 'new-hunt' ? 'New hunt' : page === 'manage-hunt' ? 'Hunt lobby' : page === 'review-hunt' ? 'Results' : page === 'account' ? 'Account settings' : 'My hunts'}</div><div className="topbar-actions">{playerGames.length > 1 && <label className="resume-game-picker"><span className="sr-only">Choose team game</span><select value={selectedResumeGame?.hunt_id ?? ''} onChange={event => setResumeHuntId(event.target.value)}>{playerGames.map(game => <option value={game.hunt_id} key={game.hunt_id}>{game.hunt_title} — {game.team_name}</option>)}</select></label>}{selectedResumeGame && <a className="outline-button" href={`#/play/${selectedResumeGame.hunt_id}`}><Camera size={14}/> Player view · {selectedResumeGame.team_name}</a>}<details className="account-menu"><summary><span className="sidebar-avatar">{displayName.slice(0,1).toUpperCase()}</span><span>{displayName}</span></summary><div className="account-menu-body"><button className="outline-button" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setAccountMessage(''); setAccountError(''); setPage('account') }}><Settings2 size={15}/> Account settings</button><button className="outline-button" onClick={onSignOut}><LogOut size={15}/> Sign out</button></div></details><div className="topbar-badge"><ShieldCheck size={15}/> Private organizer space</div></div></header>
       {routeMessage && <div className="inline-alert" role="status">{routeMessage}</div>}
-      {loading ? <div className="workspace-loading">Opening your organizer space…</div> : loadError && !organizer ? <section className="workspace-content"><div className="workspace-alert"><CircleHelp size={19}/><div><b>Organizer access needs attention</b><p>{loadError}</p><button className="outline-button" onClick={() => { setLoading(true); setLoadError(''); void loadWorkspace() }}>Try again</button></div></div></section> : page === 'overview' ? <section className="workspace-content">
+      {loading ? <div className="workspace-loading">Opening your organizer space…</div> : loadError && !organizer ? <section className="workspace-content"><div className="workspace-alert"><CircleHelp size={19}/><div><b>Organizer access needs attention</b><p>{loadError}</p>{playerGames.map(game => <a className="outline-button" key={game.hunt_id} href={`#/play/${game.hunt_id}`}><Camera size={14}/> Return to {game.team_name} · {game.hunt_title}</a>)}<button className="outline-button" onClick={() => { setLoading(true); setLoadError(''); void loadWorkspace() }}>Try again</button></div></div></section> : page === 'overview' ? <section className="workspace-content">
         <div className="workspace-greeting"><div><div className="eyebrow"><Sparkles size={14}/> YOUR FAMILY GAME NIGHT</div><h1>Welcome in, {displayName}!</h1><p>Your organizer space is ready. Let’s start gathering the fun.</p></div><div className="greeting-sticker"><Camera size={30}/><span>Let’s play!</span></div></div>
          {loadError && <div className="inline-alert">{loadError}</div>}
         <section className="active-hunts-panel" aria-labelledby="active-hunts-heading">
@@ -602,7 +781,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
         </section>
         <div className="stats-grid"><div className="stat-card"><span className="stat-icon stat-pink"><Sparkles size={18}/></span><small>ACTIVE CHALLENGES</small><b>{activeCount}</b><span>Ready to add to a hunt</span></div><div className="stat-card"><span className="stat-icon stat-yellow"><Users size={18}/></span><small>LIVE OR SCHEDULED</small><b>{hunts.filter(hunt => ['scheduled','active'].includes(hunt.status)).length}</b><span>Ready for participants</span></div><div className="stat-card"><span className="stat-icon stat-lilac"><Clock3 size={18}/></span><small>YOUR HUNTS</small><b>{hunts.length}</b><span>Venue-based photo adventures</span></div></div>
         <div className="home-panels"><article className="panel-card plan-hunt-panel"><div className="panel-heading"><div><span className="eyebrow">PLAN A NEW HUNT</span><h2>Plan a new hunt</h2><p>Choose a venue, add photo challenges, and set the ground rules.</p></div><span className="panel-illustration"><MapPin size={25}/></span></div><button className="primary-button small-button" onClick={() => { setPage('new-hunt'); setHuntMessage('') }}><Plus size={16}/> Start planning</button></article><article className="panel-card"><div className="eyebrow">MAKE IT YOURS</div><h2>Challenge library</h2><p>Photo ideas added to a hunt also become reusable challenges for next time.</p><button className="outline-button panel-link" onClick={() => setPage('library')}><Library size={15}/> Open library</button></article></div>
-        <div className="workspace-footnote">Hunt rules and challenge lists are saved to your private Supabase project. <ShieldCheck size={14}/></div>
+        <div className="workspace-footnote">Your hunts and challenge lists are private to your organizer account. <ShieldCheck size={14}/></div>
       </section> : page === 'library' ? <section className="workspace-content library-content">
         <div className="library-title-row"><div><div className="eyebrow"><Library size={14}/> REUSABLE IDEAS</div><h1>Challenge library</h1><p>Collect photo prompts now; add them to games as you plan.</p></div><button className="primary-button library-add" onClick={() => { setShowForm(value => !value); setFormMessage('') }}><Plus size={17}/>{showForm ? 'Close form' : 'New challenge'}</button></div>
         {loadError && <div className="inline-alert">{loadError}</div>}
@@ -611,38 +790,53 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
         {loading ? <div className="empty-library">Loading your saved ideas…</div> : visibleItems.length ? <div className="challenge-list">{visibleItems.map(item => <article className="challenge-row" key={item.id}><span className="challenge-mark"><Camera size={18}/></span><div className="challenge-info"><b>{item.title}</b><p>{item.description || 'Ready to capture a fun moment.'}</p></div>{item.category && <span className="category-chip">{item.category}</span>}<button className="icon-button archive-action" title={item.archived ? 'Restore challenge' : 'Archive challenge'} onClick={() => void toggleArchived(item)}><Archive size={16}/></button></article>)}</div> : <div className="empty-library"><span className="empty-icon"><Camera size={24}/></span><b>{search ? 'No matches yet' : showArchived ? 'Nothing archived' : 'Your ideas start here'}</b><p>{search ? 'Try another search.' : showArchived ? 'Archived challenges will show up here.' : 'Add a photo prompt to make it reusable for your future hunts.'}</p>{!search && !showArchived && <button className="outline-button" onClick={() => setShowForm(true)}><Plus size={15}/> Add your first challenge</button>}</div>}
       </section> : page === 'new-hunt' ? <section className="workspace-content new-hunt-content">
         <button className="back-link" onClick={() => setPage('hunts')}><ArrowLeft size={15}/> Back to your hunts</button>
-        <div className="new-hunt-heading"><div className="eyebrow"><Sparkles size={14}/> PLAN YOUR ADVENTURE</div><h1>{editingDraftId ? 'Edit your draft hunt' : 'Create a venue hunt'}</h1><p>Start with where you’ll play, then make a list of things to find and photograph.</p></div>
+        <div className="new-hunt-heading"><div className="eyebrow"><Sparkles size={14}/> PLAN YOUR ADVENTURE</div><h1>{editingDraftId ? 'Edit your draft hunt' : reuseSourceTitle ? 'Plan a rematch' : 'Create a venue hunt'}</h1><p>{reuseSourceTitle ? `Challenges, venue, and rules copied from “${reuseSourceTitle}”. Saving creates a separate new hunt; the original results stay unchanged.` : 'Start with where you’ll play, then make a list of things to find and photograph.'}</p></div>
         <form className="hunt-builder" onSubmit={createHunt}>
           <section className="builder-section"><div className="builder-step">1</div><div className="builder-main"><h2>Choose your venue</h2><p>Where will participants explore?</p><label className="builder-field">Venue name<input value={venue} onChange={event => setVenue(event.target.value)} required maxLength={160} placeholder="e.g. Riverside Park, Main Street Market"/></label><label className="builder-field">Hunt title <span className="optional">Optional — defaults to “[venue] Photo Hunt”</span><input value={huntTitle} onChange={event => setHuntTitle(event.target.value)} maxLength={120} placeholder={venue ? `${venue} Photo Hunt` : 'Saturday Family Photo Hunt'}/></label><label className="builder-field duration-field">Time limit<select value={huntDuration} onChange={event => setHuntDuration(Number(event.target.value))}><option value={30}>30 minutes</option><option value={45}>45 minutes</option><option value={60}>1 hour</option><option value={90}>90 minutes</option><option value={120}>2 hours</option></select></label></div></section>
           <section className={`builder-section ${venue.trim() ? '' : 'builder-locked'}`}><div className="builder-step">2</div><div className="builder-main"><h2>Set the ground rules</h2><p>Suggested rules help everyone know how to play safely and fairly.</p>{!venue.trim() && <div className="locked-note"><MapPin size={15}/> Enter a venue above to continue.</div>}{venue.trim() && <div className="suggested-rules">{SUGGESTED_RULES.map(rule => <label key={rule.id} className="rule-option"><input type="checkbox" checked={selectedRules.includes(rule.text)} onChange={() => setSelectedRules(current => current.includes(rule.text) ? current.filter(text => text !== rule.text) : [...current, rule.text])}/><span>{rule.text}{rule.recommended && <small>Suggested</small>}</span></label>)}</div>}</div></section>
-          <section className={`builder-section ${venue.trim() ? '' : 'builder-locked'}`}><div className="builder-step">3</div><div className="builder-main"><div className="builder-items-heading"><div><h2>Build the photo list</h2><p>Add the items participants need to find and photograph.</p></div>{venue.trim() && <button type="button" className="outline-button" onClick={addDraftItem}><Plus size={15}/> Add item</button>}</div>{!venue.trim() ? <div className="locked-note"><ClipboardList size={15}/> Enter a venue above to start your list.</div> : draftItems.length === 0 ? <div className="item-prompt"><span><Camera size={19}/></span><div><b>Your hunt needs at least one photo challenge</b><p>Choose recognizable things participants can find at this venue.</p></div><button type="button" className="outline-button" onClick={addDraftItem}><Plus size={15}/> Add first item</button></div> : <ChallengeListEditor items={draftItems.map(item => ({ id: item.key, title: item.title, description: item.description, points: item.pointValue }))} variant="production" onChange={updateDraftChallengeList}/>}<details className="production-challenge-import"><summary>Paste a challenge list</summary><p>One challenge per line. You can review and edit every imported item before saving.</p><label className="editor-label">Challenge list<textarea rows={5} value={challengePaste} onChange={event => setChallengePaste(event.target.value)} placeholder="Find something red, then a team selfie"/></label><label className="import-option"><input type="checkbox" checked={stripListMarkers} onChange={event => setStripListMarkers(event.target.checked)}/> Remove leading list bullets and numbering</label><button type="button" className="outline-button" onClick={importDraftChallenges}>Import and edit challenges</button></details>{venue.trim() && selectableLibraryItems.length > 0 && <div className="library-picker"><div><b>From your challenge library</b><span>Saved ideas can be reused in any hunt.</span></div><div className="library-picker-list">{selectableLibraryItems.slice(0, 12).map(item => <button type="button" className="library-picker-item" key={item.id} onClick={() => addLibraryChallenge(item)}><span><b>{item.title}</b><small>{item.category || item.description || 'Reusable challenge'}</small></span><Plus size={15}/></button>)}</div></div>}</div></section>
+          <section className={`builder-section ${venue.trim() ? '' : 'builder-locked'}`}><div className="builder-step">3</div><div className="builder-main"><div className="builder-items-heading"><div><h2>Build the photo list</h2><p>Add the items participants need to find and photograph.</p></div>{venue.trim() && <button type="button" className="outline-button" onClick={addDraftItem}><Plus size={15}/> Add item</button>}</div>{!venue.trim() ? <div className="locked-note"><ClipboardList size={15}/> Enter a venue above to start your list.</div> : draftItems.length === 0 ? <div className="item-prompt"><span><Camera size={19}/></span><div><b>Your hunt needs at least one photo challenge</b><p>Choose recognizable things participants can find at this venue.</p></div><button type="button" className="outline-button" onClick={addDraftItem}><Plus size={15}/> Add first item</button></div> : <ChallengeListEditor items={draftItems.map(item => ({ id: item.key, title: item.title, description: item.description, points: item.pointValue }))} variant="production" onChange={updateDraftChallengeList}/>}<details className="production-challenge-import"><summary>Paste a challenge list</summary><p>One challenge per line. You can review and edit every imported item before saving.</p><label className="editor-label">Challenge list<textarea rows={5} value={challengePaste} onChange={event => setChallengePaste(event.target.value)} placeholder="Find something red, then a team selfie"/></label><label className="import-option"><input type="checkbox" checked={stripListMarkers} onChange={event => setStripListMarkers(event.target.checked)}/> Remove leading list bullets and numbering</label><button type="button" className="outline-button" onClick={importDraftChallenges}>Import and edit challenges</button></details>{venue.trim() && selectableLibraryItems.length > 0 && <div className="library-picker"><div><b>From your challenge library</b><span>Saved ideas can be reused in any hunt.</span></div><label className="library-picker-search">Search saved challenges<input type="search" value={libraryPickerSearch} onChange={event => setLibraryPickerSearch(event.target.value)} placeholder="Search by name or clue" /></label>{libraryAddedMessage && <p role="status">{libraryAddedMessage}</p>}<div className="library-picker-list">{filteredLibraryItems.map(item => <button type="button" className="library-picker-item" key={item.id} onClick={() => addLibraryChallenge(item)}><span><b>{item.title}</b><small>{item.category || item.description || 'Reusable challenge'}</small></span><Plus size={15}/></button>)}</div>{filteredLibraryItems.length === 0 && <p className="locked-note">No saved challenges match this search.</p>}</div>}</div></section>
           {huntMessage && <div className="form-error" role="alert">{huntMessage}</div>}
           <div className="builder-actions"><button type="button" className="outline-button" onClick={() => {setEditingDraftId(''); setPage('hunts')}}>Cancel</button><button type="submit" className="primary-button save-hunt-button" disabled={huntSaving || !venue.trim() || !draftItems.some(item => item.title.trim())}>{huntSaving ? 'Saving hunt…' : <><Check size={16}/> {editingDraftId ? 'Save draft changes' : 'Save draft hunt'}</>}</button></div>
         </form>
       </section> : page === 'hunts' ? <section className="workspace-content hunts-content">
-        <div className="library-title-row"><div><div className="eyebrow"><ClipboardList size={14}/> YOUR ADVENTURES</div><h1>Your hunts</h1><p>Draft venue hunts and their photo challenge lists.</p></div><button className="primary-button library-add" onClick={() => { setPage('new-hunt'); setHuntMessage('') }}><Plus size={17}/> Create a hunt</button></div>
+        <div className="library-title-row"><div><div className="eyebrow"><ClipboardList size={14}/> YOUR ADVENTURES</div><h1>Your hunts</h1><p>Pick up a draft, start a waiting hunt, or manage a live game.</p></div><button className="primary-button library-add" onClick={() => { setPage('new-hunt'); setHuntMessage('') }}><Plus size={17}/> Create a hunt</button></div>
         {loadError && <div className="inline-alert">{loadError}</div>}
-        {hunts.length ? <div className="hunt-list">{hunts.map(hunt => <article className="hunt-card" key={hunt.id}><span className="hunt-card-mark"><Camera size={21}/></span><div className="hunt-card-info"><div className="hunt-card-meta"><span className="draft-badge">{huntStatusLabel(hunt.status)}</span><span>{new Date(hunt.created_at).toLocaleDateString()}</span></div><h2>{hunt.title}</h2><p><MapPin size={14}/> {hunt.venue}</p></div>{hunt.status === 'draft' && <button className="outline-button" onClick={() => void editSavedDraft(hunt)}>Edit draft</button>}{['ended','review','completed'].includes(hunt.status) && <button className="outline-button" onClick={() => { setManagedHunt(hunt); setResumeHuntId(hunt.id); setPage('review-hunt') }}>{huntActionLabel(hunt.status)}</button>}<button className="outline-button" onClick={() => void openManageHunt(hunt)}>{hunt.status === 'draft' ? 'Continue setup' : hunt.status === 'scheduled' ? 'Open lobby' : hunt.status === 'active' ? 'Manage live hunt' : 'Manage hunt'}</button></article>)}</div> : <div className="empty-library"><span className="empty-icon"><MapPin size={24}/></span><b>No hunts yet</b><p>Pick a venue and create a photo list to start planning.</p><button className="outline-button" onClick={() => setPage('new-hunt')}><Plus size={15}/> Create your first hunt</button></div>}
+        {huntMessage && <div className="inline-alert" role="alert">{huntMessage}</div>}
+        {unfinishedHunts.length ? <div className="hunt-list">{unfinishedHunts.map(renderHuntCard)}</div> : completedHunts.length ? <div className="empty-library"><span className="empty-icon"><Check size={24}/></span><b>No hunts need attention</b><p>Your completed results are filed under Past results.</p></div> : <div className="empty-library"><span className="empty-icon"><MapPin size={24}/></span><b>No hunts yet</b><p>Pick a venue and create a photo list to start planning.</p><button className="outline-button" onClick={() => setPage('new-hunt')}><Plus size={15}/> Create your first hunt</button></div>}
+        {completedHunts.length > 0 && <details className="organizer-history-disclosure"><summary>Past results ({completedHunts.length})</summary><div className="hunt-list">{completedHunts.map(renderHuntCard)}</div></details>}
+      </section> : page === 'account' ? <section className="workspace-content account-settings-content">
+        <button className="back-link" onClick={() => setPage('hunts')}><ArrowLeft size={15}/> Back to My hunts</button>
+        <div className="new-hunt-heading"><div className="eyebrow"><Settings2 size={14}/> ACCOUNT</div><h1>Account settings</h1><p>Manage the name other players see and your private sign-in details.</p></div>
+        {accountError && <div className="form-error" role="alert">{accountError}</div>}{accountMessage && <div className="inline-alert" role="status">{accountMessage}</div>}
+        <section className="account-setting-card"><div><h2>Display name</h2><p>Players see this name in hunt chat and as the author of templates you publish. Your email stays private.</p></div><form onSubmit={saveCreatorDisplayName}><label className="builder-field">Name other players see<input autoComplete="nickname" maxLength={80} required value={displayNameDraft} onChange={event => setDisplayNameDraft(event.target.value)} placeholder="Your display name"/></label><button type="submit" className="primary-button" disabled={accountBusy}>{accountBusy ? 'Saving...' : 'Save display name'}</button></form></section>
+        <section className="account-setting-card"><div><h2>Sign-in email</h2><p>This address is used to sign in. Only you can see it in Account settings.</p></div><p className="private-account-email">{session.user.email || 'No email address on this account'}</p></section>
+        <section className="account-setting-card"><div><h2>Password</h2><p>Choose a password with at least 8 characters. You can update it here after signing in with a recovery link.</p></div><form onSubmit={saveAccountPassword}><label className="builder-field">New password<input type="password" autoComplete="new-password" minLength={8} required value={newPassword} onChange={event => setNewPassword(event.target.value)}/></label><label className="builder-field">Confirm new password<input type="password" autoComplete="new-password" minLength={8} required value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)}/></label><button type="submit" className="primary-button" disabled={accountBusy}>{accountBusy ? 'Saving...' : 'Update password'}</button></form></section>
       </section> : page === 'manage-hunt' && managedHunt ? <section className="workspace-content new-hunt-content manage-hunt-content">
         <button className="back-link" onClick={() => setPage('hunts')}><ArrowLeft size={15}/> Back to your hunts</button>
         <div className="new-hunt-heading"><div className="eyebrow"><Settings2 size={14}/> HUNT MANAGEMENT</div><h1>{managedHunt.title}</h1><p><MapPin size={14}/> {managedHunt.venue} <span className="manage-divider">·</span> {managedHunt.duration_minutes} minute time limit</p></div>
-        <section className="hunt-stage-summary" aria-label="Hunt status">{stageIndex !== undefined && <ol className="hunt-stage-list" aria-label="Hunt progress">{['Setup', 'Waiting', 'Playing', 'Review', 'Results'].map((label, index) => { const progress = index < stageIndex ? 'complete' : index === stageIndex ? 'current' : 'upcoming'; const direction = index < stageIndex ? 'DONE' : index === stageIndex ? 'YOU ARE HERE' : index === stageIndex + 1 ? 'NEXT' : 'LATER'; return <li key={label} aria-current={index === stageIndex ? 'step' : undefined} className={`hunt-stage-step ${progress}`}><span className="hunt-stage-marker">{index < stageIndex ? <Check size={13}/> : index + 1}</span><span className="hunt-stage-copy"><span className="hunt-stage-label">{label}</span><span className="hunt-stage-direction">{direction}</span></span></li>})}</ol>}<div><span>Current status</span><strong>{huntStatusLabel(managedHunt.status)}</strong></div>{lobbyStatusStale && <p role="status">Hunt status may be out of date. <button type="button" className="outline-button" onClick={() => void loadManagedLobby(managedHunt.id)}>Retry</button></p>}{managedHunt.status !== 'draft' && <p>{managedParticipants.length} {managedParticipants.length === 1 ? 'player' : 'players'} joined across {managedTeams.length} {managedTeams.length === 1 ? 'team' : 'teams'}.</p>}{managedHunt.status === 'scheduled' && managedHunt.start_at && <p>Scheduled for {new Date(managedHunt.start_at).toLocaleString()}.</p>}{['ended', 'review', 'completed'].includes(managedHunt.status) && <button className="primary-button hunt-stage-action" type="button" onClick={() => setPage('review-hunt')}>{huntActionLabel(managedHunt.status)}</button>}</section>
-        {managedHunt.status !== 'draft' && <nav className="hunt-section-nav" aria-label="Hunt sections"><button type="button" className="outline-button" onClick={() => document.getElementById('team-invitations')?.scrollIntoView({ block: 'start' })}>Teams & invitations</button><button type="button" className="outline-button" onClick={() => document.getElementById('organizer-chat')?.scrollIntoView({ block: 'start' })}>Hunt chat</button><button type="button" className="outline-button" onClick={() => document.getElementById('organizer-troubleshooting')?.scrollIntoView({ block: 'start' })}>Troubleshooting</button></nav>}
+        <section className="hunt-stage-summary" aria-label="Hunt status">{stageIndex !== undefined && <><strong className="hunt-stage-summary-current">{huntStatusLabel(managedHunt.status)} | Step {stageIndex + 1} of 5</strong><details className="hunt-stage-details" open={!mobileLayout}><summary>See all hunt stages</summary><ol className="hunt-stage-list" aria-label="Hunt progress">{['Setup', 'Waiting', 'Playing', 'Review', 'Results'].map((label, index) => { const progress = index < stageIndex ? 'complete' : index === stageIndex ? 'current' : 'upcoming'; const direction = index < stageIndex ? 'DONE' : index === stageIndex ? 'YOU ARE HERE' : index === stageIndex + 1 ? 'NEXT' : 'LATER'; return <li key={label} aria-current={index === stageIndex ? 'step' : undefined} className={`hunt-stage-step ${progress}`}><span className="hunt-stage-marker">{index < stageIndex ? <Check size={13}/> : index + 1}</span><span className="hunt-stage-copy"><span className="hunt-stage-label">{label}</span><span className="hunt-stage-direction">{direction}</span></span></li>})}</ol></details></>}<div><span>Current status</span><strong>{huntStatusLabel(managedHunt.status)}</strong></div>{lobbyStatusStale && <p role="status">Hunt status may be out of date. <button type="button" className="outline-button" onClick={() => void loadManagedLobby(managedHunt.id)}>Retry</button></p>}{managedHunt.status !== 'draft' && <p>{managedParticipants.length} {managedParticipants.length === 1 ? 'player' : 'players'} joined across {managedTeams.length} {managedTeams.length === 1 ? 'team' : 'teams'}.</p>}{managedHunt.status === 'scheduled' && managedHunt.start_at && <p>Scheduled for {new Date(managedHunt.start_at).toLocaleString()}.</p>}{['ended', 'review', 'completed'].includes(managedHunt.status) && <button className="primary-button hunt-stage-action" type="button" onClick={() => setPage('review-hunt')}>{huntActionLabel(managedHunt.status)}</button>}</section>
+        {managedHunt.status !== 'draft' && <section id="team-invitations" className="lobby-invitations-section" aria-label="Team invitations">
+          {inviteRecoveryError && <p className="form-error" role="alert">{inviteRecoveryError}</p>}
+          {inviteWindowOpen && inviteCodes.length > 0 ? <InviteLinksPanel invites={inviteCodes} inviteUrl={inviteUrl} copiedInvite={copiedInvite} assignmentMode={managedHunt.team_assignment_mode} busy={manageSaving || inviteRecoveryLoading} canReplace={!inviteRecoveryError && !inviteRecoveryIncomplete && inviteWindowOpen} onCopy={token => void copyInvite(token)} onTest={testInvite} onJoinTeam={token => void joinTeam(token)} onSeePlayers={() => openManagementSection('team-roster')} onReplaceCodes={() => void regenerateInvites()} onPrint={() => window.print()} /> : <div className="locked-note"><ShieldCheck size={15}/>{inviteRecoveryLoading ? 'Loading saved team invitation links.' : inviteRecoveryIncomplete ? inviteWindowOpen ? 'Existing invitation links are active but could not be restored on this device.' : 'This hunt has ended, so invitation links are closed.' : inviteWindowOpen && hasActiveInvites ? 'Invitation links are active, but their recovery details are unavailable.' : inviteWindowOpen ? 'No active links yet. Create team invitations to display QR codes.' : 'This hunt has ended, so invitation links are closed.'}</div>}
+          {inviteWindowOpen && !inviteCodes.length && inviteRecoveryLoading && <p className="invite-recovery-status" role="status">Checking for saved team codes.</p>}
+          {inviteWindowOpen && !inviteCodes.length && (inviteRecoveryError || inviteRecoveryIncomplete) && <button type="button" className="outline-button" onClick={() => void loadManagedLobby(managedHunt.id)}>Retry loading team codes</button>}
+          {inviteWindowOpen && !inviteCodes.length && inviteRecoveryIncomplete && hasActiveInvites && <div className="invite-recovery-actions"><p>Replacing the team codes will invalidate every older QR code and link.</p><button type="button" className="outline-button" disabled={manageSaving} onClick={() => void regenerateInvites()}><QrCode size={15}/> Replace team codes</button></div>}
+          {inviteWindowOpen && !inviteCodes.length && !inviteRecoveryLoading && !inviteRecoveryError && !inviteRecoveryIncomplete && <button type="button" className="outline-button" disabled={manageSaving} onClick={() => void regenerateInvites()}><QrCode size={15}/>{hasActiveInvites ? ' Replace team codes' : ' Create team codes'}</button>}
+        </section>}
+        {managedHunt.status !== 'draft' && <nav className="hunt-section-nav" aria-label="Hunt sections"><button type="button" className="outline-button" onClick={() => openManagementSection('team-invitations')}>Teams & invitations</button><button type="button" className="outline-button" onClick={() => openManagementSection('team-roster')}>Team roster</button><button type="button" className="outline-button" onClick={() => openManagementSection('organizer-chat')}>Hunt chat</button><button type="button" className="outline-button" onClick={() => openManagementSection('organizer-troubleshooting')}>Troubleshooting</button></nav>}
          {manageMessage && <div className="form-error" role="alert">{manageMessage}</div>}
-         {managedHunt.status !== 'draft' && !inviteWindowOpen && <div className="locked-note"><ShieldCheck size={15}/>Invitation links are closed for this hunt.</div>}
-         {managedHunt.status === 'scheduled' && <section className="builder-section organizer-hunt-controls" aria-label="Hunt controls"><div className="builder-step"><Play size={15}/></div><div className="builder-main"><div className="eyebrow">GAME CONTROLS</div><h2>Ready to start?</h2><p>Start when your teams are ready. Their invitations and team assignments stay the same.</p><div className="celebration-card-actions"><button type="button" className="primary-button" disabled={manageSaving} onClick={() => void startHuntNow()}><Play size={15}/> Start hunt now</button></div><details className="hunt-end-options"><summary>More hunt controls</summary><p>End this hunt early and move to photo review.</p><button className="reject-button end-hunt-button" disabled={manageSaving} onClick={() => void endHuntNow()}><Clock3 size={14}/> End hunt now and review</button></details></div></section>}
+         {managedHunt.status === 'scheduled' && <section className="builder-section organizer-hunt-controls" aria-label="Hunt controls"><div className="builder-step"><Play size={15}/></div><div className="builder-main"><div className="eyebrow">GAME CONTROLS</div><h2>Ready to start?</h2><p>Start when your teams are ready. Their invitations and team assignments stay the same.</p><div className="celebration-card-actions"><button type="button" className="primary-button" disabled={manageSaving} onClick={() => void startHuntNow()}><Play size={15}/>{managedHunt.start_at && new Date(managedHunt.start_at).getTime() > Date.now() ? ' Start early' : ' Start hunt now'}</button></div><details className="hunt-end-options"><summary>More hunt controls</summary><p>End this hunt early and move to photo review.</p><button className="reject-button end-hunt-button" disabled={manageSaving} onClick={() => void endHuntNow()}><Clock3 size={14}/> End hunt now and review</button></details></div></section>}
         {managedHunt.status === 'scheduled' && managedHunt.start_at && new Date(managedHunt.start_at).getTime() > Date.now() && <section className="builder-section"><div className="builder-step"><CalendarDays size={15}/></div><div className="builder-main"><h2>Change scheduled time</h2><label className="builder-field">New start time<input type="datetime-local" value={startAtLocal} onChange={event => setStartAtLocal(event.target.value)}/></label><button className="outline-button" disabled={timingBusy} onClick={() => void rescheduleHunt()}>{timingBusy ? 'Saving…' : 'Save new time'}</button></div></section>}
          {managedHunt.status === 'active' && <section className="builder-section organizer-hunt-controls" aria-label="Hunt controls"><div className="builder-step"><Clock3 size={15}/></div><div className="builder-main"><div className="eyebrow">GAME CONTROLS</div><h2>Hunt in progress</h2><p>Add time before the current timer ends.</p><div className="celebration-card-actions"><button className="outline-button" disabled={timingBusy} onClick={() => void addHuntTime(15)}>Add 15 minutes</button><button className="outline-button" disabled={timingBusy} onClick={() => void addHuntTime(30)}>Add 30 minutes</button><button className="reject-button end-hunt-button" disabled={manageSaving} onClick={() => void endHuntNow()}><Clock3 size={14}/> End hunt now and review</button></div></div></section>}
-         {managedHunt.status !== 'draft' && <><div id="organizer-chat"><HuntChat huntId={managedHunt.id} compact app="organizer_web" readOnly={!['scheduled','active'].includes(managedHunt.status)} /></div><TeamLobby teams={managedTeams} participants={managedParticipants} onRefresh={() => void loadManagedLobby(managedHunt.id)} /><div id="organizer-troubleshooting"><HuntDiagnostics huntId={managedHunt.id} /></div></>}
+         {managedHunt.status !== 'draft' && <><div id="organizer-chat"><HuntChat huntId={managedHunt.id} compact app="organizer_web" readOnly={!['scheduled','active'].includes(managedHunt.status)} /></div><details className="organizer-section-disclosure" id="team-roster"><summary>Teams, members, and selfies</summary><TeamLobby teams={managedTeams} participants={managedParticipants} onRefresh={() => void loadManagedLobby(managedHunt.id)} /></details><details className="organizer-section-disclosure" id="organizer-troubleshooting"><summary>Troubleshooting</summary><HuntDiagnostics huntId={managedHunt.id} /></details></>}
         {managedHunt.status === 'draft' ? <form className="hunt-builder" onSubmit={publishHunt}>
           <section className="builder-section"><div className="builder-step"><CalendarDays size={15}/></div><div className="builder-main"><h2>Choose when and how to play</h2><p>Set up the lobby now, then start the timer when your teams are ready.</p><div className="start-mode-options" role="group" aria-label="Hunt start mode"><label className={`start-mode-option ${startMode === 'manual' ? 'selected' : ''}`}><input type="radio" name="start-mode" checked={startMode === 'manual'} onChange={() => setStartMode('manual')}/><span><b>Start manually</b><small>Teams join a waiting lobby. You start the hunt when everyone is ready.</small></span></label><label className={`start-mode-option ${startMode === 'scheduled' ? 'selected' : ''}`}><input type="radio" name="start-mode" checked={startMode === 'scheduled'} onChange={() => setStartMode('scheduled')}/><span><b>Schedule a start</b><small>The server starts the hunt automatically at the selected time.</small></span></label></div>{startMode === 'scheduled' && <label className="builder-field">Scheduled start time<input type="datetime-local" required value={startAtLocal} onChange={event => setStartAtLocal(event.target.value)}/><span className="optional">Shown in your local time zone; saved as UTC. You can still start early.</span></label>}<label className="builder-field">Team assignment method<select value={assignmentMode} onChange={event => setAssignmentMode(event.target.value as 'organizer' | 'balanced')}><option value="organizer">Participants scan their assigned team's code</option><option value="balanced">One shared code assigns balanced teams</option></select></label><label className="builder-field">Team names <span className="optional">One name per line · 2–12 teams</span><textarea rows={Math.min(8, Math.max(3, teamNamesText.split('\n').length))} maxLength={600} value={teamNamesText} onChange={event => setTeamNamesText(event.target.value)} placeholder={'Team Red\nTeam Blue'} /></label><label className="voting-config"><input type="checkbox" checked={votingEnabled} onChange={event => setVotingEnabled(event.target.checked)}/><span><b>Enable photo voting during review</b><small>Teams can vote for another team's approved photos.</small></span></label>{votingEnabled && <label className="builder-field duration-field">Voting bonus points<input type="number" min={0} max={1000} value={votingBonusPoints} onChange={event => setVotingBonusPoints(Math.max(0, Number(event.target.value)))}/></label>}</div></section>
           <div className="builder-actions"><button type="button" className="outline-button" onClick={() => setPage('hunts')}>Cancel</button><button type="submit" className="primary-button save-hunt-button" disabled={manageSaving}>{manageSaving ? 'Publishing…' : <><QrCode size={16}/> Publish & create QR codes</>}</button></div>
         </form> : <>
-      <section id="team-invitations" className="builder-section"><div className="builder-step"><QrCode size={15}/></div><div className="builder-main invite-builder-main"><div className="builder-items-heading"><div><h2>Team invitations</h2><p>{managedHunt.team_assignment_mode === 'balanced' ? 'Share this one code with everyone. The app will place each person on a smaller team.' : 'Show each code only to the participants assigned to that team.'}</p></div><button className="outline-button" disabled={manageSaving || inviteRecoveryLoading || !!inviteRecoveryError || !inviteWindowOpen} onClick={() => void regenerateInvites()}><RefreshCw size={14}/> {hasActiveInvites ? 'Replace codes' : 'Create codes'}</button></div>{inviteRecoveryError && <p className="form-error" role="alert">{inviteRecoveryError}</p>}{inviteCodes.length ? <div className="invite-grid">{inviteCodes.map(invite => <article className="invite-card" key={invite.invite_token}><div className="invite-card-top"><span className="team-swatch" style={{backgroundColor: managedTeams.find(team => team.id === invite.team_id)?.display_color ?? '#b88bbf'}}/><b>{invite.team_name}</b></div><QRCodeSVG value={inviteUrl(invite.invite_token)} size={148} level="M" includeMargin/><label className="invite-url-label">Invitation link<input readOnly value={inviteUrl(invite.invite_token)}/></label><button className="outline-button" onClick={() => void copyInvite(invite.invite_token)}><Copy size={14}/>{copiedInvite === invite.invite_token ? 'Copied!' : 'Copy invite link'}</button><button className="outline-button" disabled={manageSaving} onClick={() => void joinTeam(invite.invite_token)}><Users size={14}/> Join this team</button></article>)}</div> : <div className="locked-note"><ShieldCheck size={15}/>{inviteRecoveryLoading ? 'Loading saved team invitation links…' : inviteRecoveryIncomplete ? 'Existing invitation links are still active, but were created before secure recovery was available. Replace codes only when you are ready to invalidate every older QR code and link.' : hasActiveInvites ? 'Invitation links are active, but their recovery details are unavailable. Refresh to try again.' : 'Invite tokens are stored as secure hashes. Create codes to display them; replacement revokes any older links.'}</div>}{inviteCodes.length > 0 && <button className="outline-button print-invites" onClick={() => window.print()}><QrCode size={14}/> Print team codes</button>}</div></section>
-        <InviteLinksPanel invites={inviteCodes} inviteUrl={inviteUrl} copiedInvite={copiedInvite} onCopy={token => void copyInvite(token)} onTest={testInvite} />
           <section className="builder-section"><div className="builder-step"><Users size={15}/></div><div className="builder-main"><h2>Participants</h2><p>{managedParticipants.length} {managedParticipants.length === 1 ? 'person has' : 'people have'} joined this hunt. You can move participants before the scheduled start.</p>{managedParticipants.length ? <div className="participant-roster">{managedParticipants.map(participant => <div className="participant-roster-row" key={participant.id}><span className="participant-avatar"><UserRound size={15}/></span><b>{participant.display_name}</b><select aria-label={`Team for ${participant.display_name}`} value={participant.team_id} onChange={event => void moveParticipant(participant, event.target.value)} disabled={managedHunt.status !== 'scheduled'}>{managedTeams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select></div>)}</div> : <div className="locked-note"><Users size={15}/> The roster fills in as participants join from their invitation links.</div>}</div></section>
         </>}
       </section> : page === 'review-hunt' && managedHunt ? <HuntReview huntId={managedHunt.id} title={managedHunt.title} status={managedHunt.status} onBack={() => setPage('hunts')} onChanged={() => void loadWorkspace()} /> : null}
     </main>
+    {pendingPage && <ConfirmDialog title="Discard this hunt draft?" message="Your unsaved venue, rules, and photo challenges will be cleared." cancelLabel="Keep editing" confirmLabel="Discard changes" destructive onCancel={() => setPendingPage(null)} onConfirm={discardDraftAndNavigate}/>}
   </div>
 }

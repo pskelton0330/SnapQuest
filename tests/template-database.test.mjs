@@ -8,7 +8,7 @@ import { calculateTeamScores, normalizeFinalScores, winningTeams } from '../src/
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222', outsider='12345678-1234-4234-9234-123456789abc'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration
+let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -24,7 +24,7 @@ before(async () => {
     create view vault.decrypted_secrets as select name,decrypted_secret from vault.test_secrets;
     create function vault.create_secret(new_secret text,new_name text default null,new_description text default '') returns uuid language plpgsql security definer set search_path='' as $$
       declare secret_id uuid:=gen_random_uuid(); begin insert into vault.test_secrets(name,decrypted_secret) values(new_name,new_secret); return secret_id; end $$;
-    create table auth.users(id uuid primary key);
+    create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,is_anonymous boolean default false);
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     grant usage on schema auth to anon,authenticated; grant execute on function auth.uid() to anon,authenticated;
     create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
@@ -53,9 +53,12 @@ before(async () => {
     if(file.includes('0029')) { disableAuditRetentionMigration=sql; continue }
     if(file.includes('0027')) { rpcPrivilegeMigration=sql; continue }
     if(file.includes('0030')) { photoApprovalMigration=sql; continue }
+    if(file.includes('0031')) { winnerCardsMigration=sql; continue }
+    if(file.includes('0032')) { restorePhotoReviewMigration=sql; continue }
+    if(file.includes('0033')) { selfServeOrganizerMigration=sql; continue }
     await db.exec(sql)
   }
-  await db.query('insert into auth.users(id) values ($1),($2),($3)',[owner,other,outsider])
+  await db.query("insert into auth.users(id,email,email_confirmed_at,is_anonymous) values ($1,'owner@example.test',clock_timestamp(),false),($2,'other@example.test',clock_timestamp(),false),($3,null,null,false)",[owner,other,outsider])
   await db.query('insert into public.organizers(id,auth_user_id) values ($1,$1),($2,$2)',[owner,other])
   await db.exec(`insert into public.hunts(id,organizer_id,title,venue,status,final_scores) values ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','${owner}','Legacy game','Shop','completed','[{"total":7}]');
     insert into public.hunt_items(id,hunt_id,title_snapshot,point_value,display_order) values ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Legacy challenge',7,0);
@@ -84,6 +87,9 @@ before(async () => {
   await db.exec(disableAuditRetentionMigration)
   await db.exec(rpcPrivilegeMigration)
   await db.exec(photoApprovalMigration)
+  await db.exec(winnerCardsMigration)
+  await db.exec(restorePhotoReviewMigration)
+  await db.exec(selfServeOrganizerMigration)
 })
 after(async()=> { await db?.close() })
 test('anonymous role can execute only explicitly public security-definer RPCs', async () => {
@@ -648,22 +654,49 @@ test('timing changes preserve photo acceptance, replacement, attribution and clo
   await assert.rejects(as('authenticated',other,'select public.submit_hunt_photo($1,$2,$3)',[item,stalePath,path1]),/teammate changed this photo slot/)
   assert.equal((await db.query('select storage_path from public.submissions where hunt_id=$1',[id])).rows[0].storage_path,path2)
   const rows=(await db.query('select * from public.submissions where hunt_id=$1',[id])).rows
-  assert.equal(rows.length,1);assert.equal(rows[0].participant_id,participant.id);assert.equal(rows[0].approval_status,'approved')
+  assert.equal(rows.length,1);assert.equal(rows[0].participant_id,participant.id);assert.equal(rows[0].approval_status,'pending')
   await as('authenticated',owner,'select public.end_hunt_early($1)',[id])
   await assert.rejects(as('authenticated',other,'select public.submit_hunt_photo($1,$2,null)',[item,path1]))
 })
 
-test('hunt photos default to approved, backfill open hunts, and preserve finalized history',async()=>{
+test('photo review restores pending approval for new and untouched submissions',async()=>{
   const defaultStatus=(await db.query("select column_default from information_schema.columns where table_schema='public' and table_name='submissions' and column_name='approval_status'")).rows[0].column_default
-  assert.match(defaultStatus,/approved/)
-  const {huntId,participant}=await createReliabilityHunt('Auto-approved photos',new Date(Date.now()+60*60*1000).toISOString())
+  assert.match(defaultStatus,/pending/)
+  const {huntId,participant}=await createReliabilityHunt('Photos need review',new Date(Date.now()+60*60*1000).toISOString())
   const item=(await db.query('select id from public.hunt_items where hunt_id=$1 limit 1',[huntId])).rows[0].id
-  const pendingPath=`${huntId}/${participant.team_id}/${item}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg`
-  await db.query("insert into public.submissions(hunt_id,hunt_item_id,team_id,participant_id,storage_path,approval_status) values($1,$2,$3,$4,$5,'pending')",[huntId,item,participant.team_id,participant.participant_id,pendingPath])
+  const openPath=`${huntId}/${participant.team_id}/${item}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg`
+  await db.query("insert into public.submissions(hunt_id,hunt_item_id,team_id,participant_id,storage_path,approval_status) values($1,$2,$3,$4,$5,'approved')",[huntId,item,participant.team_id,participant.participant_id,openPath])
   await db.query("update public.submissions set approval_status='pending' where storage_path='original/photo.jpg'")
   await db.exec(photoApprovalMigration)
-  assert.equal((await db.query('select approval_status from public.submissions where storage_path=$1',[pendingPath])).rows[0].approval_status,'approved')
+  assert.equal((await db.query('select approval_status from public.submissions where storage_path=$1',[openPath])).rows[0].approval_status,'approved')
+  await db.exec(restorePhotoReviewMigration)
+  const restoredDefault=(await db.query("select column_default from information_schema.columns where table_schema='public' and table_name='submissions' and column_name='approval_status'")).rows[0].column_default
+  assert.match(restoredDefault,/pending/)
+  assert.equal((await db.query('select approval_status from public.submissions where storage_path=$1',[openPath])).rows[0].approval_status,'pending','Untouched approval changes on an open hunt return to pending')
   assert.equal((await db.query("select approval_status from public.submissions where storage_path='original/photo.jpg'")).rows[0].approval_status,'pending','Finalized games keep their immutable review history')
+})
+
+test('self-serve organizer profiles require a verified non-anonymous account',async()=>{
+  const profileId=(await as('authenticated',owner,'select public.ensure_my_organizer_profile() id')).rows[0].id
+  assert.equal(profileId,owner)
+  await assert.rejects(as('authenticated',outsider,'select public.ensure_my_organizer_profile()'),/Confirm your email address/)
+  await assert.rejects(as('anon',null,'select public.ensure_my_organizer_profile()'))
+  assert.equal((await db.query('select count(*)::int n from public.organizers where auth_user_id=$1',[outsider])).rows[0].n,0)
+})
+
+test('saved winner cards and images are private to the organizer of a completed hunt',async()=>{
+  const huntId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  const teamId='cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+  const path=`${huntId}/${teamId}/winner.png`
+  await as('authenticated',owner,'insert into public.winner_celebration_cards(hunt_id,team_id,storage_path) values($1,$2,$3)',[huntId,teamId,path])
+  assert.equal((await as('authenticated',owner,'select storage_path from public.winner_celebration_cards where hunt_id=$1',[huntId])).rows[0].storage_path,path)
+  assert.equal((await as('authenticated',other,'select storage_path from public.winner_celebration_cards where hunt_id=$1',[huntId])).rows.length,0)
+  await assert.rejects(as('authenticated',other,'insert into public.winner_celebration_cards(hunt_id,team_id,storage_path) values($1,$2,$3)',[huntId,teamId,path]))
+  await as('authenticated',owner,'insert into storage.objects(bucket_id,name) values(\'winner-cards\',$1)',[path])
+  assert.equal((await as('authenticated',owner,'select count(*)::int n from storage.objects where bucket_id=\'winner-cards\' and name=$1',[path])).rows[0].n,1)
+  assert.equal((await as('authenticated',other,'select count(*)::int n from storage.objects where bucket_id=\'winner-cards\' and name=$1',[path])).rows[0].n,0)
+  await assert.rejects(as('authenticated',other,'insert into storage.objects(bucket_id,name) values(\'winner-cards\',$1)',[path]))
+  assert.equal((await db.query("select public.can_manage_winner_card($1) allowed",[`${huntId}/${teamId}/other.png`])).rows[0].allowed,false)
 })
 
 

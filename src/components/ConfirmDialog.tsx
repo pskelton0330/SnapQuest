@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-export default function ConfirmDialog({ message, onCancel, onConfirm }: { message: string; onCancel: () => void; onConfirm: () => void }) {
+export default function ConfirmDialog({ message, title = 'Confirm game action', confirmLabel = 'Confirm', cancelLabel = 'Cancel', destructive = false, onCancel, onConfirm }: { message: string; title?: string; confirmLabel?: string; cancelLabel?: string; destructive?: boolean; onCancel: () => void; onConfirm: () => void }) {
   const container = useRef<HTMLDivElement>(null)
   const cancelRef = useRef(onCancel)
   useEffect(() => { cancelRef.current = onCancel }, [onCancel])
@@ -46,5 +46,5 @@ export default function ConfirmDialog({ message, onCancel, onConfirm }: { messag
     }
   }, [])
 
-  return <div className="game-confirm-overlay"><div className="v12-card game-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="game-confirm-title" aria-describedby="game-confirm-message" ref={container} tabIndex={-1}><h2 id="game-confirm-title">Confirm game action</h2><p id="game-confirm-message">{message}</p><div className="editor-actions"><button className="outline-button" onClick={onCancel}>Cancel</button><button className="primary-button" onClick={onConfirm}>Confirm</button></div></div></div>
+  return <div className="game-confirm-overlay"><div className="v12-card game-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="game-confirm-title" aria-describedby="game-confirm-message" ref={container} tabIndex={-1}><h2 id="game-confirm-title">{title}</h2><p id="game-confirm-message">{message}</p><div className="editor-actions"><button className="outline-button" onClick={onCancel}>{cancelLabel}</button><button className={destructive ? 'reject-button' : 'primary-button'} onClick={onConfirm}>{confirmLabel}</button></div></div></div>
 }
