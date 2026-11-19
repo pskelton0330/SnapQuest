@@ -209,7 +209,7 @@ test.beforeEach(async ({ page }) => {
     if (request.url().includes('/storage/v1/object/sign/winner-cards/')) {
       if (request.method() === 'POST') {
         const path = decodeURIComponent(new URL(request.url()).pathname.split('/object/sign/winner-cards/')[1] ?? '')
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ signedURL: `/storage/v1/object/sign/winner-cards/${path}?token=saved-card` }) })
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ signedURL: `/object/sign/winner-cards/${path}?token=saved-card` }) })
       } else {
         const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
         await route.fulfill({ status: 200, contentType: 'image/png', body: png })
@@ -220,13 +220,13 @@ test.beforeEach(async ({ page }) => {
       if (celebrationSelfieMode && request.method() === 'POST' && request.url().includes('team-selfie.png')) {
         celebrationSelfieSignedRequests++
         const filename = celebrationSelfieFormat === 'jpeg' ? 'team-selfie.jpg' : 'team-selfie.png'
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ signedURL: `/storage/v1/object/sign/hunt-photos/test/${filename}?token=selfie` }) })
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ signedURL: `/object/sign/hunt-photos/test/${filename}?token=selfie` }) })
         return
       }
       if (photoReplacementRaceMode && request.method() === 'POST') {
         const path = decodeURIComponent(new URL(request.url()).pathname.split('/object/sign/hunt-photos/')[1] ?? '')
         raceSignedPaths.push(path)
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ signedURL: `/storage/v1/object/sign/hunt-photos/${path}?token=race-${raceSignedPaths.length}` }) })
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ signedURL: `/object/sign/hunt-photos/${path}?token=race-${raceSignedPaths.length}` }) })
         return
       }
       if (signedPreviewMode) {
@@ -235,7 +235,7 @@ test.beforeEach(async ({ page }) => {
           return
         }
         signedPreviewRequests++
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ signedURL: `/storage/v1/object/sign/hunt-photos/test/photo.jpg?token=preview-${signedPreviewRequests}` }) })
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ signedURL: `/object/sign/hunt-photos/test/photo.jpg?token=preview-${signedPreviewRequests}` }) })
         return
       }
       await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'simulated signed-preview failure' }) })
@@ -353,7 +353,7 @@ test.beforeEach(async ({ page }) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', status: organizerLobbyMode ? organizerLobbyStatus : organizerReviewStatus, created_at: '2026-11-01T12:00:00Z', start_at: startAt, duration_minutes: 60, team_assignment_mode: 'organizer', voting_enabled: false, voting_bonus_points: 0 }]) })
       return
     }
-    if (organizerReviewMode && request.url().includes('/rest/v1/hunts') && request.url().includes('id=eq.')) {
+    if (organizerReviewMode && !organizerLobbyMode && request.url().includes('/rest/v1/hunts') && request.url().includes('id=eq.')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', rules: ['Stay together'], status: organizerReviewStatus, created_at: '2026-11-01T12:00:00Z', start_at: null, duration_minutes: 60, team_assignment_mode: 'organizer', voting_enabled: false, voting_bonus_points: 0 }) })
       return
     }
@@ -375,6 +375,10 @@ test.beforeEach(async ({ page }) => {
     }
     if (request.url().includes('/rest/v1/participants') && request.url().includes('select=hunt_id%2Cteam_id')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ hunt_id: '33333333-3333-4333-8333-333333333333', team_id: '44444444-4444-4444-8444-444444444444' }]) })
+      return
+    }
+    if (request.url().includes('/rest/v1/hunts') && request.url().includes('organizer_id=')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
       return
     }
     if (request.url().includes('/rest/v1/hunts') && request.url().includes('select=id%2Ctitle')) {
@@ -644,8 +648,8 @@ test('player can join an invited team and reach the waiting lobby', async ({ pag
   await expect(page.getByRole('heading', { name: 'Spring Photo Hunt' })).toBeVisible()
   await page.getByLabel('What should your team call you?').fill('Taylor')
   await page.getByRole('button', { name: 'Join the hunt' }).click()
-  await expect(page.getByRole('status')).toContainText('Waiting for the organizer', { timeout: 10_000 })
-  await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
+  await expect(page.getByRole('status')).toContainText('Your organizer will start the hunt.', { timeout: 10_000 })
+  await expect(page.getByText('You are checked in with Team Cedar')).toBeVisible()
   for (const width of [320, 375, 390]) {
     await page.setViewportSize({ width, height: 844 })
     const dimensions = await page.evaluate(() => ({
@@ -665,6 +669,7 @@ test('player can join an invited team and reach the waiting lobby', async ({ pag
   }
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, nodes }) => ({ id, impact, help, nodes: nodes.map(node => ({ target: node.target, ...node.any[0]?.data })) })), null, 2)).toEqual([])
+  await page.locator('.waiting-team-details summary').click()
   await expectKeyboardCanReach(page, page.getByLabel('Team name'))
   await expectNoHorizontalOverflowAt200Percent(page, 'participant lobby')
 })
@@ -673,11 +678,13 @@ test('saved team selfie stays saved when signing its preview fails', async ({ pa
   await page.goto(`/#/join/${'a'.repeat(64)}`)
   await page.getByLabel('What should your team call you?').fill('Taylor')
   await page.getByRole('button', { name: 'Join the hunt' }).click()
-  await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
+  await expect(page.getByText('You are checked in with Team Cedar')).toBeVisible()
 
   const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
   await page.locator('.team-identity-panel input[type="file"]').setInputFiles({ name: 'team.png', mimeType: 'image/png', buffer: image })
-  await expect(page.getByRole('alert')).toContainText('Team selfie saved. Its preview is temporarily unavailable')
+  const selfieNotice = page.locator('.participant-error[role="status"]')
+  await expect(selfieNotice).toContainText('Team selfie saved, but its preview is unavailable')
+  await expect(selfieNotice.getByRole('button', { name: 'Retry preview' })).toBeVisible()
   expect(selfieSubmissionRpcCalls).toBe(1)
   expect(rollbackDeleteRequests).toBe(0)
 })
@@ -687,12 +694,14 @@ test('team selfie survives a lost save response when the server committed it', a
   await page.goto(`/#/join/${'a'.repeat(64)}`)
   await page.getByLabel('What should your team call you?').fill('Taylor')
   await page.getByRole('button', { name: 'Join the hunt' }).click()
-  await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
+  await expect(page.getByText('You are checked in with Team Cedar')).toBeVisible()
 
   const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
   await page.locator('.team-identity-panel input[type="file"]').setInputFiles({ name: 'team.png', mimeType: 'image/png', buffer: image })
 
-  await expect(page.getByRole('alert')).toContainText('Team selfie saved. Its preview is temporarily unavailable')
+  const selfieNotice = page.locator('.participant-error[role="status"]')
+  await expect(selfieNotice).toContainText('Team selfie saved, but its preview is unavailable')
+  await expect(selfieNotice.getByRole('button', { name: 'Retry preview' })).toBeVisible()
   expect(selfieSubmissionRpcCalls).toBe(1)
   expect(selfieReconciliationReads).toBe(1)
   expect(selfieStoredPath).toMatch(/\/selfie\/.+\.jpg$/)
@@ -704,10 +713,10 @@ test('participant can return through the original invite after reloading the bro
   await page.goto(inviteUrl)
   await page.getByLabel('What should your team call you?').fill('Taylor')
   await page.getByRole('button', { name: 'Join the hunt' }).click()
-  await expect(page.getByRole('status')).toContainText('Waiting for the organizer', { timeout: 10_000 })
+  await expect(page.getByRole('status')).toContainText('Your organizer will start the hunt.', { timeout: 10_000 })
   await page.goto(inviteUrl)
   await expect(page).toHaveURL(/#\/play\/33333333-3333-4333-8333-333333333333$/)
-  await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
+  await expect(page.getByText('You are checked in with Team Cedar')).toBeVisible()
 })
 
 test('browser Back from a resumed participant session returns to the previous screen', async ({ page }) => {
@@ -717,12 +726,12 @@ test('browser Back from a resumed participant session returns to the previous sc
   await page.getByRole('button', { name: 'Join the hunt' }).click()
   await page.getByLabel('What should your team call you?').fill('Taylor')
   await page.getByRole('button', { name: 'Join the hunt' }).click()
-  await expect(page.getByRole('status')).toContainText('Waiting for the organizer', { timeout: 10_000 })
+  await expect(page.getByRole('status')).toContainText('Your organizer will start the hunt.', { timeout: 10_000 })
 
   await page.goBack()
   await expect(page.getByRole('textbox', { name: 'Team invitation' })).toBeVisible()
   await page.goForward()
-  await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
+  await expect(page.getByText('You are checked in with Team Cedar')).toBeVisible()
 })
 
 test('team progress retains the last counts and recovers after a failed refresh', async ({ page }) => {
@@ -795,7 +804,7 @@ test('participant context refresh pauses in the background and resumes on return
   await page.goto(`/#/join/${'a'.repeat(64)}`)
   await page.getByLabel('What should your team call you?').fill('Taylor')
   await page.getByRole('button', { name: 'Join the hunt' }).click()
-  await expect(page.getByText('Your photo list')).toBeVisible()
+  await expect(page.getByText('Next challenge')).toBeVisible()
   await page.evaluate(() => Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }))
   const before = contextReads
   await page.clock.fastForward(45_000)
@@ -820,7 +829,7 @@ test('active participant game exposes the timer, team progress, and photo list',
   await page.goto(`/#/join/${'a'.repeat(64)}`)
   await page.getByLabel('What should your team call you?').fill('Taylor')
   await page.getByRole('button', { name: 'Join the hunt' }).click()
-  await expect(page.getByText('Your photo list')).toBeVisible()
+  await expect(page.getByText('Next challenge')).toBeVisible()
   await expect(page.getByText('A red leaf')).toBeVisible()
   await expect(page.getByRole('progressbar', { name: 'Time remaining' })).toBeVisible()
   await expect(page.getByRole('progressbar', { name: 'Team Cedar accepted photos' }), `progress RPC responses: ${progressResponses.join(', ')}`).toHaveAttribute('aria-valuenow', '1')
@@ -838,6 +847,7 @@ test('active participant game exposes the timer, team progress, and photo list',
   }
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, nodes }) => ({ id, impact, help, targets: nodes.map(node => node.target) })), null, 2)).toEqual([])
+  await page.locator('.participant-chat-disclosure summary').click()
   await expectKeyboardCanReach(page, page.getByRole('textbox', { name: 'Message' }))
   await expectNoHorizontalOverflowAt200Percent(page, 'participant gameplay')
 })
@@ -848,7 +858,7 @@ test('participant gameplay follows server time when the device clock is years be
   await page.goto(`/#/join/${'a'.repeat(64)}`)
   await page.getByLabel('What should your team call you?').fill('Taylor')
   await page.getByRole('button', { name: 'Join the hunt' }).click()
-  await expect(page.getByText('Your photo list')).toBeVisible()
+  await expect(page.getByText('Next challenge')).toBeVisible()
   await expect(page.getByRole('progressbar', { name: 'Time remaining' })).toBeVisible()
   await expect(page.getByText('A red leaf')).toBeVisible()
   await expect(page.getByText('Time’s up!')).toHaveCount(0)
@@ -925,11 +935,13 @@ test('stale device photo replacement reloads the winning photo and cleans only i
   await expect(firstSlot.locator('.submission-preview')).toHaveCount(0)
   expect(raceSignedPaths).toHaveLength(0)
   await previewToggle.check()
+  await firstSlot.scrollIntoViewIfNeeded()
   await expect(firstSlot.locator('.submission-preview')).toBeVisible()
   await expect.poll(() => raceSignedPaths.length).toBe(1)
   await previewToggle.uncheck()
   await expect(firstSlot.locator('.submission-preview')).toHaveCount(0)
   await previewToggle.check()
+  await firstSlot.scrollIntoViewIfNeeded()
   await expect(firstSlot.locator('.submission-preview')).toBeVisible()
   const staleDevice = await page.context().newPage()
   await staleDevice.goto('/#/play/33333333-3333-4333-8333-333333333333')
@@ -938,6 +950,7 @@ test('stale device photo replacement reloads the winning photo and cleans only i
   const stalePreviewToggle = staleDevice.getByRole('checkbox', { name: 'Show submitted photo previews' })
   await expect(secondSlot.locator('.submission-preview')).toHaveCount(0)
   await stalePreviewToggle.check()
+  await secondSlot.scrollIntoViewIfNeeded()
   await expect(secondSlot.locator('.submission-preview')).toBeVisible()
 
   await firstSlot.locator('input[type="file"]').setInputFiles({ name: 'first-replacement.png', mimeType: 'image/png', buffer: image })
@@ -1337,16 +1350,16 @@ test('participant signed-preview failures create a privacy-safe diagnostic event
   expect(Object.keys(report?.p_details as Record<string, unknown>).sort()).toEqual(['app', 'client_report', 'operation_id', 'stage'])
 })
 
-test('overview lists live hunts with direct organizer management access', async ({ page }) => {
+test('My hunts prioritizes a live game and opens its lobby directly', async ({ page }) => {
   organizerLobbyMode = true
   organizerLobbyStatus = 'active'
   await restoreOrganizerSession(page)
   await page.goto('/#/')
-  const panel = page.getByRole('region', { name: 'Manage a hunt in progress' })
-  await expect(panel.getByText('1 live hunt')).toBeVisible()
-  const hunt = panel.getByRole('article', { name: 'Active hunt: Spring Photo Hunt' })
+  await expect(page.getByRole('heading', { name: 'Your hunts' })).toBeVisible()
+  const hunt = page.getByRole('article').filter({ hasText: 'Spring Photo Hunt' })
+  await expect(hunt.getByText('Live now')).toBeVisible()
   await expect(hunt.getByText('Town Park')).toBeVisible()
-  await hunt.getByRole('button', { name: 'Manage hunt' }).click()
+  await hunt.getByRole('button', { name: 'Manage live hunt' }).click()
   await expect(page.getByRole('heading', { name: 'Hunt in progress' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'End hunt now and review' })).toBeVisible()
   for (const width of [320, 375, 390]) {
@@ -1356,15 +1369,13 @@ test('overview lists live hunts with direct organizer management access', async 
   }
 })
 
-test('overview plan-a-new-hunt card opens the hunt builder when no hunt is live', async ({ page }) => {
+test('My hunts keeps hunt creation easy to reach when no hunt is live', async ({ page }) => {
   organizerReviewMode = true
   organizerReviewStatus = 'review'
   await restoreOrganizerSession(page)
   await page.goto('/#/')
-  await expect(page.getByRole('region', { name: 'Manage a hunt in progress' })).toContainText('No hunts are running right now')
-  const planningCard = page.locator('.plan-hunt-panel')
-  await expect(planningCard.getByRole('heading', { name: 'Plan a new hunt' })).toBeVisible()
-  await planningCard.getByRole('button', { name: 'Start planning' }).click()
+  await expect(page.getByRole('heading', { name: 'Your hunts' })).toBeVisible()
+  await page.getByRole('button', { name: 'Create a hunt' }).click()
   await expect(page.getByRole('heading', { name: 'Create a venue hunt' })).toBeVisible()
 })
 
@@ -1374,6 +1385,7 @@ test('organizer can start a rematch from a completed hunt without changing its r
   await restoreOrganizerSession(page)
   await page.goto('/#/')
   await page.getByRole('button', { name: 'My hunts' }).click()
+  await page.locator('.organizer-history-disclosure summary').click()
   const completedHunt = page.getByRole('article').filter({ hasText: 'Spring Photo Hunt' })
   await completedHunt.getByRole('button', { name: 'Use this hunt again' }).click()
 
@@ -1392,7 +1404,7 @@ test('organizer reviews a photo, changes its decision, and finalizes results', a
   organizerReviewDecision = 'pending'
   await restoreOrganizerSession(page)
   await page.goto('/#/')
-  await expect(page.getByRole('heading', { name: /Welcome in/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Your hunts' })).toBeVisible()
   await page.getByRole('button', { name: 'My hunts' }).click()
   const hunt = page.getByRole('article').filter({ hasText: 'Spring Photo Hunt' })
   await expect(hunt.getByRole('button', { name: 'Review photos' })).toBeVisible()
@@ -1449,6 +1461,7 @@ test('organizer reviews a photo, changes its decision, and finalizes results', a
   await expect.poll(() => organizerSavedWinnerCards.length).toBe(1)
   await expect(page.getByText('Saved to this hunt. Reopen it from My hunts → View results to see the card.')).toBeVisible()
   await page.getByRole('button', { name: 'Back to hunt' }).click()
+  await page.locator('.organizer-history-disclosure summary').click()
   const completedHunt = page.getByRole('article').filter({ hasText: 'Spring Photo Hunt' })
   await completedHunt.getByRole('button', { name: 'View results' }).click()
   await expect(page.getByRole('img', { name: 'Winner celebration card for Team Cedar' })).toBeVisible()
@@ -1543,7 +1556,7 @@ test('organizer login confirms that the email link was requested', async ({ page
   await page.goto('/#/')
   await page.getByRole('button', { name: /Organizer Login/ }).click()
   await page.getByLabel('Email address').fill('organizer@example.test')
-  await page.getByRole('button', { name: /Send me a sign-in link/ }).click()
+  await page.getByRole('button', { name: /Email me a sign-in link/ }).click()
   await expect(page.getByRole('status')).toContainText('Check your email')
 })
 
@@ -1551,26 +1564,38 @@ test('organizer email callback restores the session at the site root', async ({ 
   await page.goto('/#/')
   await page.getByRole('button', { name: /Organizer Login/ }).click()
   await page.getByLabel('Email address').fill('organizer@example.test')
-  await page.getByRole('button', { name: /Send me a sign-in link/ }).click()
+  await page.getByRole('button', { name: /Email me a sign-in link/ }).click()
   await expect(page.getByRole('status')).toContainText('Check your email')
   await page.goto('/?email-callback=1#access_token=callback-access-token&refresh_token=callback-refresh-token&expires_in=3600&token_type=bearer&type=magiclink')
-  await expect(page.getByRole('heading', { name: /Welcome in/ })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Manage a hunt in progress' })).toContainText('No hunts are running right now')
+  await expect(page.getByRole('heading', { name: 'Your hunts' })).toBeVisible()
+  await expect(page.getByText('No hunts yet')).toBeVisible()
 })
 
 test('restored organizer session opens the production organizer workspace', async ({ page }) => {
   await restoreOrganizerSession(page)
   await page.goto('/#/')
-  await expect(page.getByRole('heading', { name: /Welcome in/ })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Manage a hunt in progress' })).toContainText('No hunts are running right now')
+  await expect(page.getByRole('heading', { name: 'Your hunts' })).toBeVisible()
+  await expect(page.getByText('No hunts yet')).toBeVisible()
   const returnToTeam = page.getByRole('link', { name: /Player view.*Team Cedar/ })
   await expect(returnToTeam).toHaveAttribute('href', '#/play/33333333-3333-4333-8333-333333333333')
+})
+
+test('organizer account settings show a public display name and private sign-in email', async ({ page }) => {
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.locator('.account-menu summary').click()
+  await page.getByRole('button', { name: 'Account settings' }).click()
+  await expect(page.getByRole('heading', { name: 'Account settings' })).toBeVisible()
+  await expect(page.getByLabel('Name other players see')).toBeVisible()
+  await expect(page.getByText('This address is used to sign in. Only you can see it in Account settings.')).toBeVisible()
+  await expect(page.getByText('organizer@example.test', { exact: true })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'New password', exact: true })).toBeVisible()
 })
 
 test('organizer hunt editor fits phone widths, passes axe, and reorders challenges', async ({ page }) => {
   await restoreOrganizerSession(page)
   await page.goto('/#/')
-  await page.locator('.plan-hunt-panel').getByRole('button', { name: 'Start planning' }).click()
+  await page.getByRole('button', { name: 'Create a hunt' }).click()
   await expect(page.getByRole('heading', { name: 'Create a venue hunt' })).toBeVisible()
   for (const width of [320, 375, 390]) {
     await page.setViewportSize({ width, height: 844 })
@@ -1597,8 +1622,7 @@ test('organizer hunt editor fits phone widths, passes axe, and reorders challeng
 test('dirty new-hunt forms offer to keep editing or discard changes', async ({ page }) => {
   await restoreOrganizerSession(page)
   await page.goto('/#/')
-  await page.getByRole('button', { name: 'Overview' }).click()
-  await page.locator('.plan-hunt-panel').getByRole('button', { name: 'Start planning' }).click()
+  await page.getByRole('button', { name: 'Create a hunt' }).click()
   await page.getByLabel('Venue name').fill('Town Park')
   await page.getByRole('button', { name: 'My hunts' }).click()
   const discardDialog = page.getByRole('dialog', { name: 'Discard this hunt draft?' })
@@ -1608,8 +1632,7 @@ test('dirty new-hunt forms offer to keep editing or discard changes', async ({ p
   await page.getByRole('button', { name: 'My hunts' }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Discard changes' }).click()
   await expect(page.getByRole('heading', { name: 'Your hunts' })).toBeVisible()
-  await page.getByRole('button', { name: 'Overview' }).click()
-  await page.locator('.plan-hunt-panel').getByRole('button', { name: 'Start planning' }).click()
+  await page.getByRole('button', { name: 'Create a hunt' }).click()
   await expect(page.getByLabel('Venue name')).toHaveValue('')
 })
 
@@ -1617,7 +1640,7 @@ test('organizer can save, reopen, edit, and save a production draft', async ({ p
   organizerDraftMode = true
   await restoreOrganizerSession(page)
   await page.goto('/#/')
-  await page.locator('.plan-hunt-panel').getByRole('button', { name: 'Start planning' }).click()
+  await page.getByRole('button', { name: 'Create a hunt' }).click()
   await page.getByLabel('Venue name').fill('Riverside Park')
   await page.getByLabel(/Hunt title/).fill('Saturday Adventure')
   await page.getByRole('button', { name: 'Add first item' }).click()
@@ -1627,6 +1650,9 @@ test('organizer can save, reopen, edit, and save a production draft', async ({ p
   await challengeTitles.nth(1).fill('Find a park sign')
   await page.getByRole('button', { name: 'Save draft hunt' }).click()
 
+  await expect(page.getByRole('heading', { name: 'Saturday Adventure' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Publish & create QR codes' })).toBeVisible()
+  await page.getByRole('button', { name: 'Back to your hunts' }).click()
   const huntCard = page.getByRole('article').filter({ hasText: 'Saturday Adventure' })
   await expect(huntCard).toBeVisible()
   expect(savedDraftPayloads).toHaveLength(1)
@@ -1637,7 +1663,7 @@ test('organizer can save, reopen, edit, and save a production draft', async ({ p
     { title: 'Find a park sign', description: null, pointValue: 1, libraryItemId: undefined },
   ])
 
-  await huntCard.getByRole('button', { name: 'Edit draft' }).click()
+  await huntCard.getByRole('button', { name: 'Continue setup' }).click()
   await expect(page.getByRole('heading', { name: 'Edit your draft hunt' })).toBeVisible()
   await expect(page.getByLabel('Venue name')).toHaveValue('Riverside Park')
   await expect(challengeTitles.nth(0)).toHaveValue('Find a red leaf')
@@ -1647,7 +1673,8 @@ test('organizer can save, reopen, edit, and save a production draft', async ({ p
   await expect(challengeTitles.nth(0)).toHaveValue('Find a park sign')
   await page.getByRole('button', { name: 'Save draft changes' }).click()
 
-  await expect(page.getByRole('article').filter({ hasText: 'Saturday Family Adventure' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Saturday Family Adventure' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Publish & create QR codes' })).toBeVisible()
   expect(savedDraftPayloads).toHaveLength(2)
   expect(savedDraftPayloads[1].p_hunt_id).toBe(organizerDraft?.id)
   expect(savedDraftPayloads[1].p_title).toBe('Saturday Family Adventure')
@@ -1683,7 +1710,7 @@ test('organizer lobby shows the team roster and unread chat count without moving
   expect(await chatMessages.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeGreaterThan(48)
   await jumpButton.click()
   await expect(page.getByText('One more update')).toBeVisible()
-  await expectKeyboardCanReach(page, page.getByRole('button', { name: 'Start hunt now' }))
+  await expectKeyboardCanReach(page, page.getByRole('button', { name: 'Start early' }))
   await expectNoHorizontalOverflowAt200Percent(page, 'organizer lobby')
 })
 
@@ -1795,12 +1822,12 @@ test('organizer can start a scheduled hunt immediately, end it, and open photo r
   await expect(sectionNav.getByRole('button', { name: 'Teams & invitations' })).toBeVisible()
   await expect(sectionNav.getByRole('button', { name: 'Hunt chat' })).toBeVisible()
   const controls = page.getByRole('region', { name: 'Hunt controls' })
-  await expect(controls.getByRole('button', { name: 'Start hunt now' })).toBeVisible()
+  await expect(controls.getByRole('button', { name: 'Start early' })).toBeVisible()
   expect(await controls.evaluate(element => {
     const chat = document.querySelector('.hunt-chat')
     return !!chat && !!(element.compareDocumentPosition(chat) & Node.DOCUMENT_POSITION_FOLLOWING)
   })).toBe(true)
-  await page.getByRole('button', { name: 'Start hunt now' }).click()
+  await page.getByRole('button', { name: 'Start early' }).click()
   await expect.poll(() => organizerStartCalls).toBe(1)
   await expect(controls.getByRole('heading', { name: 'Hunt in progress' })).toBeVisible()
   await expect(huntFlow.locator('[aria-current="step"]')).toHaveText(/3\s*Playing/)
@@ -1875,7 +1902,7 @@ test('organizer start failure is recorded with an organizer operation trace', as
   page.on('dialog', dialog => dialog.accept())
   await restoreOrganizerSession(page)
   await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
-  await page.getByRole('button', { name: 'Start hunt now' }).click()
+  await page.getByRole('button', { name: 'Start early' }).click()
   await expect(page.getByRole('alert')).toContainText('simulated start failure')
   await expect.poll(() => auditReports.some(report => {
     const details = report.p_details as Record<string, unknown> | undefined
@@ -1908,10 +1935,10 @@ test('organizer timing controls record failure traces for reschedule, start, add
   await expect.poll(() => auditReports.some(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'reschedule_game_failed')).toBe(true)
 
   organizerTimingFailure = 'start'
-  await page.getByRole('button', { name: 'Start hunt now' }).click()
+  await page.getByRole('button', { name: 'Start early' }).click()
   await expect(page.getByRole('alert')).toContainText('simulated start failure')
   await expect.poll(() => auditReports.some(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'start_game_now_failed')).toBe(true)
-  await page.getByRole('button', { name: 'Start hunt now' }).click()
+  await page.getByRole('button', { name: 'Start early' }).click()
   await page.getByRole('button', { name: 'Add 15 minutes' }).waitFor()
 
   organizerTimingFailure = 'add'
@@ -1963,12 +1990,10 @@ test('organizer can copy a team invitation from the QR code card', async ({ page
   await page.goto('/#/')
   await page.getByRole('button', { name: 'My hunts' }).click()
   await page.getByRole('button', { name: 'Open lobby' }).click()
-  const inviteCard = page.locator('.invite-card').first()
-  const invitationLink = inviteCard.locator('input')
-  await expect(invitationLink).toBeVisible()
-  const expectedUrl = await invitationLink.inputValue()
+  const inviteCard = page.locator('.primary-invite-card')
+  const expectedUrl = new URL(`/#/join/${'a'.repeat(64)}`, page.url()).toString()
   await inviteCard.getByRole('button', { name: 'Copy invite link' }).click()
-  await expect(inviteCard.getByRole('button', { name: 'Copied!' })).toBeVisible()
+  await expect(inviteCard.getByRole('button', { name: 'Link copied' })).toBeVisible()
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(expectedUrl)
 })
 
@@ -1978,7 +2003,8 @@ test('organizer can recover active team links after invitation cache is cleared'
   await page.goto('/#/')
   await page.getByRole('button', { name: 'My hunts' }).click()
   await page.getByRole('button', { name: 'Open lobby' }).click()
-  const inviteCard = page.locator('.invite-card').filter({ hasText: 'Team Cedar' })
+  await page.getByText('More invitation options').click()
+  const inviteCard = page.locator('.invite-link-row').filter({ hasText: 'Team Cedar' })
   await expect(inviteCard).toBeVisible()
   await expect(inviteCard.locator('input')).toHaveValue(/a{64}$/)
   await expect.poll(() => organizerInviteRecoveryCalls).toBe(1)
@@ -1992,7 +2018,8 @@ test('organizer can recover active team links after invitation cache is cleared'
   await page.getByRole('button', { name: 'My hunts' }).click()
   await page.getByRole('button', { name: 'Open lobby' }).click()
 
-  const recoveredCard = page.locator('.invite-card').filter({ hasText: 'Team Cedar' })
+  await page.getByText('More invitation options').click()
+  const recoveredCard = page.locator('.invite-link-row').filter({ hasText: 'Team Cedar' })
   await expect(recoveredCard).toBeVisible()
   await expect(recoveredCard.locator('input')).toHaveValue(/a{64}$/)
   await expect.poll(() => organizerInviteRecoveryCalls).toBe(2)
@@ -2006,12 +2033,13 @@ test('organizer replacement refreshes each displayed team link', async ({ page }
   await page.goto('/#/')
   await page.getByRole('button', { name: 'My hunts' }).click()
   await page.getByRole('button', { name: 'Open lobby' }).click()
-  await expect(page.locator('.invite-card').filter({ hasText: 'Team Cedar' }).locator('input')).toHaveValue(/a{64}$/)
+  await page.getByText('More invitation options').click()
+  await expect(page.locator('.invite-link-row').filter({ hasText: 'Team Cedar' }).locator('input')).toHaveValue(/a{64}$/)
 
-  await page.getByRole('button', { name: 'Replace codes' }).click()
+  await page.getByRole('button', { name: 'Replace team codes' }).click()
 
-  await expect(page.locator('.invite-card').filter({ hasText: 'Team Cedar' }).locator('input')).toHaveValue(/c{64}$/)
-  await expect(page.locator('.invite-card').filter({ hasText: 'Team Maple' }).locator('input')).toHaveValue(/d{64}$/)
+  await expect(page.locator('.invite-link-row').filter({ hasText: 'Team Cedar' }).locator('input')).toHaveValue(/c{64}$/)
+  await expect(page.locator('.invite-link-row').filter({ hasText: 'Team Maple' }).locator('input')).toHaveValue(/d{64}$/)
 })
 
 test('legacy active invitations are not replaced without explicit confirmation', async ({ page }) => {
@@ -2022,11 +2050,12 @@ test('legacy active invitations are not replaced without explicit confirmation',
   await page.getByRole('button', { name: 'My hunts' }).click()
   await page.getByRole('button', { name: 'Open lobby' }).click()
   const legacyInviteNotice = page.locator('.locked-note').filter({ hasText: 'Existing invitation links are active' })
-  await expect(legacyInviteNotice).toContainText('Replace codes only if you are ready to invalidate older copies')
-  await expect(page.locator('.invite-card')).toHaveCount(0)
+  await expect(legacyInviteNotice).toContainText('could not be restored on this device')
+  await expect(page.locator('.primary-invite-card')).toHaveCount(0)
+  await expect(page.getByText('Replacing the team codes will invalidate every older QR code and link.')).toBeVisible()
 
   page.once('dialog', dialog => dialog.dismiss())
-  await page.getByRole('button', { name: 'Replace codes' }).click()
+  await page.getByRole('button', { name: 'Replace team codes' }).click()
 
   await expect.poll(() => organizerInviteRotationCalls).toBe(0)
   await expect(page.locator('.locked-note')).toContainText('Existing invitation links are active')
@@ -2038,8 +2067,9 @@ test('organizer can join an assigned team and return to hunt management', async 
   await page.goto('/#/')
   await page.getByRole('button', { name: 'My hunts' }).click()
   await page.getByRole('button', { name: 'Open lobby' }).click()
-  await page.locator('.invite-card').first().getByRole('button', { name: 'Join this team' }).click()
-  await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
+  await page.getByText('More invitation options').click()
+  await page.locator('.invite-link-row').first().getByRole('button', { name: 'Join as player' }).click()
+  await expect(page.getByText('You are checked in with Team Cedar')).toBeVisible()
   const organizerMenu = page.getByRole('link', { name: 'Manage hunt' })
   await expect(organizerMenu).toBeVisible()
   await organizerMenu.click()
@@ -2047,7 +2077,7 @@ test('organizer can join an assigned team and return to hunt management', async 
   if (!(await rosterDetails.getByRole('heading', { name: 'Team lobby' }).isVisible())) await rosterDetails.locator('summary').click()
   await expect(page.getByRole('heading', { name: 'Team lobby' })).toBeVisible()
   await page.goBack()
-  await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
+  await expect(page.getByText('You are checked in with Team Cedar')).toBeVisible()
   await page.goForward()
   await page.getByRole('navigation', { name: 'Hunt sections' }).getByRole('button', { name: 'Team roster' }).click()
   await expect(page.getByRole('heading', { name: 'Team lobby' })).toBeVisible()
@@ -2060,6 +2090,7 @@ test('organizer winner card picker offers each team tied for first', async ({ pa
   await restoreOrganizerSession(page)
   await page.goto('/#/')
   await page.getByRole('button', { name: 'My hunts' }).click()
+  await page.locator('details').filter({ hasText: 'Past results' }).locator('summary').click()
   await page.getByRole('button', { name: 'View results' }).click()
   await expect(page.getByRole('heading', { name: '2 teams share first place' })).toBeVisible()
   const chooser = page.getByLabel('Choose a team card')
@@ -2158,7 +2189,7 @@ test('chat keeps an older page when a refresh finishes while it is loading', asy
 test('organizer workspace fits common phone widths without horizontal scrolling', async ({ page }) => {
   await restoreOrganizerSession(page)
   await page.goto('/#/')
-  await expect(page.getByRole('heading', { name: /Welcome in/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Your hunts' })).toBeVisible()
   for (const width of [320, 375, 390]) {
     await page.setViewportSize({ width, height: 844 })
     const dimensions = await page.evaluate(() => ({
@@ -2177,7 +2208,7 @@ test('organizer workspace fits common phone widths without horizontal scrolling'
 test('organizer workspace has no automated WCAG 2.1 A/AA violations', async ({ page }) => {
   await restoreOrganizerSession(page)
   await page.goto('/#/')
-  await expect(page.getByRole('heading', { name: /Welcome in/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Your hunts' })).toBeVisible()
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, nodes }) => ({ id, impact, help, nodes: nodes.map(node => ({ target: node.target, ...node.any[0]?.data })) })), null, 2)).toEqual([])
 })

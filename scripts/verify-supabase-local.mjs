@@ -853,7 +853,7 @@ try {
       .single()
     assert.ifError(error)
     savedSubmission = data
-    assert.equal(savedSubmission.approval_status, 'approved', 'Accepted and replacement photos should count by default')
+    assert.equal(savedSubmission.approval_status, 'pending', 'New and replacement photos should wait for organizer review')
     const winningPath = resultOne.error ? candidateTwo : candidateOne
     const losingPath = resultOne.error ? candidateOne : candidateTwo
     assert.equal(savedSubmission.storage_path, winningPath, `Attempt ${attempt} must leave the accepted path referenced`)
