@@ -2,7 +2,7 @@
 
 This runbook separates no-charge local verification from read-only production diagnosis. Do not incur paid service usage to perform development checks. Never paste invitation tokens, email magic links, service-role keys, or private photo URLs into notes or bug reports.
 
-> **Migration status (November 7, 2026):** Production history records migrations 001–024 and targeted 026–028. Read-only checks confirm all public tables have RLS and anon function grants match the approved public RPC allowlist. The owner chose to retain diagnostic events beyond 365 days, with no maximum duration set. Migration 025 is a no-op and 029 removes any earlier pruning implementation. Development verification uses only the ephemeral Supabase stack in GitHub Actions; do not create a paid hosted branch. Do not use production for role-specific row/Storage or concurrent destructive tests.
+> **Migration status (November 19, 2026):** Production history is verified through migration `20261119185440` (migrations 001–030, plus 031–033). The latest entries are `202611090030_auto_approve_hunt_photos`, `202611090031_saved_winner_celebrations`, `20261119185427_restore_photo_review`, and `20261119185440_self_serve_organizer_accounts`. Migration 032 matched zero production rows for its data correction. Migration 031's winner-card table has RLS enabled; the `winner-cards` bucket is private, limited to PNGs up to 2 MiB, and currently empty. Production review also confirmed the restored `pending` photo-approval default and auth-only grants for the new organizer functions. The owner chose to retain diagnostic events beyond 365 days, with no maximum duration set. Migration 025 is a no-op and 029 removes any earlier pruning implementation. Development verification uses only the ephemeral Supabase stack in GitHub Actions; do not create a paid hosted branch. Do not use production for role-specific row/Storage or concurrent destructive tests.
 
 ## 1. Public deployment smoke test
 
@@ -54,7 +54,7 @@ Do not create a hosted Supabase branch or a separate paid project for routine de
 
 ## 4. Production troubleshooting is read-only
 
-The latest recorded production migration history is migrations `202610280001` through `202611060024`, plus targeted `202611070026` through `202611070028`. Migration `202611070025` is a no-op; `202611070029` removes any earlier audit-pruning behavior. The owner requires audit events to remain beyond 365 days and has not set a maximum. Check the [current test evidence](PRD_V2_TEST_EVIDENCE.md) before investigating a schema error.
+The latest recorded production migration history is verified through `20261119185440`: `202611090030_auto_approve_hunt_photos`, `202611090031_saved_winner_celebrations`, `20261119185427_restore_photo_review`, and `20261119185440_self_serve_organizer_accounts` follow the earlier migrations through 029. Migration `202611070025` is a no-op; `202611070029` removes any earlier audit-pruning behavior. The owner requires audit events to remain beyond 365 days and has not set a maximum. Check the [current test evidence](PRD_V2_TEST_EVIDENCE.md) before investigating a schema error.
 
 Open the [Supabase SQL Editor](https://supabase.com/dashboard/project/ykfkwczcomkhxaraqpuq/sql) only for read-only diagnosis. For example, check whether an RPC is present:
 
