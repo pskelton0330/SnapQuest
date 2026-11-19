@@ -2,7 +2,8 @@ import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { readFile } from 'node:fs/promises'
 
-let participantRuntimeState: 'waiting' | 'active' | 'review' | 'completed' = 'waiting'
+let participantRuntimeState: 'waiting' | 'active' | 'ended' | 'review' | 'completed' = 'waiting'
+let invalidInvitePreview = false
 let photoFaultMode: 'committed-rpc-response-lost' | 'storage-denied' | 'rpc-rejected' | null = null
 let photoReplacementRaceMode = false
 let raceCurrentPhotoPath = ''
@@ -26,6 +27,7 @@ let organizerDraftItems: { id: string; title_snapshot: string; description_snaps
 let savedDraftPayloads: Record<string, unknown>[] = []
 let organizerReviewStatus: 'review' | 'completed' = 'review'
 let organizerReviewDecision: 'pending' | 'approved' | 'rejected' = 'approved'
+let organizerSavedWinnerCards: { hunt_id: string; team_id: string; storage_path: string }[] = []
 let organizerLobbyStatus: 'scheduled' | 'active' | 'ended' | 'review' = 'scheduled'
 let organizerLobbyParticipantName = 'Taylor'
 
@@ -98,6 +100,7 @@ let delayNextParticipantGalleryResponse = false
 let releaseDelayedParticipantGalleryResponse: (() => void) | null = null
 let participantTieMode = false
 let participantZeroScoreMode = false
+let participantMixedZeroMode = false
 let participantTeamName = 'Team Cedar'
 let celebrationSelfieMode = false
 let celebrationSelfieSignedRequests = 0
@@ -107,6 +110,7 @@ let celebrationJpegFixture: Buffer
 
 test.beforeEach(async ({ page }) => {
   participantRuntimeState = 'waiting'
+  invalidInvitePreview = false
   photoFaultMode = null
   photoReplacementRaceMode = false
   raceCurrentPhotoPath = ''
@@ -130,6 +134,7 @@ test.beforeEach(async ({ page }) => {
   savedDraftPayloads = []
   organizerReviewStatus = 'review'
   organizerReviewDecision = 'approved'
+  organizerSavedWinnerCards = []
   organizerLobbyStatus = 'scheduled'
   organizerLobbyParticipantName = 'Taylor'
   organizerStartCalls = 0
@@ -156,6 +161,7 @@ test.beforeEach(async ({ page }) => {
   releaseDelayedParticipantGalleryResponse = null
   participantTieMode = false
   participantZeroScoreMode = false
+  participantMixedZeroMode = false
   participantTeamName = 'Team Cedar'
   celebrationSelfieMode = false
   celebrationSelfieSignedRequests = 0
@@ -200,6 +206,16 @@ test.beforeEach(async ({ page }) => {
       await route.fulfill({ status: 200, contentType: 'image/png', body: png })
       return
     }
+    if (request.url().includes('/storage/v1/object/sign/winner-cards/')) {
+      if (request.method() === 'POST') {
+        const path = decodeURIComponent(new URL(request.url()).pathname.split('/object/sign/winner-cards/')[1] ?? '')
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ signedURL: `/storage/v1/object/sign/winner-cards/${path}?token=saved-card` }) })
+      } else {
+        const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
+        await route.fulfill({ status: 200, contentType: 'image/png', body: png })
+      }
+      return
+    }
     if (request.url().includes('/storage/v1/object/sign/hunt-photos/')) {
       if (celebrationSelfieMode && request.method() === 'POST' && request.url().includes('team-selfie.png')) {
         celebrationSelfieSignedRequests++
@@ -235,6 +251,10 @@ test.beforeEach(async ({ page }) => {
         await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ statusCode: '403', error: 'Unauthorized', message: 'new row violates row-level security policy' }) })
         return
       }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ Key: request.url().split('/storage/v1/object/')[1] }) })
+      return
+    }
+    if (request.url().includes('/storage/v1/object/winner-cards/') && ['POST', 'PUT'].includes(request.method())) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ Key: request.url().split('/storage/v1/object/')[1] }) })
       return
     }
@@ -333,6 +353,10 @@ test.beforeEach(async ({ page }) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', status: organizerLobbyMode ? organizerLobbyStatus : organizerReviewStatus, created_at: '2026-11-01T12:00:00Z', start_at: startAt, duration_minutes: 60, team_assignment_mode: 'organizer', voting_enabled: false, voting_bonus_points: 0 }]) })
       return
     }
+    if (organizerReviewMode && request.url().includes('/rest/v1/hunts') && request.url().includes('id=eq.')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', rules: ['Stay together'], status: organizerReviewStatus, created_at: '2026-11-01T12:00:00Z', start_at: null, duration_minutes: 60, team_assignment_mode: 'organizer', voting_enabled: false, voting_bonus_points: 0 }) })
+      return
+    }
     if (organizerLobbyMode && request.url().includes('/rest/v1/hunts') && request.url().includes('id=eq.')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: '33333333-3333-4333-8333-333333333333', title: 'Spring Photo Hunt', venue: 'Town Park', status: organizerLobbyStatus, created_at: '2026-11-01T12:00:00Z', start_at: new Date(Date.now() + (organizerLobbyStatus === 'scheduled' ? 60 * 60_000 : -60_000)).toISOString(), duration_minutes: 60, team_assignment_mode: 'organizer', voting_enabled: false, voting_bonus_points: 0 }) })
       return
@@ -366,7 +390,7 @@ test.beforeEach(async ({ page }) => {
       return
     }
     if (request.url().includes('/rest/v1/rpc/preview_invitation')) {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ title: 'Spring Photo Hunt', venue: 'Town Park', team_name: 'Team Cedar', start_at: '2026-12-01T17:00:00Z', duration_minutes: 60 }) })
+      await route.fulfill({ status: 200, contentType: 'application/json', body: invalidInvitePreview ? 'null' : JSON.stringify({ title: 'Spring Photo Hunt', venue: 'Town Park', team_name: 'Team Cedar', start_at: '2026-12-01T17:00:00Z', duration_minutes: 60 }) })
       return
     }
     if (request.url().includes('/rest/v1/rpc/redeem_invitation')) {
@@ -380,6 +404,17 @@ test.beforeEach(async ({ page }) => {
     }
     if (request.url().includes('/rest/v1/rpc/get_hunt_progress')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: participantRuntimeState === 'active' ? JSON.stringify([{ team_id: '44444444-4444-4444-8444-444444444444', team_name: 'Team Cedar', display_color: '#15967a', accepted_count: 1, total_items: 2 }]) : '[]' })
+      return
+    }
+    if (request.url().includes('/rest/v1/winner_celebration_cards')) {
+      if (request.method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(organizerSavedWinnerCards) })
+      } else {
+        const payload = request.postDataJSON() as { hunt_id: string; team_id: string; storage_path: string } | { hunt_id: string; team_id: string; storage_path: string }[]
+        const rows = Array.isArray(payload) ? payload : [payload]
+        for (const row of rows) organizerSavedWinnerCards = [...organizerSavedWinnerCards.filter(saved => saved.team_id !== row.team_id), row]
+        await route.fulfill({ status: 201, contentType: 'application/json', body: 'null' })
+      }
       return
     }
     if (request.url().includes('/rest/v1/rpc/get_hunt_review_gallery')) {
@@ -402,7 +437,7 @@ test.beforeEach(async ({ page }) => {
           ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '55555555-5555-4555-8555-555555555555', storage_path: 'test/maple.jpg', status: reviewPhotoStatus ?? 'approved' }]
           : reviewPhotoStatus ? [{ id: '99999999-9999-4999-8999-999999999999', item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', storage_path: 'test/photo.jpg', status: reviewPhotoStatus }] : []
         const teams = [{ id: '44444444-4444-4444-8444-444444444444', name: 'Team Cedar', display_color: '#15967a' }, ...(participantReviewVotingMode ? [{ id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : [])]
-        const finalScores = [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: participantTeamName, base_points: participantZeroScoreMode ? 0 : 10, voting_bonus: participantZeroScoreMode ? 0 : 5, total: participantZeroScoreMode ? 0 : 15, rank: 1 }, ...(participantTieMode ? [{ team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', base_points: 10, voting_bonus: 5, total: 15, rank: 1 }] : [])]
+        const finalScores = [{ team_id: '44444444-4444-4444-8444-444444444444', team_name: participantTeamName, base_points: participantZeroScoreMode ? 0 : 10, voting_bonus: participantZeroScoreMode ? 0 : 5, total: participantZeroScoreMode ? 0 : 15, rank: participantMixedZeroMode ? 2 : 1 }, ...(participantTieMode ? [{ team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', base_points: 10, voting_bonus: 5, total: 15, rank: 1 }] : participantMixedZeroMode ? [{ team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', base_points: 10, voting_bonus: 0, total: 10, rank: 1 }] : [{ team_id: '55555555-5555-4555-8555-555555555555', team_name: 'Team Maple', base_points: 0, voting_bonus: 0, total: 0, rank: participantZeroScoreMode ? 1 : 2 }])]
         const body = JSON.stringify({ voting_enabled: participantReviewVotingMode, voting_bonus_points: 5, status: participantRuntimeState, final_scores: finalScores, teams: participantTieMode ? [...teams, { id: '55555555-5555-4555-8555-555555555555', name: 'Team Maple', display_color: '#5379b7' }] : teams.map(team => ({ ...team, name: participantTeamName })), items: [{ id: '77777777-7777-4777-8777-777777777777', title: 'A red leaf', points: 10, display_order: 1 }], submissions, votes: participantReviewVotes })
         if (delayNextParticipantGalleryResponse) {
           delayNextParticipantGalleryResponse = false
@@ -560,7 +595,7 @@ async function restoreOrganizerSession(page: import('@playwright/test').Page) {
     is_anonymous: false,
   }
   await page.addInitScript(userData => {
-    localStorage.setItem('sb-test-project-auth-token', JSON.stringify({ access_token: 'test-access-token', refresh_token: 'test-refresh-token', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, token_type: 'bearer', user: userData }))
+    localStorage.setItem('sb-test-project-auth-token', JSON.stringify({ access_token: 'test-access-token', refresh_token: 'test-refresh-token', expires_in: 86400, expires_at: Math.floor(Date.now() / 1000) + 86400, token_type: 'bearer', user: userData }))
   }, user)
 }
 
@@ -592,6 +627,16 @@ test('valid team invite opens the correct join preview and name form', async ({ 
   await expect(page.getByRole('heading', { name: 'Spring Photo Hunt' })).toBeVisible()
   await expect(page.getByText('Town Park')).toBeVisible()
   await expect(page.getByLabel('What should your team call you?')).toBeVisible()
+})
+
+test('expired team invitations explain the next step and provide a home link', async ({ page }) => {
+  invalidInvitePreview = true
+  await page.goto(`/#/join/${'e'.repeat(64)}`)
+  await expect(page.getByRole('heading', { name: 'This invitation is unavailable' })).toBeVisible()
+  await expect(page.getByText(/expired or been replaced/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Join the hunt' })).toHaveCount(0)
+  await page.getByRole('link', { name: 'Return home' }).click()
+  await expect(page.getByRole('button', { name: /I.?m a Player/ })).toBeVisible()
 })
 
 test('player can join an invited team and reach the waiting lobby', async ({ page }) => {
@@ -918,10 +963,10 @@ test('participant can see the post-hunt review gallery while the organizer revie
   await page.goto(`/#/join/${'a'.repeat(64)}`)
   await page.getByLabel('What should your team call you?').fill('Taylor')
   await page.getByRole('button', { name: 'Join the hunt' }).click()
-  await expect(page.getByText('Photo review time!')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Your organizer is reviewing the photos.' })).toBeVisible()
   await expect(page.getByText('Team photo gallery')).toBeVisible()
   await expect(page.getByText('The organizer is reviewing all team photos.')).toBeVisible()
-  await expect(page.getByText('No photo submitted')).toBeVisible()
+  await expect(page.getByText('No photos were submitted in this hunt.')).toBeVisible()
   for (const width of [320, 375, 390]) {
     await page.setViewportSize({ width, height: 844 })
     const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
@@ -1023,9 +1068,10 @@ test('participant sees final standings and winner celebration after results publ
   await page.goto(`/#/join/${'a'.repeat(64)}`)
   await page.getByLabel('What should your team call you?').fill('Taylor')
   await page.getByRole('button', { name: 'Join the hunt' }).click()
-  await expect(page.getByText('The results are in!')).toBeVisible()
+  await expect(page.locator('.participant-result-summary')).toContainText('Final results - your team')
   await expect(page.getByText('Final results')).toBeVisible()
-  await expect(page.getByText('#1 Team Cedar')).toBeVisible()
+  await expect(page.locator('.participant-result-summary')).toContainText('#1')
+  await expect(page.locator('.participant-scoreboard')).toContainText('Your team: Team Cedar')
   await expect(page.locator('.participant-scoreboard')).toContainText('10 points + 5 voting bonus')
   await expect(page.getByRole('button', { name: 'Share team card' })).toBeVisible()
   const caption = page.locator('.celebration-caption')
@@ -1063,10 +1109,11 @@ test('participant sees final standings and winner celebration after results publ
   })
   await page.getByRole('button', { name: 'Share team card' }).click()
   await expect(page.getByRole('alert')).toHaveCount(0)
-  for (const width of [320, 375, 390]) {
+  for (const width of [320, 390, 768, 1440]) {
     await page.setViewportSize({ width, height: 844 })
     const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
     expect(dimensions.content, `published results horizontal overflow at ${width}px`).toBeLessThanOrEqual(dimensions.viewport)
+    await page.screenshot({ path: `test-results/snapquest-results-${width}-${test.info().project.name}.png`, fullPage: true })
   }
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, targets }) => ({ id, impact, help, targets })), null, 2)).toEqual([])
@@ -1088,13 +1135,25 @@ test('participant celebration identifies tied winners and suppresses a zero-scor
   await expect(page.getByRole('button', { name: 'Share team card' })).toHaveCount(0)
 })
 
+test('a team with zero points is distinguished from a hunt-wide zero score', async ({ page }) => {
+  participantRuntimeState = 'completed'
+  participantZeroScoreMode = true
+  participantMixedZeroMode = true
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  await expect(page.locator('.participant-result-summary')).toContainText('Your team scored 0 points this hunt.')
+  await expect(page.locator('.participant-result-summary')).not.toContainText('No team scored points')
+  await expect(page.locator('.participant-scoreboard')).toContainText('Team Maple')
+})
+
 test('winner card uses the team-color fallback and handles a long team name', async ({ page }) => {
   participantRuntimeState = 'completed'
   participantTeamName = 'The Unreasonably Long Name for the Autumn Adventure Team'
   await page.goto(`/#/join/${'a'.repeat(64)}`)
   await page.getByLabel('What should your team call you?').fill('Taylor')
   await page.getByRole('button', { name: 'Join the hunt' }).click()
-  await expect(page.getByText(`#1 ${participantTeamName}`)).toBeVisible()
+  await expect(page.locator('.participant-scoreboard')).toContainText(`Your team: ${participantTeamName}`)
   const cardDownloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Download card' }).click()
   const download = await cardDownloadPromise
@@ -1309,8 +1368,28 @@ test('overview plan-a-new-hunt card opens the hunt builder when no hunt is live'
   await expect(page.getByRole('heading', { name: 'Create a venue hunt' })).toBeVisible()
 })
 
+test('organizer can start a rematch from a completed hunt without changing its results', async ({ page }) => {
+  organizerReviewMode = true
+  organizerReviewStatus = 'completed'
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  const completedHunt = page.getByRole('article').filter({ hasText: 'Spring Photo Hunt' })
+  await completedHunt.getByRole('button', { name: 'Use this hunt again' }).click()
+
+  await expect(page.getByRole('heading', { name: 'Plan a rematch' })).toBeVisible()
+  await expect(page.getByText(/Challenges, venue, and rules copied from “Spring Photo Hunt”/)).toBeVisible()
+  await expect(page.getByLabel('Venue name')).toHaveValue('Town Park')
+  await expect(page.getByLabel('Hunt title')).toHaveValue('Spring Photo Hunt (Rematch)')
+  await expect(page.getByLabel('What should they find?').nth(0)).toHaveValue('A red leaf')
+  await expect(page.getByLabel('What should they find?').nth(1)).toHaveValue('A park sign')
+  await expect(page.getByRole('button', { name: 'Save draft hunt' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Save draft hunt' })).toBeEnabled()
+})
+
 test('organizer reviews a photo, changes its decision, and finalizes results', async ({ page }) => {
   organizerReviewMode = true
+  organizerReviewDecision = 'pending'
   await restoreOrganizerSession(page)
   await page.goto('/#/')
   await expect(page.getByRole('heading', { name: /Welcome in/ })).toBeVisible()
@@ -1320,9 +1399,13 @@ test('organizer reviews a photo, changes its decision, and finalizes results', a
   await hunt.getByRole('button', { name: 'Review photos' }).click()
   await expect(page.getByRole('heading', { name: 'Spring Photo Hunt' })).toBeVisible()
   await expect(page.getByText('Preview unavailable')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
+  await expect(page.getByText('1 photo still needs a decision')).toBeVisible()
+  await expect(page.getByText('Review each photo and approve the ones that follow your hunt rules. Approved photos earn points.')).toBeVisible()
+  await page.getByRole('button', { name: 'Approve', exact: true }).click()
   const approvalToggle = page.getByRole('checkbox', { name: 'Photo meets hunt rules: Team Cedar photo for A red leaf' })
   await expect(approvalToggle).toBeChecked()
-  await expect(page.getByText('Photos are approved by default')).toBeVisible()
+  await expect(page.getByText('All submitted photos have a decision')).toBeVisible()
   await expectKeyboardCanReach(page, approvalToggle)
   await approvalToggle.click()
   await expect(approvalToggle).not.toBeChecked()
@@ -1363,6 +1446,13 @@ test('organizer reviews a photo, changes its decision, and finalizes results', a
   await expectNoHorizontalOverflowAt200Percent(page, 'organizer review and results')
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(results.violations, JSON.stringify(results.violations.map(({ id, impact, help, targets }) => ({ id, impact, help, targets })), null, 2)).toEqual([])
+  await expect.poll(() => organizerSavedWinnerCards.length).toBe(1)
+  await expect(page.getByText('Saved to this hunt. Reopen it from My hunts → View results to see the card.')).toBeVisible()
+  await page.getByRole('button', { name: 'Back to hunt' }).click()
+  const completedHunt = page.getByRole('article').filter({ hasText: 'Spring Photo Hunt' })
+  await completedHunt.getByRole('button', { name: 'View results' }).click()
+  await expect(page.getByRole('img', { name: 'Winner celebration card for Team Cedar' })).toBeVisible()
+  await expect(page.getByText('Saved to this hunt. Reopen it from My hunts → View results to see the card.')).toBeVisible()
 })
 
 test('finalization retry after a lost response is traced to the original operation', async ({ page }) => {
@@ -1404,7 +1494,7 @@ test('organizer review refreshes signed previews when the page returns to the fo
   let previousRequests = initialRequests
   const recoveryEvents: Array<'visibilitychange' | 'online' | 'focus'> = ['visibilitychange', 'online', 'focus']
   for (const recoveryEvent of recoveryEvents) {
-    const expiredAt = await page.evaluate(() => Date.now() + 300_000)
+    const expiredAt = await page.evaluate(() => Date.now() + 3_500_000)
     await page.clock.setSystemTime(new Date(expiredAt))
     await page.evaluate(eventName => {
       if (eventName === 'visibilitychange') Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
@@ -1473,7 +1563,7 @@ test('restored organizer session opens the production organizer workspace', asyn
   await page.goto('/#/')
   await expect(page.getByRole('heading', { name: /Welcome in/ })).toBeVisible()
   await expect(page.getByRole('region', { name: 'Manage a hunt in progress' })).toContainText('No hunts are running right now')
-  const returnToTeam = page.getByRole('link', { name: /Return to Team Cedar/ })
+  const returnToTeam = page.getByRole('link', { name: /Player view.*Team Cedar/ })
   await expect(returnToTeam).toHaveAttribute('href', '#/play/33333333-3333-4333-8333-333333333333')
 })
 
@@ -1502,6 +1592,25 @@ test('organizer hunt editor fits phone widths, passes axe, and reorders challeng
   await page.getByRole('button', { name: 'Move item 1 down' }).click()
   await expect(titles.nth(0)).toHaveValue('Second challenge')
   await expect(titles.nth(1)).toHaveValue('First challenge')
+})
+
+test('dirty new-hunt forms offer to keep editing or discard changes', async ({ page }) => {
+  await restoreOrganizerSession(page)
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'Overview' }).click()
+  await page.locator('.plan-hunt-panel').getByRole('button', { name: 'Start planning' }).click()
+  await page.getByLabel('Venue name').fill('Town Park')
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  const discardDialog = page.getByRole('dialog', { name: 'Discard this hunt draft?' })
+  await expect(discardDialog).toBeVisible()
+  await discardDialog.getByRole('button', { name: 'Keep editing' }).click()
+  await expect(page.getByLabel('Venue name')).toHaveValue('Town Park')
+  await page.getByRole('button', { name: 'My hunts' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Discard changes' }).click()
+  await expect(page.getByRole('heading', { name: 'Your hunts' })).toBeVisible()
+  await page.getByRole('button', { name: 'Overview' }).click()
+  await page.locator('.plan-hunt-panel').getByRole('button', { name: 'Start planning' }).click()
+  await expect(page.getByLabel('Venue name')).toHaveValue('')
 })
 
 test('organizer can save, reopen, edit, and save a production draft', async ({ page }) => {
@@ -1555,6 +1664,8 @@ test('organizer lobby shows the team roster and unread chat count without moving
   await page.clock.install()
   await restoreOrganizerSession(page)
   await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
+  const rosterDetails = page.locator('#team-roster')
+  if (!(await rosterDetails.getByRole('heading', { name: 'Team lobby' }).isVisible())) await page.getByRole('navigation', { name: 'Hunt sections' }).getByRole('button', { name: 'Team roster' }).click()
   await expect(page.getByRole('heading', { name: 'Team lobby' })).toBeVisible()
   await expect(page.locator('.participant-roster').getByText('Taylor')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Keep everyone in the loop' })).toBeVisible()
@@ -1606,7 +1717,7 @@ test('hunt chat offers retry after read failure and keeps a message after send f
   chatSendFailures = 1
   await restoreOrganizerSession(page)
   await page.goto('/#/manage/33333333-3333-4333-8333-333333333333')
-  await expect(page.getByRole('heading', { name: 'Team lobby' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Keep everyone in the loop' })).toBeVisible()
   const chatError = page.locator('.hunt-chat-error')
   await expect(chatError).toContainText('Messages could not be refreshed')
   await expect.poll(() => auditReports.some(report => {
@@ -1632,6 +1743,7 @@ test('hunt chat offers retry after read failure and keeps a message after send f
   const sendFailure = auditReports.find(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'chat_send_failed')
   expect(sendFailure?.p_outcome).toBe('failure')
   expect(Object.keys(sendFailure?.p_details as Record<string, unknown>).sort()).toEqual(['app', 'client_report', 'operation_id', 'stage'])
+  await page.getByRole('navigation', { name: 'Hunt sections' }).getByRole('button', { name: 'Troubleshooting' }).click()
   const diagnostics = page.locator('.hunt-diagnostics')
   await diagnostics.locator('summary').click()
   await diagnostics.getByRole('button', { name: 'Refresh' }).click()
@@ -1668,6 +1780,7 @@ test('organizer can start a scheduled hunt immediately, end it, and open photo r
   const huntStatus = page.getByRole('region', { name: 'Hunt status' })
   const huntFlow = huntStatus.getByRole('list', { name: 'Hunt progress' })
   await expect(huntStatus).toContainText('joined across')
+  if (!(await huntFlow.isVisible())) await huntStatus.getByText('See all hunt stages').click()
   await expect(huntFlow.getByRole('listitem')).toHaveCount(5)
   await expect(huntFlow.locator('[aria-current="step"]')).toHaveText(/2\s*Waiting/)
   await expect(huntFlow.locator('.complete .hunt-stage-direction')).toHaveText('DONE')
@@ -1768,6 +1881,7 @@ test('organizer start failure is recorded with an organizer operation trace', as
     const details = report.p_details as Record<string, unknown> | undefined
     return details?.stage === 'start_game_now_failed' && details?.app === 'organizer_web'
   })).toBe(true)
+  await page.getByRole('navigation', { name: 'Hunt sections' }).getByRole('button', { name: 'Troubleshooting' }).click()
   const diagnostics = page.locator('.hunt-diagnostics')
   await diagnostics.locator('summary').click()
   await diagnostics.getByRole('button', { name: 'Refresh' }).click()
@@ -1810,6 +1924,7 @@ test('organizer timing controls record failure traces for reschedule, start, add
   await expect(page.getByRole('alert')).toContainText('simulated end failure')
   await expect.poll(() => auditReports.some(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'end_hunt_early_failed')).toBe(true)
 
+  await page.getByRole('navigation', { name: 'Hunt sections' }).getByRole('button', { name: 'Troubleshooting' }).click()
   const diagnostics = page.locator('.hunt-diagnostics')
   await diagnostics.locator('summary').click()
   await diagnostics.getByRole('button', { name: 'Refresh' }).click()
@@ -1906,16 +2021,15 @@ test('legacy active invitations are not replaced without explicit confirmation',
   await page.goto('/#/')
   await page.getByRole('button', { name: 'My hunts' }).click()
   await page.getByRole('button', { name: 'Open lobby' }).click()
-  const legacyInviteNotice = page.locator('.locked-note').filter({ hasText: 'Existing invitation links are still active' })
-  await expect(legacyInviteNotice).toContainText('Existing invitation links are still active')
-  await expect(legacyInviteNotice).toContainText('Replace codes only when you are ready to invalidate every older QR code and link')
+  const legacyInviteNotice = page.locator('.locked-note').filter({ hasText: 'Existing invitation links are active' })
+  await expect(legacyInviteNotice).toContainText('Replace codes only if you are ready to invalidate older copies')
   await expect(page.locator('.invite-card')).toHaveCount(0)
 
   page.once('dialog', dialog => dialog.dismiss())
   await page.getByRole('button', { name: 'Replace codes' }).click()
 
   await expect.poll(() => organizerInviteRotationCalls).toBe(0)
-  await expect(page.locator('.locked-note')).toContainText('Existing invitation links are still active')
+  await expect(page.locator('.locked-note')).toContainText('Existing invitation links are active')
 })
 
 test('organizer can join an assigned team and return to hunt management', async ({ page }) => {
@@ -1929,10 +2043,13 @@ test('organizer can join an assigned team and return to hunt management', async 
   const organizerMenu = page.getByRole('link', { name: 'Manage hunt' })
   await expect(organizerMenu).toBeVisible()
   await organizerMenu.click()
+  const rosterDetails = page.locator('#team-roster')
+  if (!(await rosterDetails.getByRole('heading', { name: 'Team lobby' }).isVisible())) await rosterDetails.locator('summary').click()
   await expect(page.getByRole('heading', { name: 'Team lobby' })).toBeVisible()
   await page.goBack()
   await expect(page.getByText('GET READY, TEAM CEDAR')).toBeVisible()
   await page.goForward()
+  await page.getByRole('navigation', { name: 'Hunt sections' }).getByRole('button', { name: 'Team roster' }).click()
   await expect(page.getByRole('heading', { name: 'Team lobby' })).toBeVisible()
 })
 
@@ -1947,6 +2064,7 @@ test('organizer winner card picker offers each team tied for first', async ({ pa
   await expect(page.getByRole('heading', { name: '2 teams share first place' })).toBeVisible()
   const chooser = page.getByLabel('Choose a team card')
   await expect(chooser.locator('option')).toHaveText(['Team Cedar', 'Team Maple'])
+  await expect.poll(() => organizerSavedWinnerCards.length).toBe(2)
   await chooser.selectOption('55555555-5555-4555-8555-555555555555')
   await expect(page.getByRole('img', { name: 'Winner celebration card for Team Maple' })).toBeVisible()
   const caption = page.locator('.celebration-caption')

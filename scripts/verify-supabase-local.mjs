@@ -21,6 +21,11 @@ const { data: bucket, error: bucketError } = await admin.storage.getBucket('hunt
 assert.ifError(bucketError)
 assert.equal(bucket?.public, false, 'hunt-photos must remain private')
 console.log('Private hunt-photos bucket is available through Storage HTTP.')
+const { data: winnerCardsBucket, error: winnerCardsBucketError } = await admin.storage.getBucket('winner-cards')
+assert.ifError(winnerCardsBucketError)
+assert.equal(winnerCardsBucket?.public, false, 'winner-cards must remain private')
+assert.deepEqual(winnerCardsBucket?.allowed_mime_types, ['image/png'])
+console.log('Private winner-cards bucket is available with PNG-only uploads.')
 
 async function verifyAuditEventsAreRetained() {
   const marker = randomUUID()
@@ -64,6 +69,7 @@ await verifyAuditEventsAreRetained()
 const identities = []
 const testCredentials = new Map()
 const objectPaths = []
+const winnerCardPaths = []
 
 async function createIdentity(label) {
   const email = `snapquest-${label}-${randomUUID()}@example.test`
@@ -1006,6 +1012,25 @@ try {
     score: galleryWinners[0].total,
   }), `🏆 ${galleryWinners[0].teamName} won Local Storage authorization test with 15 points! #SnapQuest`, 'The celebration caption must use the immutable database winner, team name, and total')
   console.log('The finalized Supabase score snapshot normalizes to the same winning team and caption used by the celebration UI.')
+  const winnerCardPath = `${huntId}/${teamOne.team_id}/winner.png`
+  winnerCardPaths.push(winnerCardPath)
+  const winnerCardPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nXcAAAAASUVORK5CYII=', 'base64')
+  const { error: winnerCardUploadError } = await organizer.storage.from('winner-cards').upload(winnerCardPath, winnerCardPng, { contentType: 'image/png', upsert: true })
+  assert.ifError(winnerCardUploadError)
+  const { error: winnerCardRowError } = await organizer.from('winner_celebration_cards').upsert({ hunt_id: huntId, team_id: teamOne.team_id, storage_path: winnerCardPath }, { onConflict: 'hunt_id,team_id' })
+  assert.ifError(winnerCardRowError)
+  const { data: savedWinnerCard, error: savedWinnerCardError } = await organizer.from('winner_celebration_cards').select('storage_path').eq('hunt_id', huntId).single()
+  assert.ifError(savedWinnerCardError)
+  assert.equal(savedWinnerCard.storage_path, winnerCardPath)
+  const { data: winnerCardPreview, error: winnerCardPreviewError } = await organizer.storage.from('winner-cards').createSignedUrl(winnerCardPath, 60)
+  assert.ifError(winnerCardPreviewError)
+  assert.ok(winnerCardPreview.signedUrl)
+  await expectDenied(() => participantOne.storage.from('winner-cards').download(winnerCardPath), 'Participants must not read organizer winner cards')
+  await expectDenied(() => outsider.storage.from('winner-cards').download(winnerCardPath), 'Other accounts must not read organizer winner cards')
+  const { data: participantWinnerRows, error: participantWinnerRowsError } = await participantOne.from('winner_celebration_cards').select('team_id').eq('hunt_id', huntId)
+  assert.ifError(participantWinnerRowsError)
+  assert.equal(participantWinnerRows.length, 0, 'Saved winner-card metadata is organizer-private')
+  console.log('Completed-hunt winner cards persist in private Storage and can only be reopened by their organizer.')
   const { error: outsiderGalleryError } = await outsider.rpc('get_hunt_review_gallery', { p_hunt_id: huntId })
   assert.ok(outsiderGalleryError, 'An outsider must not read finalized hunt results')
   assert.match(outsiderGalleryError.message, /Hunt access required/)
@@ -1098,6 +1123,9 @@ try {
 } finally {
   for (const objectPath of new Set(objectPaths)) {
     await admin.storage.from('hunt-photos').remove([objectPath])
+  }
+  for (const objectPath of new Set(winnerCardPaths)) {
+    await admin.storage.from('winner-cards').remove([objectPath])
   }
   if (identities.length) {
     for (const identity of identities) {

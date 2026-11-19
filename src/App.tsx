@@ -21,6 +21,8 @@ function App() {
   const collageUrl = `${import.meta.env.BASE_URL}adventure-collage.webp`
   const [homeMode, setHomeMode] = useState<'welcome' | 'player' | 'organizer' | 'development'>('welcome')
   const [email, setEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
   const [inviteInput, setInviteInput] = useState('')
   const [inviteError, setInviteError] = useState('')
   const [scannerOpen, setScannerOpen] = useState(false)
@@ -80,8 +82,14 @@ function App() {
     setLoading(true)
     setMessage('')
     try {
-      const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: `${window.location.origin}${window.location.pathname}` } })
-      setMessage(error ? error.message : 'Check your email for a secure sign-in link.')
+      const redirectTo = `${window.location.origin}${window.location.pathname}`
+      if (authMode === 'signup') {
+        const { data, error } = await supabase.auth.signUp({ email: email.trim(), password: authPassword, options: { emailRedirectTo: redirectTo } })
+        setMessage(error ? error.message : data.session ? 'Your organizer account is ready.' : 'Check your email to confirm your account, then sign in.')
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: authPassword })
+        setMessage(error ? error.message : 'Signing you in...')
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Unknown connection error'
       setMessage(detail.toLowerCase().includes('fetch')
@@ -90,6 +98,28 @@ function App() {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function sendOrganizerSignInLink() {
+    if (!supabase || !email.trim()) { setMessage('Enter your email address first.'); return }
+    setLoading(true); setMessage('')
+    try {
+      const { error } = await supabase.auth.signInWithOtp({ email: email.trim(), options: { emailRedirectTo: `${window.location.origin}${window.location.pathname}` } })
+      setMessage(error ? error.message : 'Check your email for a secure sign-in link.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not send a sign-in link.')
+    } finally { setLoading(false) }
+  }
+
+  async function requestPasswordReset() {
+    if (!supabase || !email.trim()) { setMessage('Enter your email address first.'); return }
+    setLoading(true); setMessage('')
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: `${window.location.origin}${window.location.pathname}` })
+      setMessage(error ? error.message : 'If an account uses that email, a password recovery link is on its way.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not request password recovery.')
+    } finally { setLoading(false) }
   }
 
   function openInvite(event: React.FormEvent<HTMLFormElement>) {
@@ -146,9 +176,9 @@ function App() {
               <span><strong>I’m a Player</strong><small>Join a game and start the adventure</small></span>
               <ChevronRight className="home-action-chevron" size={28}/>
             </button>
-            <button className="home-action home-action-organizer" type="button" onClick={() => { if (import.meta.env.DEV) window.location.hash = '/dev/browse'; else setHomeMode('organizer') }}>
+            <button className="home-action home-action-organizer" type="button" onClick={() => setHomeMode('organizer')}>
               <Users className="home-action-icon" size={36}/>
-              <span><strong>{import.meta.env.DEV ? 'Open Organizer Preview' : 'Organizer Login'}</strong><small>{import.meta.env.DEV ? 'Explore locally without signing in' : 'Create and manage games'}</small></span>
+              <span><strong>Organizer Login</strong><small>Create and manage games</small></span>
               <ChevronRight className="home-action-chevron" size={28}/>
             </button>
           </div>
@@ -172,17 +202,23 @@ function App() {
 
         {homeMode === 'organizer' && <section className="home-form-card">
           <div className="home-form-icon"><Users size={27}/></div>
-          <p className="home-form-kicker">ORGANIZER LOGIN</p>
-          <h1>Welcome back!</h1>
-          <p className="home-form-description">Sign in to create a hunt and bring your crew together.</p>
+          <p className="home-form-kicker">ORGANIZER ACCOUNT</p>
+          <h1>{authMode === 'signup' ? 'Create your account' : 'Welcome back!'}</h1>
+          <p className="home-form-description">Use your email as your login. Players can still join a hunt with a team invite and no account.</p>
           <form onSubmit={signIn}>
             <label htmlFor="email">Email address</label>
             <input ref={emailFieldRef} id="email" type="email" autoComplete="email" required placeholder="you@example.com" value={email} onChange={event => setEmail(event.target.value)}/>
-            <button className="home-form-submit" type="submit" disabled={!isSupabaseConfigured || loading}>{loading ? 'Sending link…' : <>Send me a sign-in link <ArrowRight size={17}/></>}</button>
+            <label htmlFor="organizer-password">Password</label>
+            <input id="organizer-password" type="password" autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'} minLength={authMode === 'signup' ? 8 : undefined} required value={authPassword} onChange={event => setAuthPassword(event.target.value)}/>
+            <button className="home-form-submit" type="submit" disabled={!isSupabaseConfigured || loading}>{loading ? 'Please wait...' : authMode === 'signup' ? <>Create organizer account <ArrowRight size={17}/></> : <>Sign in <ArrowRight size={17}/></>}</button>
             {message && <p className="home-form-message" role="status">{message}</p>}
           </form>
           {!isSupabaseConfigured && <p className="home-form-config">Add your Supabase project settings to <code>.env.local</code> to enable organizer sign-in.</p>}
-          <div className="home-form-helper home-form-secure"><ShieldCheck size={15}/> Secure, password-free sign in</div>
+          <div className="home-form-helper home-form-secure"><ShieldCheck size={15}/> Email is your private login; your display name is public.</div>
+          <div className="home-form-auth-options">
+            <button type="button" className="text-button" onClick={() => { setAuthMode(authMode === 'signup' ? 'signin' : 'signup'); setMessage('') }}>{authMode === 'signup' ? 'Already have an account? Sign in' : 'Create an organizer account'}</button>
+            {authMode === 'signin' && <><button type="button" className="text-button" disabled={loading} onClick={() => void sendOrganizerSignInLink()}>Email me a sign-in link</button><button type="button" className="text-button" disabled={loading} onClick={() => void requestPasswordReset()}>Forgot password?</button></>}
+          </div>
         </section>}
       </div>
     </section>

@@ -15,12 +15,13 @@ export default function JoinGame({ token, session }: JoinGameProps) {
   const [resumeFailed, setResumeFailed] = useState(false)
   const [retry, setRetry] = useState(0)
   const [preview, setPreview] = useState<InvitePreview | null>(null)
+  const [previewChecked, setPreviewChecked] = useState(false)
 
   useEffect(() => {
     if (!supabase) return
     let cancelled = false
     void supabase.rpc('preview_invitation', { p_token: token }).then(({ data }) => {
-      if (!cancelled && data) setPreview(data as InvitePreview)
+      if (!cancelled) { setPreview(data as InvitePreview | null); setPreviewChecked(true) }
     })
     return () => { cancelled = true }
   }, [token])
@@ -69,14 +70,14 @@ export default function JoinGame({ token, session }: JoinGameProps) {
     <section className="join-card">
       <span className="join-icon"><MapPin size={24}/></span>
       <p className="card-kicker">YOU’RE INVITED</p>
-      <h1>{preview?.title || 'Join the photo hunt'}</h1>
+      <h1>{preview?.title || (previewChecked ? 'This invitation is unavailable' : 'Checking invitation…')}</h1>
       {preview && <div className="join-preview"><span><MapPin size={14}/>{preview.venue}</span><span><Users size={14}/>{preview.team_name}</span></div>}
-      <p className="join-description">Add your name to meet your team and get ready to play.</p>
-      {resumeFailed ? <div className="participant-error" role="alert"><p>{message}</p><p>Your saved identity has not been replaced. Retry before joining.</p><button className="outline-button" onClick={() => setRetry(value => value + 1)}>Retry connection</button></div> : <form onSubmit={join}>
+      <p className="join-description">{preview ? <>You’re joining <b>{preview.team_name}</b>. Add your name to meet your team and play this photo scavenger hunt.</> : previewChecked ? 'Ask the organizer for a fresh team invitation link or QR code.' : 'Checking which hunt and team this link will open.'}</p>
+      {resumeFailed ? <div className="participant-error" role="alert"><p>{message}</p><p>Your saved identity has not been replaced. Retry before joining.</p><button className="outline-button" onClick={() => setRetry(value => value + 1)}>Retry connection</button></div> : previewChecked && !preview ? <div className="participant-error" role="status"><span>This invitation may have expired or been replaced. Ask the organizer for a current team link.</span><a className="outline-button" href="#">Return home</a></div> : <form onSubmit={join}>
         <label htmlFor="participant-name">What should your team call you?</label>
         <input id="participant-name" autoComplete="nickname" required minLength={1} maxLength={40} value={displayName} onChange={event => setDisplayName(event.target.value)} placeholder="Your name"/>
         {message && <div className="participant-error" role="alert"><CircleHelp size={15}/>{message}</div>}
-        <button className="primary-button" type="submit" disabled={joining || !supabase}>{joining ? <><LoaderCircle className="spin" size={16}/> Joining…</> : <>Join the hunt <ArrowRight size={16}/></>}</button>
+        <button className="primary-button" type="submit" disabled={joining || !supabase || !previewChecked || !preview}>{joining ? <><LoaderCircle className="spin" size={16}/> Joining…</> : <>Join the hunt <ArrowRight size={16}/></>}</button>
       </form>}
       <div className="secure-note"><Users size={15}/> No email or password needed</div>
     </section>

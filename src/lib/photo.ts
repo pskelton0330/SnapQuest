@@ -22,7 +22,7 @@ function canvasBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
 /** Resize and re-encode a browser image before it reaches private storage. Canvas export removes EXIF metadata. */
 export async function optimizePhoto(file: File): Promise<File> {
   if (!file.type.startsWith('image/')) throw new Error('Choose an image file to upload.')
-  if (!['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(file.type.toLowerCase())) {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type.toLowerCase())) {
     throw new Error('Choose a JPEG, PNG, or WebP photo.')
   }
   if (file.size > SOURCE_SIZE_LIMIT) throw new Error('This photo is over 20 MB. Choose a smaller image.')
