@@ -1,8 +1,9 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, Camera, ChevronRight, Compass, ShieldCheck, Sparkles, Users } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Camera, ChevronRight, Compass, QrCode, ShieldCheck, Sparkles, Users } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import { shouldRouteToOrganizerWorkspace } from './lib/appNavigation'
+import QrInviteScanner from './components/QrInviteScanner'
 import './App.css'
 import './theme.css'
 
@@ -22,6 +23,7 @@ function App() {
   const [email, setEmail] = useState('')
   const [inviteInput, setInviteInput] = useState('')
   const [inviteError, setInviteError] = useState('')
+  const [scannerOpen, setScannerOpen] = useState(false)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [session, setSession] = useState<Session | null>(null)
@@ -100,6 +102,18 @@ function App() {
     window.location.hash = `/join/${token}`
   }
 
+  function acceptScannedInvite(value: string) {
+    const token = value.match(/[a-f0-9]{64}/i)?.[0]
+    setScannerOpen(false)
+    if (!token) {
+      setInviteError('That QR code is not a SnapQuest team invitation. Scan your team’s code or enter it below.')
+      return
+    }
+    setInviteInput(token.toLowerCase())
+    setInviteError('')
+    window.location.hash = `/join/${token.toLowerCase()}`
+  }
+
   if (session && shouldRouteToOrganizerWorkspace(session)) return <Suspense fallback={<RouteLoading/>}><OrganizerWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} /></Suspense>
 
   return <main className="home-scene">
@@ -144,10 +158,12 @@ function App() {
           <div className="home-form-icon home-form-icon-player"><Camera size={27}/></div>
           <p className="home-form-kicker">PLAYER CHECK-IN</p>
           <h1>Ready for the hunt?</h1>
-          <p className="home-form-description">Scan your team’s QR code with your phone camera, or paste the invitation link or team code here.</p>
+          <p className="home-form-description">SnapQuest is a team photo scavenger hunt. Scan the QR code your organizer gave your team, or paste the invitation link or 64-character team code here.</p>
+          <button type="button" className="home-scan-button" onClick={() => { setInviteError(''); setScannerOpen(true) }}><QrCode size={19}/> Scan a QR code <span>Use your camera</span></button>
+          <div className="home-form-divider"><span>OR ENTER YOUR INVITE</span></div>
           <form onSubmit={openInvite}>
             <label htmlFor="invite-link">Team invitation</label>
-            <input ref={inviteFieldRef} id="invite-link" type="text" inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} required placeholder="Paste your invite link or code" value={inviteInput} onChange={event => { setInviteInput(event.target.value); setInviteError('') }}/>
+            <input ref={inviteFieldRef} id="invite-link" type="text" inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} required placeholder="Paste the team invitation link or code" value={inviteInput} onChange={event => { setInviteInput(event.target.value); setInviteError('') }}/>
             {inviteError && <p className="home-form-error" role="alert">{inviteError}</p>}
             <button className="home-form-submit home-form-submit-player" type="submit">Join the hunt <ArrowRight size={17}/></button>
           </form>
@@ -170,6 +186,7 @@ function App() {
         </section>}
       </div>
     </section>
+    {scannerOpen && <QrInviteScanner onDetected={acceptScannedInvite} onClose={() => setScannerOpen(false)}/>}
   </main>
 }
 
