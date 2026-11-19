@@ -1991,7 +1991,11 @@ test('organizer can copy a team invitation from the QR code card', async ({ page
   await page.getByRole('button', { name: 'My hunts' }).click()
   await page.getByRole('button', { name: 'Open lobby' }).click()
   const inviteCard = page.locator('.primary-invite-card')
-  const expectedUrl = new URL(`/#/join/${'a'.repeat(64)}`, page.url()).toString()
+  const expectedUrl = await page.evaluate(() => {
+    const base = `${window.location.origin}${window.location.pathname}`
+    const normalizedBase = `${base.replace(/\/$/, '')}${window.location.pathname === '/' ? '/' : ''}`
+    return `${normalizedBase}#/join/${'a'.repeat(64)}`
+  })
   await inviteCard.getByRole('button', { name: 'Copy invite link' }).click()
   await expect(inviteCard.getByRole('button', { name: 'Link copied' })).toBeVisible()
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(expectedUrl)
