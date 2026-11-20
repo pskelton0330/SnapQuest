@@ -8,7 +8,7 @@ import { calculateTeamScores, normalizeFinalScores, winningTeams } from '../src/
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222', outsider='12345678-1234-4234-9234-123456789abc'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration
+let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration, systemAdminMigration, organizerDurationMigration, systemAdminSafetyMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -34,6 +34,11 @@ before(async () => {
     alter table storage.objects enable row level security;`)
   for(const file of (await readdir(migrationUrl)).filter(f=>f.endsWith('.sql')).sort()) {
     const sql=await readFile(new URL(file,migrationUrl),'utf8')
+    if(file.includes('restore_photo_review')) { restorePhotoReviewMigration=sql; continue }
+    if(file.includes('self_serve_organizer_accounts')) { selfServeOrganizerMigration=sql; continue }
+    if(file.includes('system_admin_community_handoff')) { systemAdminMigration=sql; continue }
+    if(file.includes('organizer_controlled_hunt_duration')) { organizerDurationMigration=sql; continue }
+    if(file.includes('system_admin_deletion_reference_safety')) { systemAdminSafetyMigration=sql; continue }
     if(file.includes('0007')) { migration=sql; continue }
     if(file.includes('0008')) { managementMigration=sql; continue }
     if(file.includes('0010')) { auditMigration=sql; continue }
@@ -90,6 +95,9 @@ before(async () => {
   await db.exec(winnerCardsMigration)
   await db.exec(restorePhotoReviewMigration)
   await db.exec(selfServeOrganizerMigration)
+  await db.exec(systemAdminMigration)
+  await db.exec(organizerDurationMigration)
+  await db.exec(systemAdminSafetyMigration)
 })
 after(async()=> { await db?.close() })
 test('anonymous role can execute only explicitly public security-definer RPCs', async () => {
