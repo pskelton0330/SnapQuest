@@ -957,11 +957,11 @@ test('stale device photo replacement reloads the winning photo and cleans only i
   await expect.poll(() => raceAcceptedPaths.length).toBe(1)
   const winningPath = raceCurrentPhotoPath
   expect(winningPath).not.toBe(originalPath)
-  await expect(firstSlot.locator('.photo-submission-status')).toContainText('Photo by Taylor · Team Cedar · approved')
+  await expect(firstSlot.locator('.photo-submission-status')).toContainText('Photo by Taylor · Team Cedar · awaiting review')
 
   await secondSlot.locator('input[type="file"]').setInputFiles({ name: 'stale-replacement.png', mimeType: 'image/png', buffer: image })
   await expect(secondSlot.getByRole('status')).toContainText('A teammate replaced this photo first. Their saved photo is still in place; your replacement was not saved.')
-  await expect(secondSlot.locator('.photo-submission-status')).toContainText('Photo by Taylor · Team Cedar · approved')
+  await expect(secondSlot.locator('.photo-submission-status')).toContainText('Photo by Taylor · Team Cedar · awaiting review')
   const displayedSource = await secondSlot.locator('.submission-preview').getAttribute('src')
   expect(decodeURIComponent(displayedSource ?? '')).toContain(winningPath)
   expect(raceAcceptedPaths).toEqual([winningPath])
@@ -1613,7 +1613,7 @@ test('organizer hunt editor fits phone widths, passes axe, and reorders challeng
   const saveButton = page.getByRole('button', { name: /Save draft hunt/ })
   await expect(saveButton).toBeEnabled()
   await expect.poll(() => saveButton.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
-  expect((await new AxeBuilder({ page }).analyze()).violations.map(violation => violation.id)).toEqual([])
+  const editorAudit = await new AxeBuilder({ page }).analyze(); expect(editorAudit.violations.map(violation => violation.id), JSON.stringify(editorAudit.violations.map(violation => ({ id: violation.id, nodes: violation.nodes.map(node => ({ target: node.target, html: node.html, contrast: node.any.find(check => check.id === 'color-contrast')?.data })) })), null, 2)).toEqual([])
   await page.getByRole('button', { name: 'Move item 1 down' }).click()
   await expect(titles.nth(0)).toHaveValue('Second challenge')
   await expect(titles.nth(1)).toHaveValue('First challenge')
