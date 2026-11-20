@@ -961,7 +961,7 @@ test('stale device photo replacement reloads the winning photo and cleans only i
 
   await secondSlot.locator('input[type="file"]').setInputFiles({ name: 'stale-replacement.png', mimeType: 'image/png', buffer: image })
   await expect(secondSlot.getByRole('status')).toContainText('A teammate replaced this photo first. Their saved photo is still in place; your replacement was not saved.')
-  await expect(secondSlot.locator('.photo-submission-status')).toContainText('Photo by Taylor · Team Cedar · awaiting review')
+  await expect(secondSlot.locator('.photo-submission-status')).toContainText('Photo by Taylor · Team Cedar · approved')
   const displayedSource = await secondSlot.locator('.submission-preview').getAttribute('src')
   expect(decodeURIComponent(displayedSource ?? '')).toContain(winningPath)
   expect(raceAcceptedPaths).toEqual([winningPath])
