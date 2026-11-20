@@ -12,7 +12,7 @@ type ReviewData = {
   final_scores: unknown
   teams: { id: string; name: string; display_color: string }[]
   items: { id: string; title: string; points: number; display_order: number }[]
-  submissions: { id: string; item_id: string; team_id: string; participant_id: string; storage_path: string; status: 'pending' | 'approved' | 'rejected'; submitted_at: string; photo_url?: string }[]
+  submissions: { id: string; item_id: string; team_id: string; participant_id: string; participant_name?: string | null; storage_path: string; status: 'pending' | 'approved' | 'rejected'; submitted_at: string; photo_url?: string }[]
   votes: unknown
   team_selfies: { team_id: string; storage_path: string; photo_url?: string }[]
   winner_cards: { team_id: string; storage_path: string; photo_url?: string }[]
@@ -45,6 +45,15 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     const { data: raw, error: loadError } = await supabase.rpc('get_hunt_review_gallery', { p_hunt_id: huntId })
     if (loadError) { if (requestId === galleryRequestId.current) setError(loadError.message); reportOperationFailure(huntId, crypto.randomUUID(), 'review_gallery_load_failed', loadError, 'organizer_web'); return }
     const next = raw as Omit<ReviewData, 'submissions'> & { submissions: ReviewData['submissions'] }
+    const participantIds = [...new Set(next.submissions.map(row => row.participant_id).filter(Boolean))]
+    const participantResult = participantIds.length
+      ? await supabase.from('participants').select('id,display_name').in('id', participantIds)
+      : { data: [], error: null }
+    if (participantResult.error) {
+      setError('Could not load the names for submitted photos. Retry the review screen to try again.')
+      reportOperationFailure(huntId, crypto.randomUUID(), 'review_participant_names_load_failed', participantResult.error, 'organizer_web')
+    }
+    const participantNames = new Map((participantResult.data ?? []).map(row => [row.id, row.display_name]))
     let previewUnavailable = false
     let previewFailure: unknown = null
     async function signedUrl(path: string, bucket = 'hunt-photos') {
@@ -62,7 +71,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
         return undefined
       }
     }
-    const photos = await Promise.all(next.submissions.map(async row => ({ ...row, photo_url: await signedUrl(row.storage_path) })))
+    const photos = await Promise.all(next.submissions.map(async row => ({ ...row, participant_name: participantNames.get(row.participant_id) ?? null, photo_url: await signedUrl(row.storage_path) })))
     if (requestId !== galleryRequestId.current) return
     const { data: selfies } = await supabase.from('team_selfies').select('team_id,storage_path').eq('hunt_id', huntId)
     const teamSelfies = await Promise.all((selfies ?? []).map(async row => ({ ...row, photo_url: await signedUrl(row.storage_path) })))
@@ -78,7 +87,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
     if (requestId !== galleryRequestId.current) return
     if (previewUnavailable) reportOperationFailure(huntId, crypto.randomUUID(), 'review_preview_unavailable', previewFailure, 'organizer_web')
     setData({ ...next, submissions: photos, team_selfies: teamSelfies, winner_cards: savedCards })
-    if (!cardError) setError('')
+    if (!cardError && !participantResult.error) setError('')
   }, [huntId])
 
   function markPreviewUnavailable(path: string) {
@@ -336,7 +345,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
       {data.status === 'review' && reviewFilter !== 'all' && !data.submissions.some(photo => photo.status === reviewFilter) && <p>No photos match this filter.</p>}
       <div className="review-item-list">{data.items.filter(item => data.status !== 'review' || reviewFilter === 'all' || data.submissions.some(photo => photo.item_id === item.id && photo.status === reviewFilter)).map(item => <section className="review-item" key={item.id}><header><div><span>CHALLENGE {item.display_order + 1}</span><h2>{item.title}</h2></div><b>{item.points} pts</b></header><div className="review-photos">{data.teams.filter(team => data.status !== 'review' || reviewFilter === 'all' || data.submissions.some(photo => photo.item_id === item.id && photo.team_id === team.id && photo.status === reviewFilter)).map(team => {
         const photo = data.submissions.find(row => row.item_id === item.id && row.team_id === team.id)
-        return <article className="review-photo-card" key={team.id}><div className="review-photo-team"><span className="team-swatch" style={{ backgroundColor: team.display_color }}/><b>{team.name}</b></div>{photo?.photo_url ? <a href={photo.photo_url} target="_blank" rel="noreferrer"><img src={photo.photo_url} alt={`${team.name} photo for ${item.title}`} onError={() => markPreviewUnavailable(photo.storage_path)}/></a> : <div className="review-photo-empty">{photo ? <>Preview unavailable<button className="outline-button" disabled={previewRetryingPath === photo.storage_path} onClick={() => void retryReviewPhoto(photo.storage_path)}>{previewRetryingPath === photo.storage_path ? 'Retrying preview…' : 'Retry preview'}</button></> : 'No photo submitted'}</div>}{photo && <><div className={`review-status status-${photo.status}`}>{photo.status}</div>{data.status === "review" && <div className="review-photo-actions">{photo.status === "pending" ? <><button className="approve-button" disabled={busy === photo.id} onClick={() => void decide(photo.id, "approved")}><Check size={14}/> Approve</button><button className="reject-button" disabled={busy === photo.id} onClick={() => void decide(photo.id, "rejected")}><X size={14}/> Reject</button></> : <label className={"review-approval-toggle " + photo.status}><input type="checkbox" checked={photo.status === "approved"} disabled={busy === photo.id} aria-label={"Photo meets hunt rules: " + team.name + " photo for " + item.title} onChange={event => void decide(photo.id, event.currentTarget.checked ? "approved" : "rejected")}/><span>{photo.status === "approved" ? "Approved and counted" : "Rejected and not counted"}</span></label>}</div>}</>}</article>
+        return <article className="review-photo-card" key={team.id}><div className="review-photo-team"><span className="team-swatch" style={{ backgroundColor: team.display_color }}/><b>{team.name}</b></div>{photo && <small className="review-photo-author">Photo by {photo.participant_name ?? 'unknown participant'}</small>}{photo?.photo_url ? <a href={photo.photo_url} target="_blank" rel="noreferrer"><img src={photo.photo_url} alt={`${team.name} photo for ${item.title}`} onError={() => markPreviewUnavailable(photo.storage_path)}/></a> : <div className="review-photo-empty">{photo ? <>Preview unavailable<button className="outline-button" disabled={previewRetryingPath === photo.storage_path} onClick={() => void retryReviewPhoto(photo.storage_path)}>{previewRetryingPath === photo.storage_path ? 'Retrying preview…' : 'Retry preview'}</button></> : 'No photo submitted'}</div>}{photo && <><div className={`review-status status-${photo.status}`}>{photo.status}</div>{data.status === "review" && <div className="review-photo-actions">{photo.status === "pending" ? <><button className="approve-button" disabled={busy === photo.id} onClick={() => void decide(photo.id, "approved")}><Check size={14}/> Approve</button><button className="reject-button" disabled={busy === photo.id} onClick={() => void decide(photo.id, "rejected")}><X size={14}/> Reject</button></> : <label className={"review-approval-toggle " + photo.status}><input type="checkbox" checked={photo.status === "approved"} disabled={busy === photo.id} aria-label={"Photo meets hunt rules: " + team.name + " photo for " + item.title} onChange={event => void decide(photo.id, event.currentTarget.checked ? "approved" : "rejected")}/><span>{photo.status === "approved" ? "Approved and counted" : "Rejected and not counted"}</span></label>}</div>}</>}</article>
       })}</div></section>)}</div>
       {data.status !== 'completed' && ended ? (
         <div className="review-finish">

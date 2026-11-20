@@ -1,6 +1,20 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 type JoinResult = { hunt_id: string; participant_id: string; title: string }
+const NAME_DRAFT_PREFIX = 'snapquest-participant-name-'
+
+export function readParticipantNameDraft(token: string) {
+  try { return window.localStorage.getItem(`${NAME_DRAFT_PREFIX}${token.toLowerCase()}`)?.slice(0, 40) ?? '' }
+  catch { return '' }
+}
+
+export function saveParticipantNameDraft(token: string, name: string) {
+  try {
+    const key = `${NAME_DRAFT_PREFIX}${token.toLowerCase()}`
+    if (name) window.localStorage.setItem(key, name.slice(0, 40))
+    else window.localStorage.removeItem(key)
+  } catch { /* Server-side membership remains the source of truth. */ }
+}
 
 /** Ask Auth to restore its persisted session before ever creating a guest. */
 export async function restoreParticipantSession(client: SupabaseClient, createGuest = false) {
@@ -30,6 +44,7 @@ export async function resumeInvitation(client: SupabaseClient, token: string): P
     if (/^Enter a name up to 40 characters$/i.test(error.message)) return null
     throw error
   }
+  saveParticipantNameDraft(token, '')
   return checkedResult(data)
 }
 
@@ -38,5 +53,6 @@ export async function joinInvitation(client: SupabaseClient, token: string, name
   await restoreParticipantSession(client, true)
   const { data, error } = await client.rpc('redeem_invitation', { p_token: token, p_display_name: name.trim() })
   if (error) throw error
+  saveParticipantNameDraft(token, '')
   return checkedResult(data)
 }

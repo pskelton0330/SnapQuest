@@ -41,7 +41,7 @@ function validHunt(value: unknown): value is HuntTemplate {
   if (!value || typeof value !== 'object') return false
   const h = value as HuntTemplate
   return ['id','title','venue','description','creatorId','creatorName','createdAt'].every(key => typeof h[key as keyof HuntTemplate] === 'string')
-    && ['public','personal'].includes(h.visibility) && Number.isFinite(h.defaultDuration) && h.defaultDuration >= 5
+    && ['public','personal'].includes(h.visibility) && Number.isInteger(h.defaultDuration) && h.defaultDuration >= 1 && h.defaultDuration <= 2_147_483_647
     && Array.isArray(h.rules) && h.rules.every(r => typeof r === 'string')
     && Array.isArray(h.challenges) && h.challenges.every(c => c && typeof c.id === 'string' && typeof c.title === 'string' && typeof c.description === 'string' && Number.isInteger(c.points) && c.points >= 0)
 }

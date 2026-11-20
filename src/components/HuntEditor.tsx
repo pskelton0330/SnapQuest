@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, Search } from 'lucide-react'
+import { Plus, Search, X } from 'lucide-react'
 import { importChallenges, SUGGESTED_RULES, validateHuntDraft } from '../lib/huntEditor'
 import ChallengeListEditor from './ChallengeListEditor'
 import type { SetupIntent } from '../lib/gameManagement'
@@ -12,13 +12,14 @@ export default function HuntEditor({ initial, ideas, onSave, onGame }: Props) {
   const [initialState] = useState(() => {
     try {
       const cached = JSON.parse(localStorage.getItem(storageKey) ?? 'null')
-      if (cached?.draft && typeof cached.draft.title === 'string' && Array.isArray(cached.draft.challenges) && Array.isArray(cached.draft.rules) && Number.isInteger(cached.step) && cached.step >= 0 && cached.step <= 3) return cached as { draft: HuntTemplate; step: number; paste?: string }
+      if (cached?.draft && typeof cached.draft.title === 'string' && Array.isArray(cached.draft.challenges) && Array.isArray(cached.draft.rules) && Number.isInteger(cached.step) && cached.step >= 0 && cached.step <= 3) return cached as { draft: HuntTemplate; step: number; paste?: string; customRuleText?: string }
     } catch { /* A damaged unsaved editor cache does not replace a saved hunt. */ }
-    return { draft: initial ? structuredClone(initial) : { id: crypto.randomUUID(), title: '', venue: '', description: '', creatorId: LOCAL_CREATOR, creatorName: 'You (local preview)', visibility: 'public' as const, rules: [suggestions[0]], defaultDuration: 60, challenges: [], createdAt: new Date().toISOString() }, step: 0 }
+    return { draft: initial ? structuredClone(initial) : { id: crypto.randomUUID(), title: '', venue: '', description: '', creatorId: LOCAL_CREATOR, creatorName: 'You (local preview)', visibility: 'public' as const, rules: [suggestions[0]], defaultDuration: 60, challenges: [], createdAt: new Date().toISOString() }, step: 0, customRuleText: '' }
   })
   const [draft, setDraft] = useState<HuntTemplate>(initialState.draft)
   const [step, setStep] = useState(initialState.step)
   const [paste, setPaste] = useState(initialState.paste ?? '')
+  const [customRuleText, setCustomRuleText] = useState(initialState.customRuleText ?? '')
   const [search, setSearch] = useState('')
   const [stripListMarkers, setStripListMarkers] = useState(false)
   const [error, setError] = useState('')
@@ -29,11 +30,28 @@ export default function HuntEditor({ initial, ideas, onSave, onGame }: Props) {
   /* eslint-disable react/set-state-in-effect */
   useEffect(() => {
     if (saved) return
-    try { localStorage.setItem(storageKey, JSON.stringify({ draft, step, paste })); setStorageNotice('Draft automatically kept in this browser.') }
+    try { localStorage.setItem(storageKey, JSON.stringify({ draft, step, paste, customRuleText })); setStorageNotice('Draft automatically kept in this browser.') }
     catch { setStorageNotice('Browser storage is unavailable. Keep this page open until you save.') }
-  }, [draft, step, paste, storageKey, saved])
+  }, [draft, step, paste, customRuleText, storageKey, saved])
   /* eslint-enable react/set-state-in-effect */
   function change<K extends keyof HuntTemplate>(key: K, value: HuntTemplate[K]) { setDraft(d => ({ ...d, [key]: value })); setError('') }
+  const customRules = draft.rules.filter(rule => !suggestions.includes(rule))
+  function addCustomRule() {
+    const rule = customRuleText.trim()
+    if (!rule) { setError('Enter a rule before adding it.'); return }
+    if (rule.length > 1000) { setError('Keep each rule to 1,000 characters or fewer.'); return }
+    if (draft.rules.some(existing => existing.trim().toLocaleLowerCase() === rule.toLocaleLowerCase())) { setError('That rule is already included.'); return }
+    if (draft.rules.length >= 30) { setError('A hunt can have up to 30 rules.'); return }
+    change('rules', [...draft.rules, rule])
+    setCustomRuleText('')
+  }
+  function removeCustomRule(rule: string) {
+    const index = draft.rules.indexOf(rule)
+    if (index < 0) return
+    const next = [...draft.rules]
+    next.splice(index, 1)
+    change('rules', next)
+  }
   function go(next: number) {
     const problem = next > step ? validateHuntDraft(draft, next < 3) : null
     if (problem) { setError(problem); return }
@@ -58,7 +76,7 @@ export default function HuntEditor({ initial, ideas, onSave, onGame }: Props) {
     <nav className="editor-steps" aria-label="Hunt creation steps">{['Hunt details','Challenges','Paste a list','Review and save'].map((name, i) => <button key={name} type="button" aria-current={step === i ? 'step' : undefined} onClick={() => go(i)}><span>{i + 1}</span>{name}</button>)}</nav>
     {error && <div className="v12-error" role="alert">{error}</div>}
     <div className="v12-card editor-panel">
-      {step === 0 && <><h2>Where will the adventure happen?</h2><div className="editor-fields"><label>Hunt title<input required maxLength={120} value={draft.title} onChange={e => change('title', e.target.value)}/></label><label>Venue<input required maxLength={160} value={draft.venue} onChange={e => change('venue', e.target.value)} placeholder="e.g. Hobby Lobby"/></label><label className="editor-wide">Description (optional)<textarea rows={2} maxLength={1000} value={draft.description} onChange={e => change('description', e.target.value)}/></label><label>Default duration (minutes)<input type="number" min={5} max={1440} value={draft.defaultDuration} onChange={e => change('defaultDuration', Number(e.target.value))}/></label><label>Sharing{initial?.visibility === 'personal' ? <p>Personal copy · only in My Hunts</p> : <select value={draft.visibility} onChange={e => change('visibility', e.target.value as HuntTemplate['visibility'])}><option value="public">Shared preview library</option><option value="personal">Personal hunt</option></select>}</label></div><h3>Suggested rules</h3><div className="editor-rules">{suggestions.map(rule => <label key={rule}><input type="checkbox" checked={draft.rules.includes(rule)} onChange={e => change('rules', e.target.checked ? [...draft.rules, rule] : draft.rules.filter(r => r !== rule))}/>{rule}</label>)}</div><label className="editor-label">All ground rules · one per line<textarea rows={3} value={draft.rules.join('\n')} onChange={e => change('rules', e.target.value.split('\n'))}/></label></>}
+      {step === 0 && <><h2>Where will the adventure happen?</h2><div className="editor-fields"><label>Hunt title<input required maxLength={120} value={draft.title} onChange={e => change('title', e.target.value)}/></label><label>Venue<input required maxLength={160} value={draft.venue} onChange={e => change('venue', e.target.value)} placeholder="e.g. Hobby Lobby"/></label><label className="editor-wide">Description (optional)<textarea rows={2} maxLength={1000} value={draft.description} onChange={e => change('description', e.target.value)}/></label><label>Default duration (minutes)<input type="number" min={1} max={2147483647} step={1} value={draft.defaultDuration} onChange={e => change('defaultDuration', Number(e.target.value))}/></label><label>Sharing{initial?.visibility === 'personal' ? <p>Personal copy · only in My Hunts</p> : <select value={draft.visibility} onChange={e => change('visibility', e.target.value as HuntTemplate['visibility'])}><option value="public">Shared preview library</option><option value="personal">Personal hunt</option></select>}</label></div><h3>Suggested rules</h3><p>Keep any of the suggested rules, then add your own if you need them. You can use up to 30 rules.</p><div className="editor-rules">{suggestions.map(rule => <label key={rule}><input type="checkbox" checked={draft.rules.includes(rule)} disabled={!draft.rules.includes(rule) && draft.rules.length >= 30} onChange={e => change('rules', e.target.checked ? [...draft.rules, rule] : draft.rules.filter(r => r !== rule))}/>{rule}</label>)}</div><section className="custom-rules-editor" aria-label="Custom rules"><h3>Your custom rules</h3>{customRules.length > 0 ? <ul>{customRules.map((rule, index) => <li key={`${rule}-${index}`}><span>{rule}</span><button type="button" className="text-button" aria-label={`Remove rule: ${rule}`} onClick={() => removeCustomRule(rule)}><X size={15}/> Remove</button></li>)}</ul> : <p>No custom rules added.</p>}<div className="custom-rule-entry"><label htmlFor="custom-hunt-rule">Add a custom rule<input id="custom-hunt-rule" maxLength={1000} value={customRuleText} onChange={event => { setCustomRuleText(event.target.value); setError('') }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addCustomRule() } }} placeholder="e.g. Stay together in public areas"/></label><button type="button" className="outline-button" disabled={!customRuleText.trim() || draft.rules.length >= 30} onClick={addCustomRule}><Plus size={15}/> Add rule</button></div><small>{customRuleText.length}/1,000 characters · {draft.rules.length}/30 rules</small></section></>}
       {step === 1 && <><div className="editor-section-heading"><div><h2>Your photo challenges</h2><p>{draft.challenges.length} of 100 challenges · defaults to one point</p></div><button className="outline-button" disabled={draft.challenges.length >= 100} onClick={() => change('challenges', [...draft.challenges, { id: crypto.randomUUID(), title: '', description: '', points: 1 }])}><Plus size={16}/> Add challenge</button></div>
         {!draft.challenges.length && <p>Add a challenge, reuse an idea below, or continue to paste a list.</p>}
         <ChallengeListEditor items={draft.challenges} variant="reusable" onChange={items => change('challenges', items)}/>

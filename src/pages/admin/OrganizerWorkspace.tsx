@@ -64,6 +64,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const [huntTitle, setHuntTitle] = useState('')
   const [huntDuration, setHuntDuration] = useState(60)
   const [selectedRules, setSelectedRules] = useState<string[]>([SUGGESTED_RULES[0].text])
+  const [customRuleDraft, setCustomRuleDraft] = useState('')
   const [draftItems, setDraftItems] = useState<DraftItem[]>([])
   const [challengePaste, setChallengePaste] = useState('')
   const [libraryPickerSearch, setLibraryPickerSearch] = useState('')
@@ -102,11 +103,21 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const [accountMessage, setAccountMessage] = useState('')
   const [accountError, setAccountError] = useState('')
   const [accountBusy, setAccountBusy] = useState(false)
+  const [isSystemAdmin, setIsSystemAdmin] = useState(false)
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const lobbyRequestId = useRef(0)
   const lobbyRefreshTimer = useRef<number | undefined>(undefined)
   const lobbySelfieUrlCache = useRef(new Map<string, { url: string; expiresAt: number }>())
+
+  useEffect(() => {
+    let cancelled = false
+    if (!supabase) return
+    void supabase.functions.invoke('system-admin', { body: { action: 'check' } }).then(({ data }) => {
+      if (!cancelled) setIsSystemAdmin(data?.isAdmin === true)
+    }).catch(() => { if (!cancelled) setIsSystemAdmin(false) })
+    return () => { cancelled = true }
+  }, [session.user.id])
 
   const loadWorkspace = useCallback(async () => {
     if (!supabase) return
@@ -270,6 +281,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     if (!supabase) return
     if (!huntSchemaReady) { setHuntMessage('Hunt setup is not available yet. Try again later or contact support.'); return }
     if (!venue.trim()) { setHuntMessage('Enter a venue before adding the hunt list.'); return }
+    if (customRuleDraft.trim()) { setHuntMessage('Add your custom rule to the rules list before saving.'); return }
     const readyItems = draftItems.filter(item => item.title.trim())
     const title = huntTitle.trim() || `${venue.trim()} Photo Hunt`
     const validationError = validateHuntDraft({
@@ -300,13 +312,14 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       const { data: savedHunt, error: savedHuntError } = await supabase.from('hunts').select('id,title,venue,status,created_at,start_at,duration_minutes,team_assignment_mode,voting_enabled,voting_bonus_points').eq('id', savedHuntId).maybeSingle()
       if (savedHuntError || !savedHunt) {
         setEditingDraftId(savedHuntId)
-        draftBaseline.current = JSON.stringify({ venue, huntTitle, huntDuration, selectedRules, draftItems, challengePaste, stripListMarkers })
+        draftBaseline.current = JSON.stringify({ venue, huntTitle, huntDuration, selectedRules, draftItems, challengePaste, stripListMarkers, customRuleDraft })
         await loadWorkspace()
         setHuntMessage('Your draft is saved. SnapQuest could not open the next setup step yet. Retry saving to continue; your changes are kept.')
         return
       }
-      draftBaseline.current = JSON.stringify({ venue, huntTitle, huntDuration, selectedRules, draftItems, challengePaste, stripListMarkers })
+      draftBaseline.current = JSON.stringify({ venue, huntTitle, huntDuration, selectedRules, draftItems, challengePaste, stripListMarkers, customRuleDraft: '' })
       setVenue(''); setHuntTitle(''); setHuntDuration(60); setDraftItems([]); setChallengePaste(''); setStripListMarkers(false)
+      setCustomRuleDraft('')
       setEditingDraftId('')
       setSelectedRules([SUGGESTED_RULES[0].text])
       setReuseSourceTitle('')
@@ -331,8 +344,9 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       setHuntSaving(false); return
     }
     const restoredItems = (itemResult.data ?? []).map(item => ({ key: item.id, title: item.title_snapshot, description: item.description_snapshot ?? '', pointValue: item.point_value, libraryItemId: item.library_item_id ?? undefined }))
-    draftBaseline.current = JSON.stringify({ venue: huntResult.data.venue, huntTitle: huntResult.data.title, huntDuration: huntResult.data.duration_minutes, selectedRules: huntResult.data.rules ?? [], draftItems: restoredItems, challengePaste: '', stripListMarkers: false })
+    draftBaseline.current = JSON.stringify({ venue: huntResult.data.venue, huntTitle: huntResult.data.title, huntDuration: huntResult.data.duration_minutes, selectedRules: huntResult.data.rules ?? [], draftItems: restoredItems, challengePaste: '', stripListMarkers: false, customRuleDraft: '' })
     setEditingDraftId(hunt.id); setHuntTitle(huntResult.data.title); setVenue(huntResult.data.venue)
+    setCustomRuleDraft('')
     setReuseSourceTitle('')
     setSelectedRules(huntResult.data.rules ?? []); setHuntDuration(huntResult.data.duration_minutes)
     setDraftItems(restoredItems)
@@ -361,6 +375,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       setHuntTitle(`${huntResult.data.title} (Rematch)`)
       setVenue(huntResult.data.venue)
       setSelectedRules(huntResult.data.rules ?? [])
+      setCustomRuleDraft('')
       setHuntDuration(huntResult.data.duration_minutes)
       setDraftItems(copiedItems)
       setChallengePaste(''); setStripListMarkers(false); setLibraryAddedMessage('')
@@ -432,7 +447,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
         const endsAt = lobbyResult.data?.ends_at
         const duration = typeof startAt === 'string' && typeof endsAt === 'string' && ['scheduled', 'active'].includes(runtimeState)
           ? (Date.parse(endsAt) - Date.parse(startAt)) / 60_000 : NaN
-        return { ...current, status: runtimeState, start_at: typeof startAt === 'string' || startAt === null ? startAt : current.start_at, duration_minutes: Number.isInteger(duration) && duration > 0 && duration <= 1440 ? duration : current.duration_minutes }
+        return { ...current, status: runtimeState, start_at: typeof startAt === 'string' || startAt === null ? startAt : current.start_at, duration_minutes: Number.isInteger(duration) && duration > 0 && duration <= 2_147_483_647 ? duration : current.duration_minutes }
       })
     } else setLobbyStatusStale(true)
     const selfieRows = selfieResult.data ?? []
@@ -719,7 +734,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     query.addEventListener('change', update)
     return () => query.removeEventListener('change', update)
   }, [])
-  const draftSnapshot = JSON.stringify({ venue, huntTitle, huntDuration, selectedRules, draftItems, challengePaste, stripListMarkers })
+  const draftSnapshot = JSON.stringify({ venue, huntTitle, huntDuration, selectedRules, draftItems, challengePaste, stripListMarkers, customRuleDraft })
   const draftIsDirty = page === 'new-hunt' && draftSnapshot !== draftBaseline.current
 
   function setPage(nextPage: Page) {
@@ -737,9 +752,20 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
 
   function discardDraftAndNavigate() {
     setVenue(''); setHuntTitle(''); setHuntDuration(60); setDraftItems([]); setChallengePaste(''); setStripListMarkers(false)
+    setCustomRuleDraft('')
     setSelectedRules([SUGGESTED_RULES[0].text]); setEditingDraftId(''); setReuseSourceTitle('')
     setPendingPage(null); draftBaseline.current = ''
     if (pendingPage) setPageState(pendingPage)
+  }
+
+  function addCustomRule() {
+    const rule = customRuleDraft.trim()
+    if (!rule) return
+    if (selectedRules.some(existing => existing.toLocaleLowerCase() === rule.toLocaleLowerCase())) { setHuntMessage('That rule is already on the list.'); return }
+    if (selectedRules.length >= 30) { setHuntMessage('A hunt can contain up to 30 rules.'); return }
+    setSelectedRules(current => current.length >= 30 ? current : [...current, rule])
+    setCustomRuleDraft('')
+    setHuntMessage('')
   }
 
   function renderHuntCard(hunt: Hunt) {
@@ -763,7 +789,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       <div className="sidebar-bottom"><span className="sidebar-avatar">{displayName.slice(0, 1).toUpperCase()}</span><span className="sidebar-user"><b>{displayName}</b><small>Organizer account</small></span></div>
     </aside>
     <main className="workspace-main">
-      <header className="workspace-topbar"><div className="breadcrumb">Workspace <span>/</span> {page === 'overview' ? 'Home' : page === 'library' ? 'Challenge library' : page === 'new-hunt' ? 'New hunt' : page === 'manage-hunt' ? 'Hunt lobby' : page === 'review-hunt' ? 'Results' : page === 'account' ? 'Account settings' : 'My hunts'}</div><div className="topbar-actions">{playerGames.length > 1 && <label className="resume-game-picker"><span className="sr-only">Choose team game</span><select value={selectedResumeGame?.hunt_id ?? ''} onChange={event => setResumeHuntId(event.target.value)}>{playerGames.map(game => <option value={game.hunt_id} key={game.hunt_id}>{game.hunt_title} — {game.team_name}</option>)}</select></label>}{selectedResumeGame && <a className="outline-button" href={`#/play/${selectedResumeGame.hunt_id}`}><Camera size={14}/> Player view · {selectedResumeGame.team_name}</a>}<details className="account-menu"><summary><span className="sidebar-avatar">{displayName.slice(0,1).toUpperCase()}</span><span>{displayName}</span></summary><div className="account-menu-body"><button className="outline-button" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setAccountMessage(''); setAccountError(''); setPage('account') }}><Settings2 size={15}/> Account settings</button><button className="outline-button" onClick={onSignOut}><LogOut size={15}/> Sign out</button></div></details><div className="topbar-badge"><ShieldCheck size={15}/> Private organizer space</div></div></header>
+      <header className="workspace-topbar"><div className="breadcrumb">Workspace <span>/</span> {page === 'overview' ? 'Home' : page === 'library' ? 'Challenge library' : page === 'new-hunt' ? 'New hunt' : page === 'manage-hunt' ? 'Hunt lobby' : page === 'review-hunt' ? 'Results' : page === 'account' ? 'Account settings' : 'My hunts'}</div><div className="topbar-actions">{playerGames.length > 1 && <label className="resume-game-picker"><span className="sr-only">Choose team game</span><select value={selectedResumeGame?.hunt_id ?? ''} onChange={event => setResumeHuntId(event.target.value)}>{playerGames.map(game => <option value={game.hunt_id} key={game.hunt_id}>{game.hunt_title} — {game.team_name}</option>)}</select></label>}{selectedResumeGame && <a className="outline-button" href={`#/play/${selectedResumeGame.hunt_id}`}><Camera size={14}/> Player view · {selectedResumeGame.team_name}</a>}<details className="account-menu"><summary><span className="sidebar-avatar">{displayName.slice(0,1).toUpperCase()}</span><span>{displayName}</span></summary><div className="account-menu-body">{isSystemAdmin && <button className="outline-button" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); window.location.hash = '/system-admin' }}><ShieldCheck size={15}/> System admin</button>}<button className="outline-button" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setAccountMessage(''); setAccountError(''); setPage('account') }}><Settings2 size={15}/> Account settings</button><button className="outline-button" onClick={onSignOut}><LogOut size={15}/> Sign out</button></div></details><div className="topbar-badge"><ShieldCheck size={15}/> Private organizer space</div></div></header>
       {routeMessage && <div className="inline-alert" role="status">{routeMessage}</div>}
       {loading ? <div className="workspace-loading">Opening your organizer space…</div> : loadError && !organizer ? <section className="workspace-content"><div className="workspace-alert"><CircleHelp size={19}/><div><b>Organizer access needs attention</b><p>{loadError}</p>{playerGames.map(game => <a className="outline-button" key={game.hunt_id} href={`#/play/${game.hunt_id}`}><Camera size={14}/> Return to {game.team_name} · {game.hunt_title}</a>)}<button className="outline-button" onClick={() => { setLoading(true); setLoadError(''); void loadWorkspace() }}>Try again</button></div></div></section> : page === 'overview' ? <section className="workspace-content">
         <div className="workspace-greeting"><div><div className="eyebrow"><Sparkles size={14}/> YOUR FAMILY GAME NIGHT</div><h1>Welcome in, {displayName}!</h1><p>Your organizer space is ready. Let’s start gathering the fun.</p></div><div className="greeting-sticker"><Camera size={30}/><span>Let’s play!</span></div></div>
@@ -792,8 +818,8 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
         <button className="back-link" onClick={() => setPage('hunts')}><ArrowLeft size={15}/> Back to your hunts</button>
         <div className="new-hunt-heading"><div className="eyebrow"><Sparkles size={14}/> PLAN YOUR ADVENTURE</div><h1>{editingDraftId ? 'Edit your draft hunt' : reuseSourceTitle ? 'Plan a rematch' : 'Create a venue hunt'}</h1><p>{reuseSourceTitle ? `Challenges, venue, and rules copied from “${reuseSourceTitle}”. Saving creates a separate new hunt; the original results stay unchanged.` : 'Start with where you’ll play, then make a list of things to find and photograph.'}</p></div>
         <form className="hunt-builder" onSubmit={createHunt}>
-          <section className="builder-section"><div className="builder-step">1</div><div className="builder-main"><h2>Choose your venue</h2><p>Where will participants explore?</p><label className="builder-field">Venue name<input value={venue} onChange={event => setVenue(event.target.value)} required maxLength={160} placeholder="e.g. Riverside Park, Main Street Market"/></label><label className="builder-field">Hunt title <span className="optional">Optional — defaults to “[venue] Photo Hunt”</span><input value={huntTitle} onChange={event => setHuntTitle(event.target.value)} maxLength={120} placeholder={venue ? `${venue} Photo Hunt` : 'Saturday Family Photo Hunt'}/></label><label className="builder-field duration-field">Time limit<select value={huntDuration} onChange={event => setHuntDuration(Number(event.target.value))}><option value={30}>30 minutes</option><option value={45}>45 minutes</option><option value={60}>1 hour</option><option value={90}>90 minutes</option><option value={120}>2 hours</option></select></label></div></section>
-          <section className={`builder-section ${venue.trim() ? '' : 'builder-locked'}`}><div className="builder-step">2</div><div className="builder-main"><h2>Set the ground rules</h2><p>Suggested rules help everyone know how to play safely and fairly.</p>{!venue.trim() && <div className="locked-note"><MapPin size={15}/> Enter a venue above to continue.</div>}{venue.trim() && <div className="suggested-rules">{SUGGESTED_RULES.map(rule => <label key={rule.id} className="rule-option"><input type="checkbox" checked={selectedRules.includes(rule.text)} onChange={() => setSelectedRules(current => current.includes(rule.text) ? current.filter(text => text !== rule.text) : [...current, rule.text])}/><span>{rule.text}{rule.recommended && <small>Suggested</small>}</span></label>)}</div>}</div></section>
+          <section className="builder-section"><div className="builder-step">1</div><div className="builder-main"><h2>Choose your venue</h2><p>Where will participants explore?</p><label className="builder-field">Venue name<input value={venue} onChange={event => setVenue(event.target.value)} required maxLength={160} placeholder="e.g. Riverside Park, Main Street Market"/></label><label className="builder-field">Hunt title <span className="optional">Optional — defaults to “[venue] Photo Hunt”</span><input value={huntTitle} onChange={event => setHuntTitle(event.target.value)} maxLength={120} placeholder={venue ? `${venue} Photo Hunt` : 'Saturday Family Photo Hunt'}/></label><label className="builder-field duration-field">Time limit (minutes)<input type="number" min={1} max={2147483647} step={1} required value={huntDuration} onChange={event => setHuntDuration(Number(event.target.value))}/><span className="optional">Choose any whole-number duration. There is no 24-hour cap.</span></label></div></section>
+          <section className={`builder-section ${venue.trim() ? '' : 'builder-locked'}`}><div className="builder-step">2</div><div className="builder-main"><h2>Set the ground rules</h2><p>Keep the suggested rules, or add custom rules for this hunt.</p>{!venue.trim() && <div className="locked-note"><MapPin size={15}/> Enter a venue above to continue.</div>}{venue.trim() && <><div className="suggested-rules">{SUGGESTED_RULES.map(rule => <label key={rule.id} className="rule-option"><input type="checkbox" checked={selectedRules.includes(rule.text)} onChange={() => setSelectedRules(current => current.includes(rule.text) ? current.filter(text => text !== rule.text) : current.length >= 30 ? current : [...current, rule.text])}/><span>{rule.text}{rule.recommended && <small>Suggested</small>}</span></label>)}</div><div className="custom-rule-editor"><label htmlFor="custom-hunt-rule">Add your own rule</label><div><input id="custom-hunt-rule" maxLength={1000} value={customRuleDraft} onChange={event => setCustomRuleDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addCustomRule() } }} placeholder="Add a rule for this hunt"/><button type="button" className="outline-button" disabled={!customRuleDraft.trim() || selectedRules.length >= 30} onClick={addCustomRule}><Plus size={14}/> Add rule</button></div><small>Up to 30 rules, 1,000 characters each.</small></div>{selectedRules.filter(rule => !SUGGESTED_RULES.some(suggested => suggested.text === rule)).length > 0 && <ul className="custom-rule-list" aria-label="Custom rules">{selectedRules.filter(rule => !SUGGESTED_RULES.some(suggested => suggested.text === rule)).map(rule => <li key={rule}><span>{rule}</span><button type="button" aria-label={`Remove rule: ${rule}`} onClick={() => setSelectedRules(current => current.filter(existing => existing !== rule))}><X size={14}/></button></li>)}</ul>}</>}</div></section>
           <section className={`builder-section ${venue.trim() ? '' : 'builder-locked'}`}><div className="builder-step">3</div><div className="builder-main"><div className="builder-items-heading"><div><h2>Build the photo list</h2><p>Add the items participants need to find and photograph.</p></div>{venue.trim() && <button type="button" className="outline-button" onClick={addDraftItem}><Plus size={15}/> Add item</button>}</div>{!venue.trim() ? <div className="locked-note"><ClipboardList size={15}/> Enter a venue above to start your list.</div> : draftItems.length === 0 ? <div className="item-prompt"><span><Camera size={19}/></span><div><b>Your hunt needs at least one photo challenge</b><p>Choose recognizable things participants can find at this venue.</p></div><button type="button" className="outline-button" onClick={addDraftItem}><Plus size={15}/> Add first item</button></div> : <ChallengeListEditor items={draftItems.map(item => ({ id: item.key, title: item.title, description: item.description, points: item.pointValue }))} variant="production" onChange={updateDraftChallengeList}/>}<details className="production-challenge-import"><summary>Paste a challenge list</summary><p>One challenge per line. You can review and edit every imported item before saving.</p><label className="editor-label">Challenge list<textarea rows={5} value={challengePaste} onChange={event => setChallengePaste(event.target.value)} placeholder="Find something red, then a team selfie"/></label><label className="import-option"><input type="checkbox" checked={stripListMarkers} onChange={event => setStripListMarkers(event.target.checked)}/> Remove leading list bullets and numbering</label><button type="button" className="outline-button" onClick={importDraftChallenges}>Import and edit challenges</button></details>{venue.trim() && selectableLibraryItems.length > 0 && <div className="library-picker"><div><b>From your challenge library</b><span>Saved ideas can be reused in any hunt.</span></div><label className="library-picker-search">Search saved challenges<input type="search" value={libraryPickerSearch} onChange={event => setLibraryPickerSearch(event.target.value)} placeholder="Search by name or clue" /></label>{libraryAddedMessage && <p role="status">{libraryAddedMessage}</p>}<div className="library-picker-list">{filteredLibraryItems.map(item => <button type="button" className="library-picker-item" key={item.id} onClick={() => addLibraryChallenge(item)}><span><b>{item.title}</b><small>{item.category || item.description || 'Reusable challenge'}</small></span><Plus size={15}/></button>)}</div>{filteredLibraryItems.length === 0 && <p className="locked-note">No saved challenges match this search.</p>}</div>}</div></section>
           {huntMessage && <div className="form-error" role="alert">{huntMessage}</div>}
           <div className="builder-actions"><button type="button" className="outline-button" onClick={() => {setEditingDraftId(''); setPage('hunts')}}>Cancel</button><button type="submit" className="primary-button save-hunt-button" disabled={huntSaving || !venue.trim() || !draftItems.some(item => item.title.trim())}>{huntSaving ? 'Saving hunt…' : <><Check size={16}/> {editingDraftId ? 'Save draft changes' : 'Save draft hunt'}</>}</button></div>
