@@ -40,7 +40,7 @@ test('shared hunt validation catches missing or excessive challenges, bad points
   assert.ok(validateHuntDraft({...hunt,challenges:[]}))
   assert.ok(validateHuntDraft({...hunt,challenges:Array.from({length:101},(_,id)=>({...hunt.challenges[0],id:String(id)}))}))
   assert.equal(validateHuntDraft({...hunt,challenges:[]},true),null)
-  assert.ok(validateHuntDraft({...hunt,defaultDuration:4}))
+  assert.equal(validateHuntDraft({...hunt,defaultDuration:4}),null)
   assert.ok(validateHuntDraft({...hunt,challenges:[{...hunt.challenges[0],points:1.5}]}))
   assert.ok(validateHuntDraft({...hunt,challenges:[{...hunt.challenges[0],title:'  '}]}))
   assert.ok(validateHuntDraft({...hunt,rules:Array(31).fill('rule')}))

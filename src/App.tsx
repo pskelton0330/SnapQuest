@@ -8,6 +8,7 @@ import './App.css'
 import './theme.css'
 
 const OrganizerWorkspace = lazy(() => import('./pages/admin/OrganizerWorkspace'))
+const SystemAdminWorkspace = lazy(() => import('./pages/admin/SystemAdminWorkspace'))
 const JoinGame = lazy(() => import('./pages/participant/JoinGame'))
 const ParticipantGame = lazy(() => import('./pages/participant/ParticipantGame'))
 const LocalPlayerPreview = lazy(() => import('./components/GameManager').then(module => ({ default: module.LocalPlayerPreview })))
@@ -17,12 +18,20 @@ function RouteLoading() {
   return <main className="participant-shell"><section className="participant-message"><p role="status">Loading your hunt…</p></section></main>
 }
 
+function isPasswordRecoveryRedirect() {
+  const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  const query = new URLSearchParams(window.location.search)
+  return fragment.get('type') === 'recovery' || query.get('type') === 'recovery'
+}
+
 function App() {
   const collageUrl = `${import.meta.env.BASE_URL}adventure-collage.webp`
-  const [homeMode, setHomeMode] = useState<'welcome' | 'player' | 'organizer' | 'development'>('welcome')
+  const [homeMode, setHomeMode] = useState<'welcome' | 'player' | 'organizer' | 'development'>(() => isPasswordRecoveryRedirect() ? 'organizer' : 'welcome')
   const [email, setEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
+  const [passwordRecovery, setPasswordRecovery] = useState(isPasswordRecoveryRedirect)
   const [inviteInput, setInviteInput] = useState('')
   const [inviteError, setInviteError] = useState('')
   const [scannerOpen, setScannerOpen] = useState(false)
@@ -49,8 +58,14 @@ function App() {
   useEffect(() => {
     if (!supabase) return
     let cancelled = false, receivedAuthEvent = false
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       receivedAuthEvent = true
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordRecovery(true)
+        setHomeMode('organizer')
+        setAuthMode('signin')
+        setMessage('')
+      }
       if (!cancelled) { setSession(nextSession); setAuthReady(true); setAuthError('') }
     })
     void supabase.auth.getSession().then(({ data, error }) => {
@@ -67,7 +82,11 @@ function App() {
   const joinMatch = routeHash.match(/^#\/join\/([0-9a-f]{64})$/i)
   const playMatch = routeHash.match(/^#\/play\/([0-9a-f-]{36})$/i)
   const manageMatch = routeHash.match(/^#\/manage\/([0-9a-f-]{36})$/i)
+  const systemAdminMatch = routeHash === '#/system-admin'
 
+  if (systemAdminMatch && !authReady) return <RouteLoading/>
+  if (systemAdminMatch && session && !session.user.is_anonymous) return <Suspense fallback={<RouteLoading/>}><SystemAdminWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} /></Suspense>
+  if (systemAdminMatch) return <main className="participant-shell"><section className="participant-message"><h1>Organizer sign-in required</h1><p>Sign in with the verified account that has the SnapQuest system administrator role.</p><button className="outline-button" onClick={() => { window.location.hash = ''; setHomeMode('organizer') }}>Go to organizer login</button></section></main>
   if ((joinMatch || playMatch) && (!authReady || authError)) return <main className="participant-shell"><section className="participant-message"><h1>{authError ? 'Reconnect to your game' : 'Restoring your saved session'}</h1><p role={authError ? 'alert' : 'status'}>{authError || 'Checking your existing identity before opening the game…'}</p>{authError && <button className="outline-button" onClick={() => window.location.reload()}>Retry connection</button>}</section></main>
   if (joinMatch) return <Suspense fallback={<RouteLoading/>}><JoinGame token={joinMatch[1]} session={session} /></Suspense>
   if (playMatch && !session) return <main className="participant-shell"><section className="participant-message"><h1>Your saved game session is unavailable</h1><p>Return in the same browser and website address you used to join. Clearing site data, private browsing, signing out, or using a different device can lose guest access. Ask your organizer for help; your name alone cannot recover your identity.</p><a className="outline-button" href={window.location.pathname}>Return home</a></section></main>
@@ -85,7 +104,7 @@ function App() {
       const redirectTo = `${window.location.origin}${window.location.pathname}`
       if (authMode === 'signup') {
         const { data, error } = await supabase.auth.signUp({ email: email.trim(), password: authPassword, options: { emailRedirectTo: redirectTo } })
-        setMessage(error ? error.message : data.session ? 'Your organizer account is ready.' : 'Check your email to confirm your account, then sign in.')
+        setMessage(error ? error.message : data.session ? 'Your organizer account is ready.' : 'If this is a new account, check your inbox for a confirmation link. If you used this email before and no email arrives, return to sign in and request a secure sign-in link or password reset.')
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: authPassword })
         setMessage(error ? error.message : 'Signing you in...')
@@ -104,7 +123,7 @@ function App() {
     if (!supabase || !email.trim()) { setMessage('Enter your email address first.'); return }
     setLoading(true); setMessage('')
     try {
-      const { error } = await supabase.auth.signInWithOtp({ email: email.trim(), options: { emailRedirectTo: `${window.location.origin}${window.location.pathname}` } })
+      const { error } = await supabase.auth.signInWithOtp({ email: email.trim(), options: { emailRedirectTo: `${window.location.origin}${window.location.pathname}`, shouldCreateUser: false } })
       setMessage(error ? error.message : 'Check your email for a secure sign-in link.')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not send a sign-in link.')
@@ -119,6 +138,23 @@ function App() {
       setMessage(error ? error.message : 'If an account uses that email, a password recovery link is on its way.')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not request password recovery.')
+    } finally { setLoading(false) }
+  }
+
+  async function updateRecoveredPassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!supabase || newPassword.length < 8) { setMessage('Choose a password with at least 8 characters.'); return }
+    setLoading(true); setMessage('')
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword })
+      if (error) setMessage(error.message)
+      else {
+        setNewPassword('')
+        setPasswordRecovery(false)
+        setMessage('Your password has been updated.')
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not update your password.')
     } finally { setLoading(false) }
   }
 
@@ -144,7 +180,7 @@ function App() {
     window.location.hash = `/join/${token.toLowerCase()}`
   }
 
-  if (session && shouldRouteToOrganizerWorkspace(session)) return <Suspense fallback={<RouteLoading/>}><OrganizerWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} /></Suspense>
+  if (session && shouldRouteToOrganizerWorkspace(session) && !passwordRecovery) return <Suspense fallback={<RouteLoading/>}><OrganizerWorkspace session={session} onSignOut={() => supabase?.auth.signOut()} /></Suspense>
 
   return <main className="home-scene">
     <div className="home-scene-backdrop" style={{ backgroundImage: `url("${collageUrl}")` }} aria-hidden="true" />
@@ -155,7 +191,7 @@ function App() {
         <header className="home-header">
           {homeMode === 'welcome'
             ? <span className="home-header-note"><Sparkles size={15}/> A little adventure awaits</span>
-            : <button className="home-back-button" type="button" onClick={() => { setHomeMode('welcome'); setMessage(''); setInviteError('') }}><ArrowLeft size={17}/> Back</button>}
+            : <button className="home-back-button" type="button" disabled={passwordRecovery} onClick={() => { setHomeMode('welcome'); setMessage(''); setInviteError('') }}><ArrowLeft size={17}/> Back</button>}
           <span className="home-header-trust"><ShieldCheck size={15}/> FAMILY FUN, CAPTURED</span>
         </header>
 
@@ -203,22 +239,37 @@ function App() {
         {homeMode === 'organizer' && <section className="home-form-card">
           <div className="home-form-icon"><Users size={27}/></div>
           <p className="home-form-kicker">ORGANIZER ACCOUNT</p>
-          <h1>{authMode === 'signup' ? 'Create your account' : 'Welcome back!'}</h1>
-          <p className="home-form-description">Use your email as your login. Players can still join a hunt with a team invite and no account.</p>
-          <form onSubmit={signIn}>
-            <label htmlFor="email">Email address</label>
-            <input ref={emailFieldRef} id="email" type="email" autoComplete="email" required placeholder="you@example.com" value={email} onChange={event => setEmail(event.target.value)}/>
-            <label htmlFor="organizer-password">Password</label>
-            <input id="organizer-password" type="password" autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'} minLength={authMode === 'signup' ? 8 : undefined} required value={authPassword} onChange={event => setAuthPassword(event.target.value)}/>
-            <button className="home-form-submit" type="submit" disabled={!isSupabaseConfigured || loading}>{loading ? 'Please wait...' : authMode === 'signup' ? <>Create organizer account <ArrowRight size={17}/></> : <>Sign in <ArrowRight size={17}/></>}</button>
-            {message && <p className="home-form-message" role="status">{message}</p>}
-          </form>
-          {!isSupabaseConfigured && <p className="home-form-config">Add your Supabase project settings to <code>.env.local</code> to enable organizer sign-in.</p>}
-          <div className="home-form-helper home-form-secure"><ShieldCheck size={15}/> Email is your private login; your display name is public.</div>
-          <div className="home-form-auth-options">
-            <button type="button" className="text-button" onClick={() => { setAuthMode(authMode === 'signup' ? 'signin' : 'signup'); setMessage('') }}>{authMode === 'signup' ? 'Already have an account? Sign in' : 'Create an organizer account'}</button>
-            {authMode === 'signin' && <><button type="button" className="text-button" disabled={loading} onClick={() => void sendOrganizerSignInLink()}>Email me a sign-in link</button><button type="button" className="text-button" disabled={loading} onClick={() => void requestPasswordReset()}>Forgot password?</button></>}
-          </div>
+          <h1>{passwordRecovery ? 'Choose a new password' : authMode === 'signup' ? 'Create your account' : 'Welcome back!'}</h1>
+          {passwordRecovery ? <>
+            {!authReady ? <p className="home-form-message" role="status">Verifying your password recovery link...</p> : session ? <>
+              <p className="home-form-description">Use at least 8 characters. After saving, you will return to your organizer workspace.</p>
+              <form onSubmit={updateRecoveredPassword}>
+                <label htmlFor="recovered-password">New password</label>
+                <input id="recovered-password" type="password" autoComplete="new-password" minLength={8} required value={newPassword} onChange={event => setNewPassword(event.target.value)}/>
+                <button className="home-form-submit" type="submit" disabled={!isSupabaseConfigured || loading}>{loading ? 'Saving...' : <>Save new password <ArrowRight size={17}/></>}</button>
+                {message && <p className="home-form-message" role="status">{message}</p>}
+              </form>
+            </> : <>
+              <p className="home-form-message" role="alert">This recovery link is expired or unavailable. Return to sign in and request a new password reset.</p>
+              <button type="button" className="text-button" onClick={() => { setPasswordRecovery(false); setMessage('') }}>Return to sign in</button>
+            </>}
+          </> : <>
+            <p className="home-form-description">Use your email as your login. If you used SnapQuest's earlier passwordless login, use the sign-in link below. Players can still join a hunt with a team invite and no account.</p>
+            <form onSubmit={signIn}>
+              <label htmlFor="email">Email address</label>
+              <input ref={emailFieldRef} id="email" type="email" autoComplete="email" required placeholder="you@example.com" value={email} onChange={event => setEmail(event.target.value)}/>
+              <label htmlFor="organizer-password">Password</label>
+              <input id="organizer-password" type="password" autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'} minLength={authMode === 'signup' ? 8 : undefined} required value={authPassword} onChange={event => setAuthPassword(event.target.value)}/>
+              <button className="home-form-submit" type="submit" disabled={!isSupabaseConfigured || loading}>{loading ? 'Please wait...' : authMode === 'signup' ? <>Create organizer account <ArrowRight size={17}/></> : <>Sign in <ArrowRight size={17}/></>}</button>
+              {message && <p className="home-form-message" role="status">{message}</p>}
+            </form>
+            {!isSupabaseConfigured && <p className="home-form-config">Add your Supabase project settings to <code>.env.local</code> to enable organizer sign-in.</p>}
+            <div className="home-form-helper home-form-secure"><ShieldCheck size={15}/> Email is your private login; your display name is public.</div>
+            <div className="home-form-auth-options">
+              <button type="button" className="text-button" onClick={() => { setAuthMode(authMode === 'signup' ? 'signin' : 'signup'); setMessage('') }}>{authMode === 'signup' ? 'Already have an account? Sign in' : 'Create an organizer account'}</button>
+              {authMode === 'signin' && <><button type="button" className="text-button" disabled={loading} onClick={() => void sendOrganizerSignInLink()}>Email me a sign-in link</button><button type="button" className="text-button" disabled={loading} onClick={() => void requestPasswordReset()}>Forgot password?</button></>}
+            </div>
+          </>}
         </section>}
       </div>
     </section>

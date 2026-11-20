@@ -2,7 +2,7 @@
 
 This runbook separates no-charge local verification from read-only production diagnosis. Do not incur paid service usage to perform development checks. Never paste invitation tokens, email magic links, service-role keys, or private photo URLs into notes or bug reports.
 
-> **Migration status (November 7, 2026):** Production history records migrations 001–024 and targeted 026–028. Read-only checks confirm all public tables have RLS and anon function grants match the approved public RPC allowlist. The owner chose to retain diagnostic events beyond 365 days, with no maximum duration set. Migration 025 is a no-op and 029 removes any earlier pruning implementation. Development verification uses only the ephemeral Supabase stack in GitHub Actions; do not create a paid hosted branch. Do not use production for role-specific row/Storage or concurrent destructive tests.
+> **Migration status (November 20, 2026):** Production history is verified through `system_admin_deletion_reference_safety`. The latest entries are `restore_photo_review`, `self_serve_organizer_accounts`, `system_admin_community_handoff`, `organizer_controlled_hunt_duration`, and `system_admin_deletion_reference_safety`. The admin Edge Function is deployed with JWT verification enabled. The initial administrator is provisioned in `public.system_admins`; personal account details are intentionally not recorded here. The earlier review also confirmed the restored `pending` photo-approval default and auth-only grants for organizer functions. Diagnostic events remain retained beyond 365 days with no maximum. Migration 025 is a no-op and 029 removes any earlier pruning implementation. Development verification uses only the ephemeral Supabase stack in GitHub Actions; do not create a paid hosted branch. Do not use production for role-specific row/Storage or concurrent destructive tests.
 
 ## 1. Public deployment smoke test
 
@@ -54,7 +54,7 @@ Do not create a hosted Supabase branch or a separate paid project for routine de
 
 ## 4. Production troubleshooting is read-only
 
-The latest recorded production migration history is migrations `202610280001` through `202611060024`, plus targeted `202611070026` through `202611070028`. Migration `202611070025` is a no-op; `202611070029` removes any earlier audit-pruning behavior. The owner requires audit events to remain beyond 365 days and has not set a maximum. Check the [current test evidence](PRD_V2_TEST_EVIDENCE.md) before investigating a schema error.
+The latest recorded production migration history is verified through `system_admin_deletion_reference_safety`: `restore_photo_review`, `self_serve_organizer_accounts`, `system_admin_community_handoff`, `organizer_controlled_hunt_duration`, and `system_admin_deletion_reference_safety` follow the earlier migrations through 029. The three system-admin and duration migrations were explicitly authorized and applied on November 20, 2026. Migration `202611070025` is a no-op; `202611070029` removes any earlier audit-pruning behavior. Audit events remain retained beyond 365 days with no maximum. Check the [current test evidence](PRD_V2_TEST_EVIDENCE.md) before investigating a schema error.
 
 Open the [Supabase SQL Editor](https://supabase.com/dashboard/project/ykfkwczcomkhxaraqpuq/sql) only for read-only diagnosis. For example, check whether an RPC is present:
 

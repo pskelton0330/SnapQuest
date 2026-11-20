@@ -2,13 +2,13 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowRight, Camera, CircleHelp, LoaderCircle, MapPin, ShieldCheck, Users } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase'
-import { joinInvitation, resumeInvitation } from '../../lib/participantSession'
+import { joinInvitation, readParticipantNameDraft, resumeInvitation, saveParticipantNameDraft } from '../../lib/participantSession'
 
 type JoinGameProps = { token: string; session: Session | null }
 type InvitePreview = { title: string; venue: string; team_name: string; start_at: string; duration_minutes: number }
 
 export default function JoinGame({ token, session }: JoinGameProps) {
-  const [displayName, setDisplayName] = useState('')
+  const [displayName, setDisplayName] = useState(() => readParticipantNameDraft(token))
   const [message, setMessage] = useState('')
   const [joining, setJoining] = useState(false)
   const [checkingSession, setCheckingSession] = useState(true)
@@ -18,6 +18,7 @@ export default function JoinGame({ token, session }: JoinGameProps) {
   const [previewChecked, setPreviewChecked] = useState(false)
 
   useEffect(() => {
+    setDisplayName(readParticipantNameDraft(token))
     if (!supabase) return
     let cancelled = false
     void supabase.rpc('preview_invitation', { p_token: token }).then(({ data }) => {
@@ -72,10 +73,10 @@ export default function JoinGame({ token, session }: JoinGameProps) {
       <p className="card-kicker">YOU’RE INVITED</p>
       <h1>{preview?.title || (previewChecked ? 'This invitation is unavailable' : 'Checking invitation…')}</h1>
       {preview && <div className="join-preview"><span><MapPin size={14}/>{preview.venue}</span><span><Users size={14}/>{preview.team_name}</span></div>}
-      <p className="join-description">{preview ? <>You’re joining <b>{preview.team_name}</b>. Add your name to meet your team and play this photo scavenger hunt.</> : previewChecked ? 'Ask the organizer for a fresh team invitation link or QR code.' : 'Checking which hunt and team this link will open.'}</p>
+      <p className="join-description">{preview ? <>You’re joining <b>{preview.team_name}</b>. Choose your name so your team can identify who took each photo.</> : previewChecked ? 'Ask the organizer for a fresh team invitation link or QR code.' : 'Checking which hunt and team this link will open.'}</p>
       {resumeFailed ? <div className="participant-error" role="alert"><p>{message}</p><p>Your saved identity has not been replaced. Retry before joining.</p><button className="outline-button" onClick={() => setRetry(value => value + 1)}>Retry connection</button></div> : previewChecked && !preview ? <div className="participant-error" role="status"><span>This invitation may have expired or been replaced. Ask the organizer for a current team link.</span><a className="outline-button" href="#">Return home</a></div> : <form onSubmit={join}>
         <label htmlFor="participant-name">What should your team call you?</label>
-        <input id="participant-name" autoComplete="nickname" required minLength={1} maxLength={40} value={displayName} onChange={event => setDisplayName(event.target.value)} placeholder="Your name"/>
+        <input id="participant-name" autoComplete="nickname" required minLength={1} maxLength={40} value={displayName} onChange={event => { setDisplayName(event.target.value); saveParticipantNameDraft(token, event.target.value) }} placeholder="Your name"/>
         {message && <div className="participant-error" role="alert"><CircleHelp size={15}/>{message}</div>}
         <button className="primary-button" type="submit" disabled={joining || !supabase || !previewChecked || !preview}>{joining ? <><LoaderCircle className="spin" size={16}/> Joining…</> : <>Join the hunt <ArrowRight size={16}/></>}</button>
       </form>}

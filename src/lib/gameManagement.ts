@@ -14,7 +14,7 @@ export function gameRuntime(game: Game, now: number): 'setup' | 'scheduled' | 'a
 }
 export function validateGameSetup(setup: GameSetup, now: number): string | null {
   if (!setup.name.trim() || setup.name.trim().length > 120) return 'Enter a game name of 1–120 characters.'
-  if (!Number.isInteger(setup.duration) || setup.duration < 5 || setup.duration > 1440) return 'Duration must be a whole number from 5 to 1,440 minutes.'
+  if (!Number.isInteger(setup.duration) || setup.duration < 1 || setup.duration > 2_147_483_647) return 'Duration must be a whole number of at least 1 minute.'
   if (setup.teamNames.length < 2 || setup.teamNames.length > 12 || setup.teamNames.some(n => !n.trim() || n.trim().length > 40)) return 'Use 2–12 teams, with names of 1–40 characters.'
   if (new Set(setup.teamNames.map(n => n.trim().toLowerCase())).size !== setup.teamNames.length) return 'Team names must be unique.'
   if (!['organizer','balanced'].includes(setup.assignment)) return 'Choose a team assignment mode.'
@@ -40,7 +40,7 @@ export function applyGameCommand(game: Game, command: GameCommand, now: number, 
   }
   if (command.type === 'extend') {
     if (state !== 'active') throw new Error('Time can only be added while the game is active.')
-    if (!Number.isInteger(command.minutes) || command.minutes < 1 || command.minutes > 120 || game.duration + command.minutes > 1440) throw new Error('Add 1–120 whole minutes, up to a total duration of 24 hours.')
+    if (!Number.isInteger(command.minutes) || command.minutes < 1 || command.minutes > 120 || command.minutes > 2_147_483_647 - game.duration) throw new Error('Add 1–120 whole minutes without exceeding the maximum supported duration.')
     return { ...game, duration: game.duration + command.minutes }
   }
   if (command.type === 'end') {

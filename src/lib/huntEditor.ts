@@ -46,7 +46,7 @@ export function validateHuntDraft(hunt: HuntTemplate, detailsOnly = false): stri
 
   if (hunt.description.length > 1000) return 'Keep the description to 1,000 characters or fewer.'
 
-  if (!Number.isInteger(hunt.defaultDuration) || hunt.defaultDuration < 5 || hunt.defaultDuration > 1440) return 'Choose a whole-number duration of 5–1,440 minutes.'
+  if (!Number.isInteger(hunt.defaultDuration) || hunt.defaultDuration < 1 || hunt.defaultDuration > 2_147_483_647) return 'Choose a whole-number duration of at least 1 minute.'
 
   if (hunt.rules.length > 30 || hunt.rules.some(rule => rule.length > 1000)) return 'Use up to 30 rules, each 1,000 characters or fewer.'
 

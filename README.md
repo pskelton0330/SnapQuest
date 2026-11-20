@@ -50,7 +50,7 @@ The linked production project is `ykfkwczcomkhxaraqpuq`. Its [Supabase dashboard
 
 For local or dedicated test projects, configure the app URL and allowed redirects, enable anonymous sign-ins for participants, and configure organizer email links. The production Pages URL is `https://pskelton0330.github.io/SnapQuest/`; local Vite normally uses `http://127.0.0.1:5173/`.
 
-The repository contains migrations through `202611070029`. Production history was last checked on November 7, 2026; the verified production set is documented in the [Supabase test runbook](docs/SUPABASE_TEST_RUNBOOK.md). Diagnostic events must be retained beyond 365 days; no maximum is set. Migration 025 is a no-op and migration 029 removes earlier pruning behavior. Do not apply local migrations to production just because they exist in this repository. Development database checks use the ephemeral Supabase stack in GitHub Actions; no hosted test branch is used.
+The repository contains migrations through `20261120135941`. Production history was verified on November 20, 2026, through `system_admin_deletion_reference_safety`; the latest production migrations are documented in the [Supabase test runbook](docs/SUPABASE_TEST_RUNBOOK.md). Diagnostic events must be retained beyond 365 days; no maximum is set. Migration 025 is a no-op and migration 029 removes earlier pruning behavior. Apply only migrations reviewed and expressly authorized for production. Development database checks use the ephemeral Supabase stack in GitHub Actions; no hosted test branch is used.
 
 Participant photos and selfies use private storage and short-lived signed URLs. Organizer provisioning and production database changes require trusted Supabase access; the browser uses only the publishable key.
 
