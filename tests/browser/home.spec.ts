@@ -1709,7 +1709,7 @@ test('unconfirmed organizers can resend confirmation or change the address', asy
   await expect(page.getByLabel('Email address')).toBeEditable()
   await expect(page.getByLabel('Password', { exact: true })).toHaveValue('')
 
-  await page.goto('/#error_code=otp_expired')
+  await page.goto('/?callback=confirmation#error_code=otp_expired')
   await expect(page.getByText('This email link has expired.')).toBeVisible()
   await page.getByLabel('Email address').fill('host@example.test')
   await page.getByRole('button', { name: 'Resend account confirmation' }).click()
