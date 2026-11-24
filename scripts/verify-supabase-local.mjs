@@ -903,9 +903,15 @@ try {
   })
   assert.ok(closedChatSendError, 'Participants must not send chat messages after the hunt enters review')
   assert.match(closedChatSendError.message, /Chat is only open before or during the hunt/)
-  const { data: reviewPhoto, error: reviewPhotoError } = await participantTwo.storage.from('hunt-photos').download(currentPath)
-  assert.ifError(reviewPhotoError)
-  assert.ok(reviewPhoto, 'Participants should be able to view hunt photos after the hunt ends')
+  await expectDenied(
+    () => participantTwo.storage.from('hunt-photos').createSignedUrl(currentPath, 60),
+    'Other teams cannot sign a pending photo even after the hunt ends',
+  )
+  const pendingGallery = await participantTwo.rpc('get_hunt_review_gallery', { p_hunt_id: huntId })
+  assert.ifError(pendingGallery.error)
+  assert.equal(pendingGallery.data.submissions.some(photo => photo.storage_path === currentPath), false)
+  const ownPendingPhoto = await participantOne.storage.from('hunt-photos').download(currentPath)
+  assert.ifError(ownPendingPhoto.error)
   await expectDenied(
     () => participantTwo.storage.from('hunt-photos').download(replacementSelfiePath),
     'Post-hunt photo access must not reveal another team selfie',
@@ -926,6 +932,9 @@ try {
     organizerConcurrent.rpc('finalize_hunt', { p_hunt_id: huntId }),
   ])
   assert.ifError(reviewRace.error)
+  const approvedOtherTeamPhoto = await participantTwo.storage.from('hunt-photos').createSignedUrl(currentPath, 60)
+  assert.ifError(approvedOtherTeamPhoto.error)
+  assert.ok(approvedOtherTeamPhoto.data.signedUrl)
   assert.ok(finalizeRace.error, 'Finalization must wait while another submission remains pending')
   assert.match(finalizeRace.error.message, /Review or reject every submitted photo before finalizing/)
   const { data: secondTeamSubmission, error: secondSubmissionError } = await admin
@@ -975,6 +984,13 @@ try {
     p_decision: 'rejected',
   })
   assert.ifError(rejectSecondSubmissionError)
+  await expectDenied(
+    () => participantOne.storage.from('hunt-photos').download(secondTeamPhotoPath),
+    'A rejected photo remains private to its own team and organizer',
+  )
+  const rejectedGallery = await participantOne.rpc('get_hunt_review_gallery', { p_hunt_id: huntId })
+  assert.ifError(rejectedGallery.error)
+  assert.equal(rejectedGallery.data.submissions.some(photo => photo.storage_path === secondTeamPhotoPath), false)
   console.log('Review/finalize preserves the pending guard; valid cross-team voting works while self, unapproved, and outsider votes are denied.')
   const [finalizeOne, finalizeTwo] = await Promise.all([
     organizer.rpc('finalize_hunt', { p_hunt_id: huntId }),

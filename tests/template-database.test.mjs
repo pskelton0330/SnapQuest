@@ -8,7 +8,7 @@ import { calculateTeamScores, normalizeFinalScores, winningTeams } from '../src/
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222', outsider='12345678-1234-4234-9234-123456789abc'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration, systemAdminMigration, organizerDurationMigration, systemAdminSafetyMigration
+let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration, systemAdminMigration, organizerDurationMigration, systemAdminSafetyMigration, photoVisibilityMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -38,6 +38,7 @@ before(async () => {
     if(file.includes('self_serve_organizer_accounts')) { selfServeOrganizerMigration=sql; continue }
     if(file.includes('system_admin_community_handoff')) { systemAdminMigration=sql; continue }
     if(file.includes('organizer_controlled_hunt_duration')) { organizerDurationMigration=sql; continue }
+    if(file.includes('enforce_review_photo_visibility')) { photoVisibilityMigration=sql; continue }
     if(file.includes('system_admin_deletion_reference_safety')) { systemAdminSafetyMigration=sql; continue }
     if(file.includes('0007')) { migration=sql; continue }
     if(file.includes('0008')) { managementMigration=sql; continue }
@@ -98,6 +99,7 @@ before(async () => {
   await db.exec(systemAdminMigration)
   await db.exec(organizerDurationMigration)
   await db.exec(systemAdminSafetyMigration)
+  await db.exec(photoVisibilityMigration)
 })
 after(async()=> { await db?.close() })
 test('anonymous role can execute only explicitly public security-definer RPCs', async () => {
@@ -414,6 +416,41 @@ test('SQL final scores match application scoring when cross-team voting changes 
   assert.equal(sqlScores[0].team_id, redTeamId)
   assert.equal(sqlScores[0].total, 8)
   assert.equal(sqlScores[0].rank, 1)
+})
+
+test('photo approval limits gallery, row and object visibility across teams', async () => {
+  const { huntId, teams, participant } = await createReliabilityHunt('Photo privacy')
+  const otherTeam = teams.find(team => team.team_id !== participant.team_id)
+  await as('authenticated', outsider, "select public.redeem_invitation($1,'Other team')", [otherTeam.invite_token])
+  const itemId = (await db.query('select id from public.hunt_items where hunt_id=$1', [huntId])).rows[0].id
+  const photo = `${huntId}/${participant.team_id}/${itemId}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg`
+  const orphan = photo.replace('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg')
+  await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1),('hunt-photos',$2)", [photo, orphan])
+  await as('authenticated', owner, 'select public.start_game_now($1)', [huntId])
+  await as('authenticated', other, 'select public.submit_hunt_photo($1,$2,null)', [itemId, photo])
+  await as('authenticated', owner, 'select public.end_hunt_early($1)', [huntId])
+  const id = (await db.query('select id from public.submissions where storage_path=$1', [photo])).rows[0].id
+
+  async function check(user, expected) {
+    const rows = await as('authenticated', user, 'select storage_path from public.submissions where hunt_id=$1', [huntId])
+    const objects = await as('authenticated', user, 'select name from storage.objects where name=$1', [photo])
+    const gallery = (await as('authenticated', user, 'select public.get_hunt_review_gallery($1) data', [huntId])).rows[0].data
+    assert.deepEqual(rows.rows.map(row => row.storage_path), expected)
+    assert.deepEqual(objects.rows.map(row => row.name), expected)
+    assert.deepEqual(gallery.submissions.map(submission => submission.storage_path), expected)
+  }
+
+  await check(owner, [photo])
+  await check(other, [photo])
+  await check(outsider, [])
+  await as('authenticated', owner, "select public.review_submission($1,'approved')", [id])
+  await check(outsider, [photo])
+  const unsubmitted = await as('authenticated', outsider, 'select name from storage.objects where name=$1', [orphan])
+  assert.equal(unsubmitted.rows.length, 0)
+  await as('authenticated', owner, "select public.review_submission($1,'rejected')", [id])
+  await check(outsider, [])
+  await check(owner, [photo])
+  await check(other, [photo])
 })
 
 test('SQL tie winners match app, organizer gallery, and participant result snapshots', async () => {
