@@ -328,12 +328,6 @@ async function resumeDeletion(id: string) {
       await advanceDeletion(job, job.kind === "account" ? "auth" : "complete")
     }
     if (job.stage === "auth") {
-      // Include any upload that had already started when game access ended.
-      const { data: residual, error: inventoryError } = await admin.rpc("system_admin_storage_objects", {
-        p_user_id: job.subject_id, p_hunt_id: null,
-      })
-      if (inventoryError) throw new Error("Could not verify account Storage cleanup")
-      await removeStorageObjects(Array.isArray(residual) ? residual as StorageObject[] : [])
       const { error: deleteError } = await admin.auth.admin.deleteUser(job.subject_id)
       if (deleteError && deleteError.code !== "user_not_found" && deleteError.status !== 404) throw deleteError
       await advanceDeletion(job, "complete")
