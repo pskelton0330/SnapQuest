@@ -8,7 +8,7 @@ import { calculateTeamScores, normalizeFinalScores, winningTeams } from '../src/
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222', outsider='12345678-1234-4234-9234-123456789abc'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration, systemAdminMigration, organizerDurationMigration, systemAdminSafetyMigration, photoVisibilityMigration, adminDeletionJobsMigration, huntLibraryMigration
+let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration, systemAdminMigration, organizerDurationMigration, systemAdminSafetyMigration, photoVisibilityMigration, adminDeletionJobsMigration, huntLibraryMigration, holidayLibraryMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -41,6 +41,7 @@ before(async () => {
     if(file.includes('resumable_admin_deletion')) { adminDeletionJobsMigration=sql; continue }
     if(file.includes('enforce_review_photo_visibility')) { photoVisibilityMigration=sql; continue }
     if(file.includes('system_admin_deletion_reference_safety')) { systemAdminSafetyMigration=sql; continue }
+    if(file.includes('publish_hobby_lobby_and_christmas_tree_hunts')) { holidayLibraryMigration=sql; continue }
     if(file.includes('hunt_library_completion_snapshots')) { huntLibraryMigration=sql; continue }
     if(file.includes('0007')) { migration=sql; continue }
     if(file.includes('0008')) { managementMigration=sql; continue }
@@ -907,4 +908,45 @@ test('community handoff and moderation preserve an independent draft', async () 
   const draft = (await as('authenticated',other,'select status,template_id from public.hunts where id=$1',[copy])).rows[0]
   assert.deepEqual(draft,{status:'draft',template_id:null})
   assert.equal((await db.query('select status from public.hunts where id=$1',[gameId])).rows[0].status,'completed')
+})
+
+test('publishes just the reviewed historical hunt and the labeled, copyable Christmas starter', async () => {
+  const hobbyId = '1377ab60-c54c-4a0a-9802-216f4060e9bd'
+  const untouchedId = '392736a4-31a1-469c-a071-e637287c2fc5'
+  await db.query(`insert into public.hunts(id,organizer_id,title,venue,status,duration_minutes,final_scores,rules)
+    values ($1,$3,'Hobby Lobby Scavenger Hunt','Hobby Lobby','completed',60,'[{"team_name":"Private team"}]',array['Walk together']),
+           ($2,$3,'Another completed game','Private venue','completed',45,'[{}]',array[]::text[])`, [hobbyId, untouchedId, owner])
+  await db.query(`insert into public.hunt_items(hunt_id,title_snapshot,point_value,display_order)
+    select $1,'Original challenge ' || n,1,n from generate_series(0,48) n`, [hobbyId])
+  const priorHistory = (await db.query('select id,status,final_scores from public.hunts where id in ($1,$2) order by id',[hobbyId,untouchedId])).rows
+
+  await db.exec(holidayLibraryMigration)
+  await db.exec(holidayLibraryMigration)
+  const catalog = (await as('anon',null,'select public.list_hunt_templates(false) docs')).rows[0].docs
+  const hobby = catalog.filter(entry => entry.title === 'Hobby Lobby Scavenger Hunt')
+  const christmas = catalog.filter(entry => entry.title === 'Christmas Tree Hunt')
+  assert.equal(hobby.length,1)
+  assert.equal(christmas.length,1)
+  assert.equal(hobby[0].kind,undefined)
+  assert.equal(hobby[0].defaultDuration,60)
+  assert.deepEqual(hobby[0].rules,['Walk together'])
+  assert.deepEqual(hobby[0].challenges.map(item=>[item.title,item.points,item.displayOrder]),
+    Array.from({length:49},(_,i)=>['Original challenge '+i,1,i]))
+  assert.equal(christmas[0].kind,'starter')
+  assert.equal(christmas[0].challenges.length,24)
+  assert.ok(christmas[0].challenges.some(item=>item.title==='Santa takes flight'))
+  assert.ok(christmas[0].challenges.some(item=>item.title==='A house with only blue lights'))
+  assert.ok(christmas[0].challenges.every(item=>item.description && item.points>=1 && item.points<=3))
+  assert.ok(!catalog.some(entry=>entry.title==='Another completed game'))
+  assert.ok(!JSON.stringify(hobby[0]).includes('Private team'))
+
+  for (const entry of [hobby[0], christmas[0]]) {
+    await assert.rejects(as('anon',null,'select public.copy_hunt_library_to_draft($1)',[entry.id]),/permission denied/)
+    const copy = (await as('authenticated',other,'select public.copy_hunt_library_to_draft($1) id',[entry.id])).rows[0].id
+    const draft = (await as('authenticated',other,'select status,final_scores from public.hunts where id=$1',[copy])).rows[0]
+    assert.deepEqual(draft,{status:'draft',final_scores:[]})
+    const count = (await db.query('select count(*)::int n from public.hunt_items where hunt_id=$1',[copy])).rows[0].n
+    assert.equal(count,entry.challenges.length)
+  }
+  assert.deepEqual((await db.query('select id,status,final_scores from public.hunts where id in ($1,$2) order by id',[hobbyId,untouchedId])).rows,priorHistory)
 })

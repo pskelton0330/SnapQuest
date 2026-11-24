@@ -1466,6 +1466,32 @@ test('Hunt Library previews a complete hunt and copies an editable draft at desk
   ])
 })
 
+test('Hunt Library labels Christmas Tree as a starter and Hobby Lobby as completed', async ({ page }) => {
+  await restoreOrganizerSession(page)
+  await page.route('**/rest/v1/rpc/list_hunt_templates', route => route.fulfill({ json: [
+    { id: 'christmas', kind: 'starter', title: 'Christmas Tree Hunt', description: 'Follow a Christmas lights trail.',
+      defaultDuration: 60, rules: ['Walk together'],
+      challenges: [{ title: 'Santa takes flight', description: 'Find a Santa and an airplane.', points: 3, displayOrder: 0 }] },
+    { id: 'hobby', title: 'Hobby Lobby Scavenger Hunt', defaultDuration: 60, rules: ['Ask the store for permission'],
+      challenges: [{ title: 'An item with a leaf on it', description: null, points: 1, displayOrder: 0 }] },
+  ] }))
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'Browse Hunt Library' }).click()
+  await page.getByLabel('Search Hunt Library').fill('Christmas lights')
+  const christmas = page.getByRole('article').filter({ hasText: 'Christmas Tree Hunt' })
+  await expect(christmas.getByText(/STARTER HUNT/)).toBeVisible()
+  await christmas.getByRole('button', { name: 'Preview complete hunt' }).click()
+  await expect(page.getByText('STARTER HUNT', { exact: true })).toBeVisible()
+  await expect(page.getByText('Santa takes flight', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Copy to My Hunts' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Back to Hunt Library' }).click()
+  await page.getByLabel('Search Hunt Library').fill('Hobby Lobby')
+  await page.getByRole('article').filter({ hasText: 'Hobby Lobby Scavenger Hunt' }).getByRole('button', { name: 'Preview complete hunt' }).click()
+  await expect(page.getByText('COMPLETED HUNT', { exact: true })).toBeVisible()
+  await expect(page.getByText('An item with a leaf on it')).toBeVisible()
+})
+
 test('organizer can start a rematch from a completed hunt without changing its results', async ({ page }) => {
   organizerReviewMode = true
   organizerReviewStatus = 'completed'
