@@ -941,7 +941,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .my-hunts-actions{display:flex;justify-content:flex-end;align-items:center;gap:9px;flex-wrap:wrap}
 .my-hunts-actions .library-add{margin:0}
-.empty-hunt-actions{display:flex;justify-content:center;gap:9px;flex-wrap:wrap;margin-top:12px}
 .hunt-library-note{margin:0 0 16px;padding:12px 14px;border:1px solid #dcebe6;border-radius:12px;background:#f0f8f5;color:#536e67;font-size:12px;line-height:1.55}
 .public-hunt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:14px}
 .public-hunt-card,.public-hunt-section{min-width:0;padding:19px;border:1px solid var(--sq-line);border-radius:16px;background:var(--sq-card);box-shadow:0 5px 0 rgb(20 40 58 / 5%)}
@@ -976,5 +975,4 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .public-hunt-card,.public-hunt-section{padding:15px}
   .public-hunt-copy-row{align-items:stretch;flex-direction:column}
   .public-hunt-copy-row .primary-button{width:100%}
-  .empty-hunt-actions>*{flex:1 1 100%;width:100%}
 }

@@ -1494,7 +1494,7 @@ test('Hunt Library retries with the same request ID after a lost response', asyn
   await page.route('**/rest/v1/rpc/copy_hunt_library_to_draft', async route => {
     requests.push(route.request().postDataJSON().p_request_id)
     if (requests.length === 1) {
-      await route.fulfill({ status: 503, json: { message: 'Response unavailable' } })
+      await route.fulfill({ status: 400, json: { message: 'Response unavailable' } })
     } else {
       await route.fallback()
     }
@@ -1708,6 +1708,12 @@ test('unconfirmed organizers can resend confirmation or change the address', asy
   await page.getByRole('button', { name: 'Change email address' }).click()
   await expect(page.getByLabel('Email address')).toBeEditable()
   await expect(page.getByLabel('Password', { exact: true })).toHaveValue('')
+
+  await page.goto('/#error_code=otp_expired')
+  await expect(page.getByText('This email link has expired.')).toBeVisible()
+  await page.getByLabel('Email address').fill('host@example.test')
+  await page.getByRole('button', { name: 'Resend account confirmation' }).click()
+  await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible()
 })
 
 test('organizer email callback restores the session at the site root', async ({ page }) => {

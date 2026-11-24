@@ -24,9 +24,15 @@ function isPasswordRecoveryRedirect() {
   return fragment.get('type') === 'recovery' || query.get('type') === 'recovery'
 }
 
+function isExpiredEmailLink() {
+  const fragment = new URLSearchParams(window.location.hash.slice(1))
+  const query = new URLSearchParams(window.location.search)
+  return fragment.get('error_code') === 'otp_expired' || query.get('error_code') === 'otp_expired'
+}
+
 function App() {
   const collageUrl = `${import.meta.env.BASE_URL}adventure-collage.webp`
-  const [homeMode, setHomeMode] = useState<'welcome' | 'player' | 'organizer' | 'development'>(() => isPasswordRecoveryRedirect() ? 'organizer' : 'welcome')
+  const [homeMode, setHomeMode] = useState<'welcome' | 'player' | 'organizer' | 'development'>(() => isPasswordRecoveryRedirect() || isExpiredEmailLink() ? 'organizer' : 'welcome')
   const [email, setEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -35,7 +41,7 @@ function App() {
   const [inviteInput, setInviteInput] = useState('')
   const [inviteError, setInviteError] = useState('')
   const [scannerOpen, setScannerOpen] = useState(false)
-  const [message, setMessage] = useState('')
+  const [message, setMessage] = useState(() => isExpiredEmailLink() ? 'This email link has expired. Request a fresh link below.' : '')
   const [loading, setLoading] = useState(false)
   const [session, setSession] = useState<Session | null>(null)
   const [authReady, setAuthReady] = useState(!supabase)
@@ -303,7 +309,15 @@ function App() {
             <div className="home-form-helper home-form-secure"><ShieldCheck size={15}/> Email is your private login; your display name is public.</div>
             <div className="home-form-auth-options">
               <button type="button" className="text-button" onClick={() => { setAuthMode(authMode === 'signup' ? 'signin' : 'signup'); setMessage('') }}>{authMode === 'signup' ? 'Already have an account? Sign in' : 'Create an organizer account'}</button>
-              {authMode === 'signin' && <><button type="button" className="text-button" disabled={loading} onClick={() => void sendOrganizerSignInLink()}>Email me a sign-in link</button><button type="button" className="text-button" disabled={loading} onClick={() => void requestPasswordReset()}>Forgot password?</button></>}
+              {authMode === 'signin' && <><button type="button" className="text-button" disabled={loading} onClick={() => void sendOrganizerSignInLink()}>Email me a sign-in link</button><button type="button" className="text-button" disabled={loading} onClick={() => void requestPasswordReset()}>Forgot password?</button><button type="button" className="text-button" disabled={loading} onClick={() => {
+                if (!email.trim() || !emailFieldRef.current?.checkValidity()) {
+                  setMessage('Enter your email address first.')
+                  emailFieldRef.current?.focus()
+                  return
+                }
+                setAuthMode('confirm')
+                void resendOrganizerConfirmation()
+              }}>Resend account confirmation</button></>}
             </div>
           </>}
         </section>}
