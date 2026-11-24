@@ -13,7 +13,8 @@ type AdminTemplate = {
   creator: string; owner: string; createdAt: string
 }
 type AdminGame = { id: string; title: string; venue: string; status: string; owner: string; createdAt: string }
-type Snapshot = { accounts: AdminAccount[]; templates: AdminTemplate[]; games: AdminGame[]; totalAccounts: number; totalTemplates: number; totalGames: number }
+type DeletionJob = { id: string; kind: 'account' | 'game'; stage: 'storage' | 'auth'; created_at: string }
+type Snapshot = { accounts: AdminAccount[]; templates: AdminTemplate[]; games: AdminGame[]; totalAccounts: number; totalTemplates: number; totalGames: number; deletionJobs?: DeletionJob[] }
 type DeletionPreview = {
   userId: string; email: string; publicTemplatesToTransfer: number; privateTemplatesToDelete: number
   draftGamesToDelete: number; completedGamesToPreserve: number
@@ -135,7 +136,22 @@ export default function SystemAdminWorkspace({ session, onSignOut }: Props) {
       setNotice(completed)
       await loadSnapshot()
     } catch (actionError) {
+      if (pending.kind !== 'template') {
+        setPending(null)
+        await loadSnapshot()
+      }
       setError(actionError instanceof Error ? actionError.message : 'The administrative action failed.')
+    } finally { setBusy(false) }
+  }
+
+  async function resumeDeletion(job: DeletionJob) {
+    setBusy(true); setError(''); setNotice('')
+    try {
+      await invokeAdmin({ action: 'resume-deletion', jobId: job.id })
+      setNotice(job.kind === 'account' ? 'Account deletion completed.' : 'Game deletion completed.')
+      await loadSnapshot()
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Could not resume deletion.')
     } finally { setBusy(false) }
   }
 
@@ -175,6 +191,13 @@ export default function SystemAdminWorkspace({ session, onSignOut }: Props) {
         {notice && <p className="system-admin-notice" role="status"><Check size={16}/>{notice}</p>}
         {error && <p className="system-admin-error" role="alert">{error}</p>}
         {loading && <p className="system-admin-loading" role="status"><LoaderCircle size={17} className="system-admin-spin"/> Loading admin data…</p>}
+
+        {Boolean(snapshot?.deletionJobs?.length) && <section className="system-admin-list" aria-label="Pending deletions">
+          {snapshot?.deletionJobs?.map(job => <article className="system-admin-row" key={job.id}>
+            <div className="system-admin-row-copy"><b>{job.kind === 'account' ? 'Account deletion' : 'Game deletion'}</b><span>{job.stage === 'storage' ? 'Media cleanup pending' : 'Sign-in account cleanup pending'} · Started {dateLabel(job.created_at)}</span></div>
+            <button className="outline-button" disabled={busy} onClick={() => void resumeDeletion(job)}>Resume deletion</button>
+          </article>)}
+        </section>}
 
         {!loading && tab === 'accounts' && <div className="system-admin-list">
           {filteredAccounts.map(account => <article className="system-admin-row" key={account.id}>

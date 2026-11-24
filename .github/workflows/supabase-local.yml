@@ -38,7 +38,7 @@ jobs:
         run: npm ci
 
       - name: Start isolated local Supabase stack and apply migrations
-        run: supabase start -x studio,edge-runtime,logflare,vector,supavisor,postgres-meta
+        run: supabase start -x studio,logflare,vector,supavisor,postgres-meta
 
       - name: Verify Realtime publication covers live app subscriptions
         shell: bash

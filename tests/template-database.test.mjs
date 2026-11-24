@@ -8,7 +8,7 @@ import { calculateTeamScores, normalizeFinalScores, winningTeams } from '../src/
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222', outsider='12345678-1234-4234-9234-123456789abc'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration, systemAdminMigration, organizerDurationMigration, systemAdminSafetyMigration, photoVisibilityMigration
+let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration, systemAdminMigration, organizerDurationMigration, systemAdminSafetyMigration, photoVisibilityMigration, adminDeletionJobsMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -28,7 +28,7 @@ before(async () => {
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     grant usage on schema auth to anon,authenticated; grant execute on function auth.uid() to anon,authenticated;
     create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
-    create table storage.objects(id uuid default gen_random_uuid(),bucket_id text,name text);
+    create table storage.objects(id uuid default gen_random_uuid(),bucket_id text,name text,owner_id text);
     grant usage on schema storage to anon,authenticated; grant select,insert,update,delete on storage.objects to authenticated;
     alter default privileges for role postgres in schema public grant execute on functions to anon,authenticated,service_role;
     alter table storage.objects enable row level security;`)
@@ -38,6 +38,7 @@ before(async () => {
     if(file.includes('self_serve_organizer_accounts')) { selfServeOrganizerMigration=sql; continue }
     if(file.includes('system_admin_community_handoff')) { systemAdminMigration=sql; continue }
     if(file.includes('organizer_controlled_hunt_duration')) { organizerDurationMigration=sql; continue }
+    if(file.includes('resumable_admin_deletion')) { adminDeletionJobsMigration=sql; continue }
     if(file.includes('enforce_review_photo_visibility')) { photoVisibilityMigration=sql; continue }
     if(file.includes('system_admin_deletion_reference_safety')) { systemAdminSafetyMigration=sql; continue }
     if(file.includes('0007')) { migration=sql; continue }
@@ -100,6 +101,7 @@ before(async () => {
   await db.exec(organizerDurationMigration)
   await db.exec(systemAdminSafetyMigration)
   await db.exec(photoVisibilityMigration)
+  await db.exec(adminDeletionJobsMigration)
 })
 after(async()=> { await db?.close() })
 test('anonymous role can execute only explicitly public security-definer RPCs', async () => {
@@ -762,4 +764,33 @@ test('permanent-account rejoin preserves membership across other-team QR, rotati
   const context=(await as('authenticated',owner,'select public.get_participant_context($1) data',[id])).rows[0].data
   assert.equal(context.runtime_state,'review')
   assert.equal((await db.query('select count(*)::int n from public.participants where hunt_id=$1 and auth_user_id=$2',[id,owner])).rows[0].n,1)
+})
+
+test('admin deletion commits references and durable inventory together, and reuses the same job', async () => {
+  const adminId = 'c78a0ed6-0c3f-4af9-8cc1-24b5d40432da'
+  const accountId = 'efe1f33a-92de-4739-9cc4-5e502971fe26'
+  await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'admin-jobs@example.test',now()),($2,'target-jobs@example.test',now())",[adminId,accountId])
+  await db.query('insert into public.system_admins(user_id) values($1)', [adminId])
+  const { huntId, participant } = await createReliabilityHunt('Game deletion inventory', new Date(Date.now() + 60 * 60 * 1000).toISOString())
+  await as('authenticated', owner, 'select public.start_game_now($1)', [huntId])
+  const item = (await db.query('select id from public.hunt_items where hunt_id=$1',[huntId])).rows[0].id
+  const path = [huntId, participant.team_id, item, 'bc82e219-6972-4ced-bfdc-9f375b43ee3b.jpg'].join('/')
+  await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1)",[path])
+  await as('authenticated', other, 'select public.submit_hunt_photo($1,$2,null)', [item,path])
+
+  const start = 'select public.system_admin_start_deletion($1,$2,$3) id'
+  await assert.rejects(as('authenticated', owner, start, [adminId,'game',huntId]), /permission denied/)
+  const gameJob = (await as('service_role', null, start, [adminId,'game',huntId])).rows[0].id
+  assert.equal((await db.query('select id from public.hunts where id=$1',[huntId])).rows.length,0)
+  assert.equal((await db.query('select id from public.submissions where storage_path=$1',[path])).rows.length,0)
+  assert.equal((await db.query('select name from storage.objects where name=$1',[path])).rows.length,1)
+  const saved = (await db.query('select stage,objects from public.system_admin_deletion_jobs where id=$1',[gameJob])).rows[0]
+  assert.deepEqual(saved, { stage:'storage',objects:[{bucket_id:'hunt-photos',name:path}] })
+  assert.equal((await as('service_role', null, start, [adminId,'game',huntId])).rows[0].id,gameJob)
+  assert.equal((await db.query('select id from public.system_admin_action_log where subject_id=$1',[huntId])).rows.length,1)
+
+  const accountJob = (await as('service_role', null, start, [adminId,'account',accountId])).rows[0].id
+  await assert.rejects(as('authenticated', accountId, 'select public.ensure_my_organizer_profile()'),/account is being removed/)
+  await db.query('delete from auth.users where id=$1',[accountId])
+  assert.equal((await as('service_role', null, start, [adminId,'account',accountId])).rows[0].id,accountJob)
 })

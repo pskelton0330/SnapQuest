@@ -1,6 +1,13 @@
 import { createClient } from "@supabase/supabase-js"
 
 type StorageObject = { bucket_id: string; name: string }
+type DeletionJob = {
+  id: string
+  kind: "account" | "game"
+  subject_id: string
+  objects: StorageObject[]
+  stage: "storage" | "auth" | "complete"
+}
 type OrganizerRow = { id: string; auth_user_id: string | null; is_system_profile: boolean }
 type CreatorRow = { id: string; organizer_id: string; display_name: string }
 type TemplateRow = {
@@ -150,15 +157,18 @@ async function listAllOrganizerGames(organizerId: string) {
 }
 
 async function loadSnapshot() {
-  const [users, organizerRows, creatorRows, templates, games, adminIds] = await Promise.all([
+  const [users, organizerRows, creatorRows, templates, games, adminIds, deletionJobs] = await Promise.all([
     listAllAuthUsers(),
     listAllOrganizers(),
     listAllCreatorProfiles(),
     listAllTemplates(),
     listAllGames(),
     listAllAdminIds(),
+    admin.from("system_admin_deletion_jobs").select("id,kind,stage,created_at")
+      .neq("stage", "complete").order("created_at").limit(100),
   ])
 
+  if (deletionJobs.error) throw deletionJobs.error
   const allUsers = users.filter(user => !user.is_anonymous)
   const emailById = new Map(allUsers.map(user => [user.id, user.email ?? "No email"] as const))
   const adminIdSet = new Set(adminIds)
@@ -208,6 +218,7 @@ async function loadSnapshot() {
       owner: ownerLabel(game.organizer_id),
       createdAt: game.created_at,
     })),
+    deletionJobs: deletionJobs.data,
     totalAccounts: allUsers.length,
     totalTemplates: templates.length,
     totalGames: games.length,
@@ -289,6 +300,50 @@ async function removeStorageObjects(objects: StorageObject[]) {
   }
 }
 
+async function startDeletion(actorId: string, kind: DeletionJob["kind"], subjectId: string) {
+  const { data, error } = await admin.rpc("system_admin_start_deletion", {
+    p_actor_user_id: actorId, p_kind: kind, p_subject_id: subjectId,
+  })
+  if (error) throw new Error(error.message)
+  return data as string
+}
+
+async function advanceDeletion(job: DeletionJob, stage: DeletionJob["stage"]) {
+  const { error } = await admin.from("system_admin_deletion_jobs")
+    .update({ stage, objects: [] }).eq("id", job.id).eq("stage", job.stage)
+  if (error) throw new Error("Could not save deletion progress")
+  job.stage = stage
+}
+
+async function resumeDeletion(id: string) {
+  const { data, error } = await admin.from("system_admin_deletion_jobs")
+    .select("id,kind,subject_id,objects,stage").eq("id", id).maybeSingle()
+  if (error) throw new Error("Could not load deletion progress")
+  if (!data) return respond({ error: "Deletion request not found" }, 404)
+  const job = data as DeletionJob
+
+  try {
+    if (job.stage === "storage") {
+      await removeStorageObjects(job.objects)
+      await advanceDeletion(job, job.kind === "account" ? "auth" : "complete")
+    }
+    if (job.stage === "auth") {
+      // Include any upload that had already started when game access ended.
+      const { data: residual, error: inventoryError } = await admin.rpc("system_admin_storage_objects", {
+        p_user_id: job.subject_id, p_hunt_id: null,
+      })
+      if (inventoryError) throw new Error("Could not verify account Storage cleanup")
+      await removeStorageObjects(Array.isArray(residual) ? residual as StorageObject[] : [])
+      const { error: deleteError } = await admin.auth.admin.deleteUser(job.subject_id)
+      if (deleteError && deleteError.code !== "user_not_found" && deleteError.status !== 404) throw deleteError
+      await advanceDeletion(job, "complete")
+    }
+    return respond({ deleted: true, jobId: job.id })
+  } catch {
+    return respond({ error: "Deletion is still pending. Refresh the admin workspace and resume the deletion.", jobId: job.id }, 502)
+  }
+}
+
 Deno.serve(async request => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
   if (request.method !== "POST") return respond({ error: "Use POST for administrative actions" }, 405)
@@ -305,6 +360,11 @@ Deno.serve(async request => {
     if (action === "check") return respond({ isAdmin: true })
     if (action === "snapshot") return respond(await loadSnapshot())
 
+    if (action === "resume-deletion") {
+      if (!isUuid(body.jobId)) return respond({ error: "Choose a pending deletion" }, 400)
+      return await resumeDeletion(body.jobId)
+    }
+
     if (action === "preview-delete-account") {
       if (!isUuid(body.userId)) return respond({ error: "Choose an account" }, 400)
       return respond(await getAccountDeletionPreview(body.userId, actor.id))
@@ -318,23 +378,7 @@ Deno.serve(async request => {
         return respond({ error: "Type the account email exactly to confirm deletion" }, 400)
       }
 
-      const { data: storageObjects, error: inventoryError } = await admin.rpc("system_admin_storage_objects", { p_user_id: body.userId, p_hunt_id: null })
-      if (inventoryError) throw inventoryError
-      const ownedObjects = Array.isArray(storageObjects) ? storageObjects as StorageObject[] : []
-      await removeStorageObjects(ownedObjects)
-
-      const { error: prepareError } = await admin.rpc("system_admin_prepare_account_deletion", {
-        p_actor_user_id: actor.id,
-        p_target_user_id: body.userId,
-        p_owned_objects: ownedObjects,
-      })
-      if (prepareError) throw prepareError
-
-      const { error: deleteError } = await admin.auth.admin.deleteUser(body.userId)
-      if (deleteError) {
-        return respond({ error: "Account history was anonymized, but Auth deletion did not finish. Retry the account deletion." }, 502)
-      }
-      return respond({ deleted: true, summary: preview })
+      return await resumeDeletion(await startDeletion(actor.id, "account", body.userId))
     }
 
     if (action === "delete-template") {
@@ -354,12 +398,7 @@ Deno.serve(async request => {
       if (lookupError) throw lookupError
       if (!game) return respond({ error: "Game not found" }, 404)
       if (body.confirmation !== game.title) return respond({ error: "Type the game title exactly to confirm deletion" }, 400)
-      const { data: storageObjects, error: inventoryError } = await admin.rpc("system_admin_storage_objects", { p_user_id: null, p_hunt_id: body.gameId })
-      if (inventoryError) throw inventoryError
-      await removeStorageObjects(Array.isArray(storageObjects) ? storageObjects as StorageObject[] : [])
-      const { error } = await admin.rpc("system_admin_delete_game", { p_actor_user_id: actor.id, p_hunt_id: body.gameId })
-      if (error) throw error
-      return respond({ deleted: true, title: game.title })
+      return await resumeDeletion(await startDeletion(actor.id, "game", body.gameId))
     }
 
     return respond({ error: "Unknown administrative action" }, 400)

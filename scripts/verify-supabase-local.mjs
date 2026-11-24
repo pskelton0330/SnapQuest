@@ -1136,6 +1136,58 @@ try {
   assert.ifError(outsiderRowsError)
   assert.equal(outsiderRowCount, 0, 'An outsider must not read hunt submissions')
   console.log('Outsider submission-table reads return no rows.')
+  const administrator = await createIdentity('deletion-admin')
+  const target = await createIdentity('deletion-target')
+  const { data: administratorIdentity } = await administrator.auth.getUser()
+  const { data: targetIdentity } = await target.auth.getUser()
+  const administratorId = administratorIdentity.user.id
+  const targetId = targetIdentity.user.id
+  assert.ifError((await admin.from('system_admins').insert({ user_id: administratorId })).error)
+  try {
+    const checkAdmin = await administrator.functions.invoke('system-admin', { body: { action: 'check' } })
+    assert.ifError(checkAdmin.error)
+    assert.equal(checkAdmin.data.isAdmin, true)
+
+    const draft = await organizer.rpc('create_hunt_draft', {
+      p_title: 'Deletion recovery test', p_venue: 'Local CI', p_rules: [],
+      p_items: [{ title: 'Fixture', pointValue: 1 }], p_duration_minutes: 30,
+    })
+    assert.ifError(draft.error)
+    const fakePath = [draft.data, randomUUID(), randomUUID(), randomUUID() + '.jpg'].join('/')
+    objectPaths.push(fakePath)
+    assert.ifError((await admin.storage.from('hunt-photos').upload(fakePath, jpeg, { contentType: 'image/jpeg' })).error)
+    const gameJob = await admin.rpc('system_admin_start_deletion', {
+      p_actor_user_id: administratorId, p_kind: 'game', p_subject_id: draft.data,
+    })
+    assert.ifError(gameJob.error)
+    assert.ifError((await admin.storage.from('hunt-photos').download(fakePath)).error)
+    const goneGame = await admin.from('hunts').select('id').eq('id', draft.data).maybeSingle()
+    assert.ifError(goneGame.error)
+    assert.equal(goneGame.data, null)
+    const request = { body: { action: 'resume-deletion', jobId: gameJob.data } }
+    assert.ok((await target.functions.invoke('system-admin', request)).error)
+    assert.ifError((await administrator.functions.invoke('system-admin', request)).error)
+    await assertObjectMissing(fakePath, 'Game deletion retries remove the persisted inventory')
+    assert.ifError((await administrator.functions.invoke('system-admin', request)).error)
+
+    const accountJob = await admin.rpc('system_admin_start_deletion', {
+      p_actor_user_id: administratorId, p_kind: 'account', p_subject_id: targetId,
+    })
+    assert.ifError(accountJob.error)
+    // Simulate a response lost after Auth deleted the account, before the
+    // Edge Function could mark the persisted Auth step complete.
+    assert.ifError((await admin.from('system_admin_deletion_jobs').update({ stage: 'auth' }).eq('id', accountJob.data)).error)
+    assert.ifError((await admin.auth.admin.deleteUser(targetId)).error)
+    const resumeAccount = await administrator.functions.invoke('system-admin', { body: { action: 'resume-deletion', jobId: accountJob.data } })
+    assert.ifError(resumeAccount.error)
+    const completed = await admin.from('system_admin_deletion_jobs').select('stage,objects').eq('id', accountJob.data).single()
+    assert.ifError(completed.error)
+    assert.deepEqual(completed.data, { stage: 'complete', objects: [] })
+    console.log('System admin resumes a committed game deletion and an interrupted Auth cleanup.')
+  } finally {
+    await admin.from('system_admins').delete().eq('user_id', administratorId)
+  }
+
 } finally {
   for (const objectPath of new Set(objectPaths)) {
     await admin.storage.from('hunt-photos').remove([objectPath])
