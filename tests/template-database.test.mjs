@@ -8,7 +8,7 @@ import { calculateTeamScores, normalizeFinalScores, winningTeams } from '../src/
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222', outsider='12345678-1234-4234-9234-123456789abc'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration, systemAdminMigration, organizerDurationMigration, systemAdminSafetyMigration
+let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration, systemAdminMigration, organizerDurationMigration, systemAdminSafetyMigration, photoVisibilityMigration, adminDeletionJobsMigration, huntLibraryMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -28,7 +28,7 @@ before(async () => {
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     grant usage on schema auth to anon,authenticated; grant execute on function auth.uid() to anon,authenticated;
     create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
-    create table storage.objects(id uuid default gen_random_uuid(),bucket_id text,name text);
+    create table storage.objects(id uuid default gen_random_uuid(),bucket_id text,name text,owner_id text);
     grant usage on schema storage to anon,authenticated; grant select,insert,update,delete on storage.objects to authenticated;
     alter default privileges for role postgres in schema public grant execute on functions to anon,authenticated,service_role;
     alter table storage.objects enable row level security;`)
@@ -38,7 +38,10 @@ before(async () => {
     if(file.includes('self_serve_organizer_accounts')) { selfServeOrganizerMigration=sql; continue }
     if(file.includes('system_admin_community_handoff')) { systemAdminMigration=sql; continue }
     if(file.includes('organizer_controlled_hunt_duration')) { organizerDurationMigration=sql; continue }
+    if(file.includes('resumable_admin_deletion')) { adminDeletionJobsMigration=sql; continue }
+    if(file.includes('enforce_review_photo_visibility')) { photoVisibilityMigration=sql; continue }
     if(file.includes('system_admin_deletion_reference_safety')) { systemAdminSafetyMigration=sql; continue }
+    if(file.includes('hunt_library_completion_snapshots')) { huntLibraryMigration=sql; continue }
     if(file.includes('0007')) { migration=sql; continue }
     if(file.includes('0008')) { managementMigration=sql; continue }
     if(file.includes('0010')) { auditMigration=sql; continue }
@@ -98,6 +101,9 @@ before(async () => {
   await db.exec(systemAdminMigration)
   await db.exec(organizerDurationMigration)
   await db.exec(systemAdminSafetyMigration)
+  await db.exec(huntLibraryMigration)
+  await db.exec(photoVisibilityMigration)
+  await db.exec(adminDeletionJobsMigration)
 })
 after(async()=> { await db?.close() })
 test('anonymous role can execute only explicitly public security-definer RPCs', async () => {
@@ -125,6 +131,7 @@ async function snapshot() {
 test('additive backfill is private, repeatable, and preserves historical games and child rows',async()=>{
   assert.deepEqual(await snapshot(),legacyBefore)
   await db.exec(migration)
+  await db.exec(huntLibraryMigration)
   assert.deepEqual(await snapshot(),legacyBefore)
   assert.equal((await db.query('select count(*)::int n from public.hunt_templates')).rows[0].n,1)
   assert.equal((await as('anon',null,'select public.list_hunt_templates(false) data')).rows[0].data.length,0)
@@ -416,6 +423,41 @@ test('SQL final scores match application scoring when cross-team voting changes 
   assert.equal(sqlScores[0].rank, 1)
 })
 
+test('photo approval limits gallery, row and object visibility across teams', async () => {
+  const { huntId, teams, participant } = await createReliabilityHunt('Photo privacy')
+  const otherTeam = teams.find(team => team.team_id !== participant.team_id)
+  await as('authenticated', outsider, "select public.redeem_invitation($1,'Other team')", [otherTeam.invite_token])
+  const itemId = (await db.query('select id from public.hunt_items where hunt_id=$1', [huntId])).rows[0].id
+  const photo = `${huntId}/${participant.team_id}/${itemId}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg`
+  const orphan = photo.replace('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg')
+  await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1),('hunt-photos',$2)", [photo, orphan])
+  await as('authenticated', owner, 'select public.start_game_now($1)', [huntId])
+  await as('authenticated', other, 'select public.submit_hunt_photo($1,$2,null)', [itemId, photo])
+  await as('authenticated', owner, 'select public.end_hunt_early($1)', [huntId])
+  const id = (await db.query('select id from public.submissions where storage_path=$1', [photo])).rows[0].id
+
+  async function check(user, expected) {
+    const rows = await as('authenticated', user, 'select storage_path from public.submissions where hunt_id=$1', [huntId])
+    const objects = await as('authenticated', user, 'select name from storage.objects where name=$1', [photo])
+    const gallery = (await as('authenticated', user, 'select public.get_hunt_review_gallery($1) data', [huntId])).rows[0].data
+    assert.deepEqual(rows.rows.map(row => row.storage_path), expected)
+    assert.deepEqual(objects.rows.map(row => row.name), expected)
+    assert.deepEqual(gallery.submissions.map(submission => submission.storage_path), expected)
+  }
+
+  await check(owner, [photo])
+  await check(other, [photo])
+  await check(outsider, [])
+  await as('authenticated', owner, "select public.review_submission($1,'approved')", [id])
+  await check(outsider, [photo])
+  const unsubmitted = await as('authenticated', outsider, 'select name from storage.objects where name=$1', [orphan])
+  assert.equal(unsubmitted.rows.length, 0)
+  await as('authenticated', owner, "select public.review_submission($1,'rejected')", [id])
+  await check(outsider, [])
+  await check(owner, [photo])
+  await check(other, [photo])
+})
+
 test('SQL tie winners match app, organizer gallery, and participant result snapshots', async () => {
   const blueAuth = '13131313-1313-4131-8131-131313131313'
   await db.query('insert into auth.users(id) values($1)', [blueAuth])
@@ -517,12 +559,94 @@ test('invitation recovery returns encrypted owner-only links and never rotates l
   assert.equal(closed.has_active_invites, false)
   assert.deepEqual(closed.invite_codes, [])
 })
-test('organizer creates a public reusable hunt with safe creator attribution',async()=>{
-  templateId=(await as('authenticated',owner,"select public.save_hunt_template('Public hunt','Park','Description',array['Be safe'],$1::jsonb) id",[JSON.stringify([{title:'A red item',points:2}])])).rows[0].id
-  const docs=(await as('anon',null,'select public.list_hunt_templates(false) data')).rows[0].data
-  assert.equal(docs.length,1); assert.equal(docs[0].challenges[0].points,2)
-  assert.ok(docs[0].creatorId); assert.equal(docs[0].creatorName,'SnapQuest organizer')
-  for(const key of ['organizer_id','auth_user_id','legacy_game_id','final_scores','storage_path']) assert.equal(key in docs[0],false)
+test('two organizers get an immutable public hunt only after final results, then copy and replay privately',async()=>{
+  const publicBefore=(await as('anon',null,'select public.list_hunt_templates(false) data')).rows[0].data
+  const saveDefinition=(await db.query("select pg_get_functiondef('public.save_hunt_template(text,text,text,text[],jsonb,integer,text,uuid)'::regprocedure) definition")).rows[0].definition
+  assert.match(saveDefinition,/A hunt enters the public library after final results are published/)
+  await assert.rejects(as('authenticated',owner,"select public.save_hunt_template('Unplayed','Park','',array[]::text[],$1::jsonb,60,'public') id",[JSON.stringify([{title:'Unplayed item'}])]),/final results are published/)
+
+  const gameId=(await as('authenticated',owner,"select public.create_hunt_draft('Christmas Lights Hunt','Private street',array['Stay together','Do not enter private property'],$1::jsonb,95) id",[
+    JSON.stringify([
+      {title:'A house with blue lights',description:'Find a home glowing blue.',pointValue:3},
+      {title:'A lit-up reindeer',description:'Look for a reindeer display.',pointValue:7},
+      {title:'A team selfie by a wreath',description:'Include every team member.',pointValue:2},
+    ])
+  ])).rows[0].id
+  assert.equal((await as('anon',null,'select public.list_hunt_templates(false) data')).rows[0].data.length,publicBefore.length,'drafts stay out of the library')
+  await as('authenticated',owner,"select * from public.configure_game($1,'Christmas Lights Hunt',95,array['North Star','Snowflakes'],'organizer',clock_timestamp()+interval '1 hour',false,false,0)",[gameId])
+  assert.equal((await db.query('select status from public.hunts where id=$1',[gameId])).rows[0].status,'scheduled')
+  assert.equal((await as('anon',null,'select public.list_hunt_templates(false) data')).rows[0].data.length,publicBefore.length,'waiting games stay out of the library')
+  await as('authenticated',owner,'select public.start_game_now($1)',[gameId])
+  assert.equal((await db.query('select status from public.hunts where id=$1',[gameId])).rows[0].status,'active')
+  await as('authenticated',owner,'select public.end_hunt_early($1)',[gameId])
+  assert.equal((await db.query('select status from public.hunts where id=$1',[gameId])).rows[0].status,'review')
+  assert.equal((await as('anon',null,'select public.list_hunt_templates(false) data')).rows[0].data.length,publicBefore.length,'active and review games stay out of the library')
+
+  const teams=(await db.query('select id,name from public.teams where hunt_id=$1 order by display_order',[gameId])).rows
+  const item=(await db.query('select id from public.hunt_items where hunt_id=$1 order by display_order limit 1',[gameId])).rows[0]
+  const participant=(await db.query("insert into public.participants(hunt_id,team_id,auth_user_id,display_name) values($1,$2,$3,'Private Player Name') returning id",[gameId,teams[0].id,outsider])).rows[0]
+  await db.query("insert into public.submissions(hunt_id,hunt_item_id,team_id,participant_id,storage_path,approval_status) values($1,$2,$3,$4,'private/photos/private-player-photo.jpg','rejected')",[gameId,item.id,teams[0].id,participant.id])
+  await db.query("update public.hunts set description='A neighborhood walk to spot festive lights.' where id=$1",[gameId])
+  const finalScores=(await as('authenticated',owner,'select public.finalize_hunt($1) scores',[gameId])).rows[0].scores
+  assert.deepEqual(finalScores.map(score=>[score.total,score.rank]),[[0,1],[0,1]],'a tied result is still a completed game')
+
+  const published=(await as('anon',null,'select public.list_hunt_templates(false) data')).rows[0].data
+  const entries=published.filter(hunt=>hunt.title==='Christmas Lights Hunt')
+  assert.equal(entries.length,1,'finalization publishes exactly one hunt snapshot')
+  templateId=entries[0].id
+  const publicHunt=entries[0]
+  assert.deepEqual(Object.keys(publicHunt).sort(),['id','title','description','defaultDuration','rules','createdAt','challenges'].sort())
+  assert.equal(publicHunt.description,'A neighborhood walk to spot festive lights.')
+  assert.equal(publicHunt.defaultDuration,95)
+  assert.deepEqual(publicHunt.rules,['Stay together','Do not enter private property'])
+  assert.deepEqual(publicHunt.challenges.map(challenge=>[challenge.title,challenge.description,challenge.points,challenge.displayOrder]),[
+    ['A house with blue lights','Find a home glowing blue.',3,0],
+    ['A lit-up reindeer','Look for a reindeer display.',7,1],
+    ['A team selfie by a wreath','Include every team member.',2,2],
+  ])
+  const publicText=JSON.stringify(publicHunt)
+  for(const privateValue of ['Private street','North Star','Snowflakes','Private Player Name','private/photos/private-player-photo.jpg','final_scores','participants','team_selfies','invite_token','messages'])
+    assert.equal(publicText.includes(privateValue),false,`public snapshot excludes ${privateValue}`)
+  const retried=(await as('authenticated',owner,'select public.finalize_hunt($1) scores',[gameId])).rows[0].scores
+  assert.deepEqual(retried,finalScores)
+  assert.equal((await as('anon',null,'select public.list_hunt_templates(false) data')).rows[0].data.filter(hunt=>hunt.title==='Christmas Lights Hunt').length,1,'retries do not duplicate the public entry')
+
+  const request = 'c08eb129-70c1-45b7-b72d-606f8e8c29eb'
+  const copiedId=(await as('authenticated',other,'select public.copy_hunt_library_to_draft($1,$2) id',[templateId,request])).rows[0].id
+  const retriedCopy=(await as('authenticated',other,'select public.copy_hunt_library_to_draft($1,$2) id',[templateId,request])).rows[0].id
+  assert.equal(retriedCopy,copiedId,'retry after a lost response returns the same private draft')
+  const copied=(await as('authenticated',other,'select id,organizer_id,title,venue,status,duration_minutes,rules,final_scores from public.hunts where id=$1',[copiedId])).rows[0]
+  assert.equal(copied.organizer_id,other); assert.equal(copied.status,'draft'); assert.equal(copied.venue,'Choose a venue')
+  assert.equal(copied.duration_minutes,95); assert.deepEqual(copied.rules,publicHunt.rules); assert.deepEqual(copied.final_scores,[])
+  assert.equal((await db.query('select count(*)::int n from public.teams where hunt_id=$1',[copiedId])).rows[0].n,0)
+  assert.equal((await db.query('select count(*)::int n from public.participants where hunt_id=$1',[copiedId])).rows[0].n,0)
+  assert.equal((await db.query('select count(*)::int n from public.submissions where hunt_id=$1',[copiedId])).rows[0].n,0)
+  assert.equal((await db.query('select count(*)::int n from public.hunt_template_items i join public.hunt_templates t on t.id=i.template_id where t.id=$1 and t.is_completed_snapshot',[templateId])).rows[0].n,3)
+  await as('authenticated',other,"select public.update_hunt_draft($1,'Christmas Lights (Our Version)','Main Street',array['Stay together','No running'],$2::jsonb,120)",[copiedId,JSON.stringify([
+    {title:'A lit-up reindeer',description:'Look for a reindeer display.',pointValue:7},
+    {title:'A decorated mailbox',description:'Find a festive mailbox.',pointValue:5},
+  ])])
+  const edited=(await as('authenticated',other,'select title,venue,duration_minutes,rules,status from public.hunts where id=$1',[copiedId])).rows[0]
+  assert.deepEqual(edited,{title:'Christmas Lights (Our Version)',venue:'Main Street',duration_minutes:120,rules:['Stay together','No running'],status:'draft'})
+  assert.deepEqual((await db.query('select title_snapshot,point_value,display_order from public.hunt_items where hunt_id=$1 order by display_order',[copiedId])).rows,[
+    {title_snapshot:'A lit-up reindeer',point_value:7,display_order:0},
+    {title_snapshot:'A decorated mailbox',point_value:5,display_order:1},
+  ])
+  assert.deepEqual((await as('anon',null,'select public.list_hunt_templates(false) data')).rows[0].data.find(hunt=>hunt.id===templateId),publicHunt,'B edits only B’s private draft')
+
+  const source=(await as('authenticated',owner,'select status,final_scores,title from public.hunts where id=$1',[gameId])).rows[0]
+  assert.equal(source.status,'completed'); assert.deepEqual(source.final_scores,finalScores); assert.equal(source.title,'Christmas Lights Hunt')
+  const replayId=(await as('authenticated',owner,'select public.create_hunt_draft_from_game($1) id',[gameId])).rows[0].id
+  assert.notEqual(replayId,gameId)
+  assert.equal((await as('authenticated',owner,'select status from public.hunts where id=$1',[replayId])).rows[0].status,'draft')
+  assert.deepEqual((await db.query('select title_snapshot,point_value,display_order from public.hunt_items where hunt_id=$1 order by display_order',[replayId])).rows,[
+    {title_snapshot:'A house with blue lights',point_value:3,display_order:0},
+    {title_snapshot:'A lit-up reindeer',point_value:7,display_order:1},
+    {title_snapshot:'A team selfie by a wreath',point_value:2,display_order:2},
+  ])
+  await assert.rejects(as('authenticated',other,'select public.create_hunt_draft_from_game($1)',[gameId]),/Only your completed hunt/)
+  await assert.rejects(as('authenticated',owner,"select public.save_hunt_template('Mutated snapshot','Choose a venue','',array[]::text[],$1::jsonb,95,'personal',$2)",[JSON.stringify([{title:'Replacement'}]),templateId]),/Only your private hunts can be edited/)
+  assert.equal((await db.query('select count(*)::int n from public.hunt_templates where completed_game_id=$1 and is_completed_snapshot',[gameId])).rows[0].n,1)
 })
 test('public visitors and non-organizer identities cannot mutate templates or create games',async()=>{
   await assert.rejects(as('anon',null,'select * from public.hunt_templates'))
@@ -536,8 +660,10 @@ test('personal copies are independently owned and absent from public discovery',
   const copied=(await as('authenticated',other,'select public.copy_hunt_template($1) id',[templateId])).rows[0].id
   await as('authenticated',other,"select public.save_hunt_template('My copy','Garden','',array[]::text[],$1::jsonb,45,'personal',$2)",[JSON.stringify([{title:'Different item'}]),copied])
   const publicDocs=(await as('anon',null,'select public.list_hunt_templates(false) data')).rows[0].data
-  assert.equal(publicDocs.length,1); assert.equal(publicDocs[0].title,'Public hunt')
-  assert.equal(publicDocs[0].challenges[0].title,'A red item')
+  const original=publicDocs.find(doc=>doc.id===templateId)
+  assert.ok(original); assert.equal(original.title,'Christmas Lights Hunt')
+  assert.equal(original.challenges[0].title,'A house with blue lights')
+  assert.equal(publicDocs.some(doc=>doc.title==='My copy'),false)
   const mine=(await as('authenticated',other,'select public.list_hunt_templates(true) data')).rows[0].data
   assert.equal(mine[0].visibility,'personal'); assert.equal(mine[0].title,'My copy')
   await assert.rejects(as('authenticated',owner,'select public.create_game_from_template($1)',[copied]))
@@ -546,11 +672,11 @@ test('personal copies are independently owned and absent from public discovery',
 test('multiple games have independent item IDs and snapshots survive template edits',async()=>{
   const a=(await as('authenticated',owner,"select public.create_game_from_template($1,'Game A',90) id",[templateId])).rows[0].id
   const b=(await as('authenticated',other,"select public.create_game_from_template($1,'Game B') id",[templateId])).rows[0].id
-  await as('authenticated',owner,"select public.save_hunt_template('Updated','Park','',array[]::text[],$1::jsonb,60,'public',$2)",[JSON.stringify([{title:'Changed'}]),templateId])
+  await assert.rejects(as('authenticated',owner,"select public.save_hunt_template('Updated','Park','',array[]::text[],$1::jsonb,60,'public',$2)",[JSON.stringify([{title:'Changed'}]),templateId]),/final results are published/)
   const games=(await db.query('select id,duration_minutes,template_snapshot from public.hunts where id in ($1,$2)',[a,b])).rows
-  assert.equal(games.length,2); assert.ok(games.every(g=>g.template_snapshot.title==='Public hunt'))
+  assert.equal(games.length,2); assert.ok(games.every(g=>g.template_snapshot.title==='Christmas Lights Hunt'))
   const rows=(await db.query('select id,hunt_id,title_snapshot from public.hunt_items where hunt_id in ($1,$2)',[a,b])).rows
-  assert.equal(rows.length,2); assert.notEqual(rows[0].id,rows[1].id); assert.ok(rows.every(r=>r.title_snapshot==='A red item'))
+  assert.equal(rows.length,6); assert.notEqual(rows[0].id,rows[3].id); assert.ok(rows.filter(r=>r.hunt_id===a||r.hunt_id===b).every(r=>['A house with blue lights','A lit-up reindeer','A team selfie by a wreath'].includes(r.title_snapshot)))
   assert.equal((await as('authenticated',owner,'select * from public.hunts where id=$1',[b])).rows.length,0)
 })
 test('invalid saves roll back atomically and direct writes cannot bypass RPC validation',async()=>{
@@ -569,14 +695,16 @@ test('an anonymous-auth participant without an organizer profile has no template
 test('a creator can choose a public display name without publishing Auth or organizer identifiers',async()=>{
   await as('authenticated',owner,"select public.set_hunt_creator_name('Family Adventures')")
   const docs=(await as('anon',null,'select public.list_hunt_templates(false) data')).rows[0].data
-  assert.equal(docs[0].creatorName,'Family Adventures')
-  assert.notEqual(docs[0].creatorId,owner)
+  const doc=docs.find(item=>item.id===templateId)
+  assert.ok(doc)
+  for(const key of ['creatorName','creatorId','organizer_id','auth_user_id','venue','final_scores','storage_path']) assert.equal(key in doc,false)
   await assert.rejects(as('anon',null,'select * from public.hunt_creator_profiles'))
 })
 test('rerunning the backfill after editing a legacy template does not restore deleted challenges',async()=>{
   const legacy=(await db.query("select id from public.hunt_templates where legacy_game_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'")).rows[0].id
   await as('authenticated',owner,"select public.save_hunt_template('Edited legacy','Shop','',array[]::text[],$1::jsonb,60,'personal',$2)",[JSON.stringify([{title:'New first'},{title:'New second'}]),legacy])
   await db.exec(migration)
+  await db.exec(huntLibraryMigration)
   const challenges=(await db.query('select title from public.hunt_template_items where template_id=$1 order by display_order',[legacy])).rows
   assert.deepEqual(challenges.map(c=>c.title),['New first','New second'])
   const original=(await db.query("select title_snapshot from public.hunt_items where hunt_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'")).rows[0]
@@ -725,4 +853,58 @@ test('permanent-account rejoin preserves membership across other-team QR, rotati
   const context=(await as('authenticated',owner,'select public.get_participant_context($1) data',[id])).rows[0].data
   assert.equal(context.runtime_state,'review')
   assert.equal((await db.query('select count(*)::int n from public.participants where hunt_id=$1 and auth_user_id=$2',[id,owner])).rows[0].n,1)
+})
+
+test('admin deletion commits references and durable inventory together, and reuses the same job', async () => {
+  const adminId = 'c78a0ed6-0c3f-4af9-8cc1-24b5d40432da'
+  const accountId = 'efe1f33a-92de-4739-9cc4-5e502971fe26'
+  await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'admin-jobs@example.test',now()),($2,'target-jobs@example.test',now())",[adminId,accountId])
+  await db.query('insert into public.system_admins(user_id) values($1)', [adminId])
+  const { huntId, participant } = await createReliabilityHunt('Game deletion inventory', new Date(Date.now() + 60 * 60 * 1000).toISOString())
+  await as('authenticated', owner, 'select public.start_game_now($1)', [huntId])
+  const item = (await db.query('select id from public.hunt_items where hunt_id=$1',[huntId])).rows[0].id
+  const path = [huntId, participant.team_id, item, 'bc82e219-6972-4ced-bfdc-9f375b43ee3b.jpg'].join('/')
+  await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1)",[path])
+  await as('authenticated', other, 'select public.submit_hunt_photo($1,$2,null)', [item,path])
+
+  const start = 'select public.system_admin_start_deletion($1,$2,$3) id'
+  await assert.rejects(as('authenticated', owner, start, [adminId,'game',huntId]), /permission denied/)
+  const gameJob = (await as('service_role', null, start, [adminId,'game',huntId])).rows[0].id
+  assert.equal((await db.query('select id from public.hunts where id=$1',[huntId])).rows.length,0)
+  assert.equal((await db.query('select id from public.submissions where storage_path=$1',[path])).rows.length,0)
+  assert.equal((await db.query('select name from storage.objects where name=$1',[path])).rows.length,1)
+  const saved = (await db.query('select stage,objects from public.system_admin_deletion_jobs where id=$1',[gameJob])).rows[0]
+  assert.deepEqual(saved, { stage:'storage',objects:[{bucket_id:'hunt-photos',name:path}] })
+  assert.equal((await as('service_role', null, start, [adminId,'game',huntId])).rows[0].id,gameJob)
+  assert.equal((await db.query('select id from public.system_admin_action_log where subject_id=$1',[huntId])).rows.length,1)
+
+  const accountJob = (await as('service_role', null, start, [adminId,'account',accountId])).rows[0].id
+  await assert.rejects(as('authenticated', accountId, 'select public.ensure_my_organizer_profile()'),/account is being removed/)
+  await db.query('delete from auth.users where id=$1',[accountId])
+  assert.equal((await as('service_role', null, start, [adminId,'account',accountId])).rows[0].id,accountJob)
+})
+
+test('community handoff and moderation preserve an independent draft', async () => {
+  const adminId = 'c78a0ed6-0c3f-4af9-8cc1-24b5d40432da'
+  const creator = '3d62e61e-2188-4743-9b88-6e9207f386a2'
+  await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'snapshot-creator@example.test',now())",[creator])
+  await db.query('insert into public.organizers(id,auth_user_id) values($1,$1)',[creator])
+  const gameId = (await as('authenticated',creator,"select public.create_hunt_draft('Community Lights','Park',array['Stay together'],$1::jsonb,45) id",[JSON.stringify([{title:'Spot a wreath',pointValue:4}])])).rows[0].id
+  await db.query("update public.hunts set status='review' where id=$1",[gameId])
+  await as('authenticated',creator,'select public.finalize_hunt($1)',[gameId])
+  const entry = (await db.query('select id from public.hunt_templates where completed_game_id=$1',[gameId])).rows[0]
+  const list = 'select public.list_hunt_templates(false) docs'
+  const before = (await as('anon',null,list)).rows[0].docs.find(doc=>doc.id===entry.id)
+  const copy = (await as('authenticated',other,'select public.copy_hunt_library_to_draft($1) id',[entry.id])).rows[0].id
+  await assert.rejects(as('authenticated',other,'select public.system_admin_delete_template($1,$2)',[adminId,entry.id]),/permission denied/)
+  await as('service_role',null,"select public.system_admin_start_deletion($1,'account',$2)",[adminId,creator])
+  const community = (await db.query('select o.is_system_profile from public.hunt_templates t join public.organizers o on o.id=t.organizer_id where t.id=$1',[entry.id])).rows[0]
+  assert.equal(community.is_system_profile,true)
+  const after = (await as('anon',null,list)).rows[0].docs.find(doc=>doc.id===entry.id)
+  assert.deepEqual(after,before)
+  await as('service_role',null,'select public.system_admin_delete_template($1,$2)',[adminId,entry.id])
+  assert.equal((await as('anon',null,list)).rows[0].docs.some(doc=>doc.id===entry.id),false)
+  const draft = (await as('authenticated',other,'select status,template_id from public.hunts where id=$1',[copy])).rows[0]
+  assert.deepEqual(draft,{status:'draft',template_id:null})
+  assert.equal((await db.query('select status from public.hunts where id=$1',[gameId])).rows[0].status,'completed')
 })

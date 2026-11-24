@@ -349,7 +349,7 @@ export default function HuntReview({ huntId, title, status, onBack, onChanged }:
       })}</div></section>)}</div>
       {data.status !== 'completed' && ended ? (
         <div className="review-finish">
-          <div><b>Ready to publish the results?</b><span>{pendingCount ? 'Every submitted photo must be approved or rejected first.' : 'This locks the final scores and shows the leaderboard to participants.'}</span></div>
+          <div><b>Ready to publish the results?</b><span>{pendingCount ? 'Every submitted photo must be approved or rejected first.' : 'This locks the final scores and shows the leaderboard to participants.'}</span><span>Finishing this game adds its rules and challenge list to the Hunt Library. Player photos and results stay with this game.</span></div>
           {confirmFinalize ? <><button className="outline-button" onClick={() => { setConfirmFinalize(false); finalizationOperationId.current = null; finalizationAttempt.current = 0 }}>Cancel</button><button className="primary-button" disabled={!!pendingCount || busy === 'finalize'} onClick={() => void finalize()}>{busy === 'finalize' ? 'Finalizing…' : 'Confirm final results'}</button></> : <button className="primary-button" disabled={!!pendingCount} onClick={() => setConfirmFinalize(true)}>Finalize results</button>}
         </div>
       ) : null}

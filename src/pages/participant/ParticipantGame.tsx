@@ -115,6 +115,16 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     if (galleryError) { setError(galleryError.message); return }
     const result = data as ReviewGallery
     const previous = reviewGalleryRef.current
+    if (previous) {
+      // Drop photos removed by moderation before waiting for any replacement URLs.
+      const visibleIds = new Set(result.submissions.map(photo => photo.id))
+      const submissions = previous.submissions.filter(photo => visibleIds.has(photo.id))
+      if (submissions.length !== previous.submissions.length) {
+        const pruned = { ...previous, submissions }
+        reviewGalleryRef.current = pruned
+        setReviewGallery(pruned)
+      }
+    }
     let previewUnavailable = false
     const signed = await Promise.all(result.submissions.map(async photo => {
       const cached = previous?.submissions.find(row => row.storage_path === photo.storage_path && row.photo_url && (row.signed_until ?? 0) > Date.now() + 30_000)

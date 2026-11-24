@@ -903,9 +903,15 @@ try {
   })
   assert.ok(closedChatSendError, 'Participants must not send chat messages after the hunt enters review')
   assert.match(closedChatSendError.message, /Chat is only open before or during the hunt/)
-  const { data: reviewPhoto, error: reviewPhotoError } = await participantTwo.storage.from('hunt-photos').download(currentPath)
-  assert.ifError(reviewPhotoError)
-  assert.ok(reviewPhoto, 'Participants should be able to view hunt photos after the hunt ends')
+  await expectDenied(
+    () => participantTwo.storage.from('hunt-photos').createSignedUrl(currentPath, 60),
+    'Other teams cannot sign a pending photo even after the hunt ends',
+  )
+  const pendingGallery = await participantTwo.rpc('get_hunt_review_gallery', { p_hunt_id: huntId })
+  assert.ifError(pendingGallery.error)
+  assert.equal(pendingGallery.data.submissions.some(photo => photo.storage_path === currentPath), false)
+  const ownPendingPhoto = await participantOne.storage.from('hunt-photos').download(currentPath)
+  assert.ifError(ownPendingPhoto.error)
   await expectDenied(
     () => participantTwo.storage.from('hunt-photos').download(replacementSelfiePath),
     'Post-hunt photo access must not reveal another team selfie',
@@ -926,6 +932,9 @@ try {
     organizerConcurrent.rpc('finalize_hunt', { p_hunt_id: huntId }),
   ])
   assert.ifError(reviewRace.error)
+  const approvedOtherTeamPhoto = await participantTwo.storage.from('hunt-photos').createSignedUrl(currentPath, 60)
+  assert.ifError(approvedOtherTeamPhoto.error)
+  assert.ok(approvedOtherTeamPhoto.data.signedUrl)
   assert.ok(finalizeRace.error, 'Finalization must wait while another submission remains pending')
   assert.match(finalizeRace.error.message, /Review or reject every submitted photo before finalizing/)
   const { data: secondTeamSubmission, error: secondSubmissionError } = await admin
@@ -975,6 +984,13 @@ try {
     p_decision: 'rejected',
   })
   assert.ifError(rejectSecondSubmissionError)
+  await expectDenied(
+    () => participantOne.storage.from('hunt-photos').download(secondTeamPhotoPath),
+    'A rejected photo remains private to its own team and organizer',
+  )
+  const rejectedGallery = await participantOne.rpc('get_hunt_review_gallery', { p_hunt_id: huntId })
+  assert.ifError(rejectedGallery.error)
+  assert.equal(rejectedGallery.data.submissions.some(photo => photo.storage_path === secondTeamPhotoPath), false)
   console.log('Review/finalize preserves the pending guard; valid cross-team voting works while self, unapproved, and outsider votes are denied.')
   const [finalizeOne, finalizeTwo] = await Promise.all([
     organizer.rpc('finalize_hunt', { p_hunt_id: huntId }),
@@ -1120,6 +1136,121 @@ try {
   assert.ifError(outsiderRowsError)
   assert.equal(outsiderRowCount, 0, 'An outsider must not read hunt submissions')
   console.log('Outsider submission-table reads return no rows.')
+  const secondHost = await createIdentity('library-copy-host')
+  assert.ifError((await secondHost.rpc('ensure_my_organizer_profile')).error)
+  const libraryTitle = 'Christmas Lights Hunt ' + randomUUID()
+  const librarySource = await organizer.rpc('create_hunt_draft', {
+    p_title: libraryTitle, p_venue: 'Private test venue', p_rules: ['Stay together'],
+    p_items: [
+      { title: 'Blue lights', description: 'Look for a blue display', pointValue: 3 },
+      { title: 'A wreath', description: 'Find a door wreath', pointValue: 5 },
+    ],
+    p_duration_minutes: 25,
+  })
+  assert.ifError(librarySource.error)
+  async function matchingLibraryEntries() {
+    const result = await secondHost.rpc('list_hunt_templates', { p_owned: false })
+    assert.ifError(result.error)
+    return result.data.filter(entry => entry.title === libraryTitle)
+  }
+  assert.deepEqual(await matchingLibraryEntries(), [])
+  assert.ifError((await organizer.rpc('configure_game', {
+    p_game_id: librarySource.data, p_name: libraryTitle, p_duration: 25,
+    p_team_names: ['Lights', 'Wreaths'], p_assignment_mode: 'organizer',
+  })).error)
+  assert.deepEqual(await matchingLibraryEntries(), [])
+  assert.ifError((await organizer.rpc('start_game_now', { p_game_id: librarySource.data })).error)
+  assert.deepEqual(await matchingLibraryEntries(), [])
+  assert.ifError((await organizer.rpc('end_hunt_early', { p_hunt_id: librarySource.data })).error)
+  assert.deepEqual(await matchingLibraryEntries(), [])
+  const final = await organizer.rpc('finalize_hunt', { p_hunt_id: librarySource.data })
+  assert.ifError(final.error)
+  assert.deepEqual(final.data.map(team => team.rank), [1, 1])
+  const repeat = await organizer.rpc('finalize_hunt', { p_hunt_id: librarySource.data })
+  assert.ifError(repeat.error)
+  assert.deepEqual(repeat.data, final.data)
+  const entries = await matchingLibraryEntries()
+  assert.equal(entries.length, 1)
+  const [published] = entries
+  assert.deepEqual(Object.keys(published).sort(), ['challenges', 'createdAt', 'defaultDuration', 'description', 'id', 'rules', 'title'])
+  assert.deepEqual(published.challenges.map(item => [item.title, item.description, item.points]), [
+    ['Blue lights', 'Look for a blue display', 3], ['A wreath', 'Find a door wreath', 5],
+  ])
+  const copyArgs = { p_template_id: published.id, p_request_id: randomUUID() }
+  const copied = await secondHost.rpc('copy_hunt_library_to_draft', copyArgs)
+  assert.ifError(copied.error)
+  const retryCopy = await secondHost.rpc('copy_hunt_library_to_draft', copyArgs)
+  assert.ifError(retryCopy.error)
+  assert.equal(retryCopy.data, copied.data)
+  assert.ifError((await secondHost.rpc('update_hunt_draft', {
+    p_hunt_id: copied.data, p_title: 'Our lights hunt', p_venue: 'New test venue',
+    p_rules: ['Walk together'], p_duration_minutes: 40,
+    p_items: [{ title: 'A wreath', pointValue: 5 }, { title: 'Decorated mailbox', pointValue: 2 }],
+  })).error)
+  const draft = await secondHost.from('hunts').select('status,duration_minutes,final_scores').eq('id', copied.data).single()
+  assert.ifError(draft.error)
+  assert.deepEqual(draft.data, { status: 'draft', duration_minutes: 40, final_scores: [] })
+  const replay = await organizer.rpc('create_hunt_draft_from_game', { p_hunt_id: librarySource.data })
+  assert.ifError(replay.error)
+  assert.notEqual(replay.data, librarySource.data)
+  const originalResult = await organizer.rpc('get_hunt_review_gallery', { p_hunt_id: librarySource.data })
+  assert.ifError(originalResult.error)
+  assert.deepEqual(originalResult.data.final_scores, final.data)
+  assert.deepEqual(await matchingLibraryEntries(), [published])
+  console.log('Two organizers verified completion publishing, independent copies and replay through Supabase HTTP.')
+
+  const administrator = await createIdentity('deletion-admin')
+  const target = await createIdentity('deletion-target')
+  const { data: administratorIdentity } = await administrator.auth.getUser()
+  const { data: targetIdentity } = await target.auth.getUser()
+  const administratorId = administratorIdentity.user.id
+  const targetId = targetIdentity.user.id
+  assert.ifError((await admin.from('system_admins').insert({ user_id: administratorId })).error)
+  try {
+    const checkAdmin = await administrator.functions.invoke('system-admin', { body: { action: 'check' } })
+    assert.ifError(checkAdmin.error)
+    assert.equal(checkAdmin.data.isAdmin, true)
+
+    const draft = await organizer.rpc('create_hunt_draft', {
+      p_title: 'Deletion recovery test', p_venue: 'Local CI', p_rules: [],
+      p_items: [{ title: 'Fixture', pointValue: 1 }], p_duration_minutes: 30,
+    })
+    assert.ifError(draft.error)
+    const fakePath = [draft.data, randomUUID(), randomUUID(), randomUUID() + '.jpg'].join('/')
+    objectPaths.push(fakePath)
+    assert.ifError((await admin.storage.from('hunt-photos').upload(fakePath, jpeg, { contentType: 'image/jpeg' })).error)
+    const gameJob = await admin.rpc('system_admin_start_deletion', {
+      p_actor_user_id: administratorId, p_kind: 'game', p_subject_id: draft.data,
+    })
+    assert.ifError(gameJob.error)
+    assert.ifError((await admin.storage.from('hunt-photos').download(fakePath)).error)
+    const goneGame = await admin.from('hunts').select('id').eq('id', draft.data).maybeSingle()
+    assert.ifError(goneGame.error)
+    assert.equal(goneGame.data, null)
+    const request = { body: { action: 'resume-deletion', jobId: gameJob.data } }
+    assert.ok((await target.functions.invoke('system-admin', request)).error)
+    assert.ifError((await administrator.functions.invoke('system-admin', request)).error)
+    await assertObjectMissing(fakePath, 'Game deletion retries remove the persisted inventory')
+    assert.ifError((await administrator.functions.invoke('system-admin', request)).error)
+
+    const accountJob = await admin.rpc('system_admin_start_deletion', {
+      p_actor_user_id: administratorId, p_kind: 'account', p_subject_id: targetId,
+    })
+    assert.ifError(accountJob.error)
+    // Simulate a response lost after Auth deleted the account, before the
+    // Edge Function could mark the persisted Auth step complete.
+    assert.ifError((await admin.from('system_admin_deletion_jobs').update({ stage: 'auth' }).eq('id', accountJob.data)).error)
+    assert.ifError((await admin.auth.admin.deleteUser(targetId)).error)
+    const resumeAccount = await administrator.functions.invoke('system-admin', { body: { action: 'resume-deletion', jobId: accountJob.data } })
+    assert.ifError(resumeAccount.error)
+    const completed = await admin.from('system_admin_deletion_jobs').select('stage,objects').eq('id', accountJob.data).single()
+    assert.ifError(completed.error)
+    assert.deepEqual(completed.data, { stage: 'complete', objects: [] })
+    console.log('System admin resumes a committed game deletion and an interrupted Auth cleanup.')
+  } finally {
+    await admin.from('system_admins').delete().eq('user_id', administratorId)
+  }
+
 } finally {
   for (const objectPath of new Set(objectPaths)) {
     await admin.storage.from('hunt-photos').remove([objectPath])

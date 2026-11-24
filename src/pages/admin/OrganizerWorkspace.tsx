@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { Archive, ArrowDownUp, ArrowRight, Camera, Check, CircleHelp, Clock3, House, Library, LogOut, Plus, Search, ShieldCheck, Sparkles, Users, X, MapPin, ClipboardList, ArrowLeft, QrCode, CalendarDays, Settings2, UserRound, Play } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { ArrowRight, Camera, Check, CircleHelp, Clock3, House, Library, LogOut, Plus, Search, ShieldCheck, Sparkles, Users, X, MapPin, ClipboardList, ArrowLeft, QrCode, CalendarDays, Settings2, UserRound, Play } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase'
 import { reportOperationFailure } from '../../lib/operationLog'
@@ -17,13 +17,15 @@ import type { Challenge } from '../../lib/workspace'
 type OrganizerWorkspaceProps = { session: Session; onSignOut: () => void; initialHuntId?: string }
 type Organizer = { id: string }
 type LibraryItem = { id: string; title: string; description: string | null; category: string | null; archived: boolean; created_at: string }
-type Hunt = { id: string; title: string; venue: string; status: string; created_at: string; start_at: string | null; duration_minutes: number; team_assignment_mode: 'organizer' | 'balanced'; voting_enabled: boolean; voting_bonus_points: number }
+type PublicHuntChallenge = { title: string; description: string | null; points: number; displayOrder: number }
+type PublicHunt = { id: string; title: string; description: string | null; defaultDuration: number; rules: string[]; createdAt: string; challenges: PublicHuntChallenge[] }
+type Hunt = { id: string; title: string; venue: string; status: string; created_at: string; start_at: string | null; duration_minutes: number; ended_at?: string | null; team_assignment_mode: 'organizer' | 'balanced'; voting_enabled: boolean; voting_bonus_points: number }
 type DraftItem = { key: string; title: string; description: string; pointValue: number; libraryItemId?: string }
 type Team = { id: string; hunt_id: string; name: string; display_color: string; display_order: number; selfieUrl?: string; selfieSubmittedAt?: string; selfiePreviewUnavailable?: boolean }
 type Participant = { id: string; hunt_id: string; team_id: string; display_name: string; joined_at: string }
 type PlayerGame = { hunt_id: string; team_id: string; team_name: string; hunt_title: string }
 type InviteCode = { team_id: string | null; team_name: string; invite_token: string }
-type Page = 'overview' | 'library' | 'hunts' | 'new-hunt' | 'manage-hunt' | 'review-hunt' | 'account'
+type Page = 'overview' | 'hunt-library' | 'hunts' | 'new-hunt' | 'manage-hunt' | 'review-hunt' | 'account'
 
 function localDateTimeValue(value?: string | null) {
   const date = value ? new Date(value) : new Date(Date.now() + 60 * 60 * 1000)
@@ -51,15 +53,29 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const [pendingPage, setPendingPage] = useState<Page | null>(null)
   const [organizer, setOrganizer] = useState<Organizer | null>(null)
   const [items, setItems] = useState<LibraryItem[]>([])
-  const [hunts, setHunts] = useState<Hunt[]>([])
+  const [publicHunts, setPublicHunts] = useState<PublicHunt[]>([])
+  const [libraryLoading, setLibraryLoading] = useState(false)
+  const [libraryError, setLibraryError] = useState('')
+  const [librarySearch, setLibrarySearch] = useState('')
+  const [selectedPublicHunt, setSelectedPublicHunt] = useState<PublicHunt | null>(null)
+  const [copyingPublicHuntId, setCopyingPublicHuntId] = useState('')
+  const [huntRows, setHunts] = useState<Hunt[]>([])
+  const [huntClockOffset, setHuntClockOffset] = useState<number | null>(null)
+  const [huntClockTick, setHuntClockTick] = useState(() => performance.now())
+  const hunts = useMemo(() => huntRows.map(hunt => {
+    if (!['scheduled', 'active'].includes(hunt.status)) return hunt
+    const now = huntClockOffset === null ? Date.now() : huntClockTick + huntClockOffset
+    const startsAt = hunt.start_at ? Date.parse(hunt.start_at) : null
+    if (hunt.ended_at || startsAt !== null && now >= startsAt + hunt.duration_minutes * 60_000) {
+      return { ...hunt, status: 'ended' }
+    }
+    return huntClockOffset !== null && startsAt !== null && now >= startsAt
+      ? { ...hunt, status: 'active' }
+      : hunt
+  }), [huntRows, huntClockOffset, huntClockTick])
   const [huntSchemaReady, setHuntSchemaReady] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
-  const [search, setSearch] = useState('')
-  const [showArchived, setShowArchived] = useState(false)
-  const [showForm, setShowForm] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [formMessage, setFormMessage] = useState('')
   const [venue, setVenue] = useState('')
   const [huntTitle, setHuntTitle] = useState('')
   const [huntDuration, setHuntDuration] = useState(60)
@@ -119,6 +135,46 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     return () => { cancelled = true }
   }, [session.user.id])
 
+  const loadHuntList = useCallback(async (ownerId: string) => {
+    if (!supabase) return
+    const [huntList, clock] = await Promise.all([
+      supabase.from('hunts').select('id,title,venue,status,created_at,start_at,ended_at,duration_minutes,team_assignment_mode,voting_enabled,voting_bonus_points').eq('organizer_id', ownerId).order('created_at', { ascending: false }),
+      supabase.rpc('get_organizer_hunt_clock'),
+    ])
+    if (huntList.error) {
+      if (huntList.error.code === 'PGRST205' || huntList.error.code === '42P01') setHuntSchemaReady(false)
+      else setLoadError(huntList.error.message)
+      return
+    }
+    const tick = performance.now()
+    if (!clock.error && typeof clock.data === 'string') {
+      const serverTime = Date.parse(clock.data)
+      if (Number.isFinite(serverTime)) setHuntClockOffset(serverTime - tick)
+    }
+    setHuntClockTick(tick)
+    setHunts(huntList.data ?? [])
+    setHuntSchemaReady(true)
+  }, [])
+
+  const showingHunts = page === 'hunts' || page === 'overview'
+  const hasTimedHunts = huntRows.some(hunt => hunt.status === 'active' || hunt.status === 'scheduled' && Boolean(hunt.start_at))
+  useEffect(() => {
+    if (!showingHunts || !organizer) return
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void loadHuntList(organizer.id)
+    }
+    const tick = window.setInterval(() => {
+      if (document.visibilityState === 'visible' && hasTimedHunts) setHuntClockTick(performance.now())
+    }, 1_000)
+    const updates = window.setInterval(refresh, 15_000)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.clearInterval(tick)
+      window.clearInterval(updates)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [showingHunts, organizer, hasTimedHunts, loadHuntList])
+
   const loadWorkspace = useCallback(async () => {
     if (!supabase) return
     let profile = await supabase.from('organizers').select('id').eq('auth_user_id', session.user.id).maybeSingle()
@@ -164,22 +220,9 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     const library = await supabase.from('library_items').select('id,title,description,category,archived,created_at').eq('organizer_id', profile.data.id).order('created_at', { ascending: false })
     if (library.error) setLoadError(library.error.message)
     else setItems(library.data ?? [])
-    const huntList = await supabase.from('hunts').select('id,title,venue,status,created_at,start_at,duration_minutes,team_assignment_mode,voting_enabled,voting_bonus_points').eq('organizer_id', profile.data.id).order('created_at', { ascending: false })
-    if (huntList.error) {
-      setHunts([])
-      if (huntList.error.code === 'PGRST205' || huntList.error.code === '42P01') setHuntSchemaReady(false)
-      else setLoadError(huntList.error.message)
-    } else {
-      setHunts((huntList.data ?? []).map(hunt => (
-        ['scheduled','active'].includes(hunt.status) && hunt.start_at
-          && Date.now() >= new Date(hunt.start_at).getTime() + hunt.duration_minutes * 60_000
-          ? { ...hunt, status: 'ended' }
-          : hunt
-      )))
-      setHuntSchemaReady(true)
-    }
+    await loadHuntList(profile.data.id)
     setLoading(false)
-  }, [session.user.id])
+  }, [session.user.id, loadHuntList])
 
   // Loading the organizer's remote data when the authenticated session changes is intentional.
   // eslint-disable-next-line react/set-state-in-effect
@@ -217,27 +260,65 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hunts, initialHuntId, loading, processedRouteHuntId])
 
-  async function addItem(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!supabase || !organizer) return
-    const formElement = event.currentTarget
-    const form = new FormData(formElement)
-    const title = String(form.get('title') ?? '').trim()
-    const description = String(form.get('description') ?? '').trim()
-    const category = String(form.get('category') ?? '').trim()
-    if (!title) { setFormMessage('Give your challenge a name first.'); return }
-    setSaving(true); setFormMessage('')
-    const { error } = await supabase.from('library_items').insert({ organizer_id: organizer.id, title, description: description || null, category: category || null })
-    if (error) setFormMessage(error.message)
-    else { formElement.reset(); setShowForm(false); await loadWorkspace() }
-    setSaving(false)
+  async function loadHuntLibrary() {
+    if (!supabase) return
+    setLibraryLoading(true); setLibraryError('')
+    try {
+      const { data, error } = await supabase.rpc('list_hunt_templates', { p_owned: false })
+      if (error) { setLibraryError(error.message); return }
+      setPublicHunts(Array.isArray(data) ? data as PublicHunt[] : [])
+    } catch (error) {
+      setLibraryError(error instanceof Error ? error.message : 'The Hunt Library could not be loaded.')
+    } finally { setLibraryLoading(false) }
   }
 
-  async function toggleArchived(item: LibraryItem) {
-    if (!supabase) return
-    const { error } = await supabase.from('library_items').update({ archived: !item.archived }).eq('id', item.id)
-    if (error) setLoadError(error.message)
-    else setItems(current => current.map(row => row.id === item.id ? { ...row, archived: !row.archived } : row))
+  function openHuntLibrary() {
+    setSelectedPublicHunt(null)
+    setLibrarySearch('')
+    setPage('hunt-library')
+    void loadHuntLibrary()
+  }
+
+  function beginBlankHunt() {
+    setEditingDraftId(''); setVenue(''); setHuntTitle(''); setHuntDuration(60)
+    setSelectedRules([SUGGESTED_RULES[0].text]); setCustomRuleDraft(''); setDraftItems([])
+    setChallengePaste(''); setStripListMarkers(false); setLibraryAddedMessage(''); setHuntMessage(''); setReuseSourceTitle('')
+    draftBaseline.current = JSON.stringify({ venue: '', huntTitle: '', huntDuration: 60, selectedRules: [SUGGESTED_RULES[0].text], draftItems: [], challengePaste: '', stripListMarkers: false, customRuleDraft: '' })
+    setPageState('new-hunt')
+  }
+
+  const draftRequests = useRef(new Map<string, string>())
+
+  async function openFreshDraft(kind: 'copy' | 'replay', hunt: Pick<Hunt, 'id' | 'title'>) {
+    if (!supabase || copyingPublicHuntId || reusingHuntId) return
+    const setBusy = kind === 'copy' ? setCopyingPublicHuntId : setReusingHuntId
+    const setMessage = kind === 'copy' ? setLibraryError : setHuntMessage
+    setBusy(hunt.id)
+    setMessage('')
+    const key = kind + ':' + hunt.id
+    const requestId = draftRequests.current.get(key) ?? crypto.randomUUID()
+    draftRequests.current.set(key, requestId)
+    let saved = false
+    try {
+      const { data, error } = kind === 'copy'
+        ? await supabase.rpc('copy_hunt_library_to_draft', { p_template_id: hunt.id, p_request_id: requestId })
+        : await supabase.rpc('create_hunt_draft_from_game', { p_hunt_id: hunt.id, p_request_id: requestId })
+      if (error) throw error
+      if (typeof data !== 'string' || !data) throw new Error('The draft ID could not be confirmed. Retry to recover your draft.')
+      saved = true
+      await loadWorkspace()
+      if (await editSavedDraft({ id: data }, hunt.title)) {
+        draftRequests.current.delete(key)
+        setSelectedPublicHunt(null)
+      } else {
+        setMessage('Your draft is saved. Retry to open it, or select Edit draft in My Hunts.')
+      }
+    } catch (error) {
+      const detail = error && typeof error === 'object' && 'message' in error ? String(error.message) : 'Retry to recover your draft.'
+      setMessage(saved ? 'Your draft is saved. Retry to open it, or select Edit draft in My Hunts.' : detail)
+    } finally {
+      setBusy('')
+    }
   }
 
   function addDraftItem() {
@@ -332,7 +413,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     }
   }
 
-  async function editSavedDraft(hunt: Hunt) {
+  async function editSavedDraft(hunt: Pick<Hunt, 'id'>, copiedFromTitle = '') {
     if (!supabase) return
     setHuntSaving(true); setHuntMessage('')
     const [huntResult, itemResult] = await Promise.all([
@@ -347,43 +428,11 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     draftBaseline.current = JSON.stringify({ venue: huntResult.data.venue, huntTitle: huntResult.data.title, huntDuration: huntResult.data.duration_minutes, selectedRules: huntResult.data.rules ?? [], draftItems: restoredItems, challengePaste: '', stripListMarkers: false, customRuleDraft: '' })
     setEditingDraftId(hunt.id); setHuntTitle(huntResult.data.title); setVenue(huntResult.data.venue)
     setCustomRuleDraft('')
-    setReuseSourceTitle('')
+    setReuseSourceTitle(copiedFromTitle)
     setSelectedRules(huntResult.data.rules ?? []); setHuntDuration(huntResult.data.duration_minutes)
     setDraftItems(restoredItems)
     setHuntSaving(false); setPageState('new-hunt')
-  }
-
-  async function reuseCompletedHunt(hunt: Hunt) {
-    if (!supabase) return
-    setReusingHuntId(hunt.id); setHuntMessage('')
-    try {
-      const [huntResult, itemResult] = await Promise.all([
-        supabase.from('hunts').select('id,title,venue,rules,duration_minutes,status').eq('id', hunt.id).maybeSingle(),
-        supabase.from('hunt_items').select('id,title_snapshot,description_snapshot,point_value,display_order').eq('hunt_id', hunt.id).order('display_order'),
-      ])
-      if (huntResult.error || itemResult.error || !huntResult.data || huntResult.data.status !== 'completed') {
-        setHuntMessage(huntResult.error?.message ?? itemResult.error?.message ?? 'Only a completed hunt can be used as a starting point.')
-        return
-      }
-      if (!itemResult.data?.length) {
-        setHuntMessage('This hunt has no saved photo challenges to copy.')
-        return
-      }
-      const copiedItems = itemResult.data.map(item => ({ key: crypto.randomUUID(), title: item.title_snapshot, description: item.description_snapshot ?? '', pointValue: item.point_value }))
-      setEditingDraftId('')
-      setReuseSourceTitle(huntResult.data.title)
-      setHuntTitle(`${huntResult.data.title} (Rematch)`)
-      setVenue(huntResult.data.venue)
-      setSelectedRules(huntResult.data.rules ?? [])
-      setCustomRuleDraft('')
-      setHuntDuration(huntResult.data.duration_minutes)
-      setDraftItems(copiedItems)
-      setChallengePaste(''); setStripListMarkers(false); setLibraryAddedMessage('')
-      setHuntMessage('')
-      setPageState('new-hunt')
-    } catch (error) {
-      setHuntMessage(error instanceof Error ? error.message : 'Could not load this hunt to reuse it.')
-    } finally { setReusingHuntId('') }
+    return true
   }
 
   async function openManageHunt(hunt: Hunt) {
@@ -678,7 +727,6 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     } finally { setAccountBusy(false) }
   }
 
-  const visibleItems = items.filter(item => item.archived === showArchived && `${item.title} ${item.description ?? ''} ${item.category ?? ''}`.toLowerCase().includes(search.toLowerCase()))
   async function addHuntTime(minutes: number) {
     if (!supabase || !managedHunt || timingBusy) return
     const operationId = crypto.randomUUID()
@@ -724,9 +772,10 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     ?? playerGames[0]
   const stageIndex = managedHunt ? ({ draft: 0, scheduled: 1, active: 2, ended: 3, review: 3, completed: 4 } as Record<string, number>)[managedHunt.status] : undefined
   const activeHunts = hunts.filter(hunt => hunt.status === 'active')
-  const huntPriority: Record<string, number> = { active: 0, scheduled: 1, ended: 2, review: 2, draft: 3 }
+  const huntPriority: Record<string, number> = { active: 0, scheduled: 1, ended: 2, review: 2, draft: 3, completed: 4 }
   const unfinishedHunts = hunts.filter(hunt => hunt.status !== 'completed').sort((left, right) => (huntPriority[left.status] ?? 4) - (huntPriority[right.status] ?? 4) || Date.parse(right.created_at) - Date.parse(left.created_at))
   const completedHunts = hunts.filter(hunt => hunt.status === 'completed').sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
+  const visiblePublicHunts = publicHunts.filter(hunt => `${hunt.title} ${hunt.description ?? ''} ${hunt.rules.join(' ')} ${hunt.challenges.map(item => `${item.title} ${item.description ?? ''}`).join(' ')}`.toLocaleLowerCase().includes(librarySearch.trim().toLocaleLowerCase()))
 
   useEffect(() => {
     const query = window.matchMedia('(max-width: 600px)')
@@ -770,11 +819,11 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
 
   function renderHuntCard(hunt: Hunt) {
     return <article className="hunt-card" key={hunt.id}><span className="hunt-card-mark"><Camera size={21}/></span><div className="hunt-card-info"><div className="hunt-card-meta"><span className="draft-badge">{huntStatusLabel(hunt.status)}</span><span>{new Date(hunt.created_at).toLocaleDateString()}</span></div><h2>{hunt.title}</h2><p><MapPin size={14}/> {hunt.venue}</p></div>
-      {hunt.status === 'draft' && <button className="outline-button" onClick={() => void editSavedDraft(hunt)}>Continue setup</button>}
+      {hunt.status === 'draft' && <button className="outline-button" onClick={() => void editSavedDraft(hunt)}>Edit draft</button>}
       {hunt.status === 'scheduled' && <button className="outline-button" onClick={() => void openManageHunt(hunt)}>Open lobby</button>}
       {hunt.status === 'active' && <button className="outline-button" onClick={() => void openManageHunt(hunt)}>Manage live hunt</button>}
       {['ended','review'].includes(hunt.status) && <button className="outline-button" onClick={() => { setManagedHunt(hunt); setResumeHuntId(hunt.id); setPage('review-hunt') }}>Review photos</button>}
-      {hunt.status === 'completed' && <><button className="outline-button" onClick={() => { setManagedHunt(hunt); setResumeHuntId(hunt.id); setPage('review-hunt') }}>View results</button><button className="outline-button" disabled={Boolean(reusingHuntId)} onClick={() => void reuseCompletedHunt(hunt)}>{reusingHuntId === hunt.id ? 'Loading hunt...' : 'Use this hunt again'}</button></>}
+      {hunt.status === 'completed' && <><button className="outline-button" onClick={() => { setManagedHunt(hunt); setResumeHuntId(hunt.id); setPage('review-hunt') }}>View results</button><button className="outline-button" disabled={Boolean(reusingHuntId)} onClick={() => void openFreshDraft('replay', hunt)}>{reusingHuntId === hunt.id ? 'Creating draft…' : 'Use again'}</button></>}
     </article>
   }
 
@@ -784,12 +833,12 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       <div className="workspace-section-label">WORKSPACE</div>
       <button className={`side-link ${page === 'overview' ? 'selected' : ''}`} aria-current={page === 'overview' ? 'page' : undefined} onClick={() => setPage('overview')}><House size={17}/> Overview</button>
       <button className={`side-link ${page === 'hunts' || page === 'new-hunt' || page === 'manage-hunt' || page === 'review-hunt' ? 'selected' : ''}`} aria-current={['hunts','new-hunt','manage-hunt','review-hunt'].includes(page) ? 'page' : undefined} onClick={() => setPage('hunts')}><ClipboardList size={17}/> My hunts <span className="side-count">{hunts.length}</span></button>
-      <button className={`side-link ${page === 'library' ? 'selected' : ''}`} aria-current={page === 'library' ? 'page' : undefined} onClick={() => setPage('library')}><Library size={17}/> Challenge library <span className="side-count">{activeCount}</span></button>
+      <button className={`side-link ${page === 'hunt-library' ? 'selected' : ''}`} aria-current={page === 'hunt-library' ? 'page' : undefined} onClick={openHuntLibrary}><Library size={17}/> Hunt Library <span className="side-count">{publicHunts.length}</span></button>
       <div className="workspace-section-label space-top">ACCOUNT</div>
       <div className="sidebar-bottom"><span className="sidebar-avatar">{displayName.slice(0, 1).toUpperCase()}</span><span className="sidebar-user"><b>{displayName}</b><small>Organizer account</small></span></div>
     </aside>
     <main className="workspace-main">
-      <header className="workspace-topbar"><div className="breadcrumb">Workspace <span>/</span> {page === 'overview' ? 'Home' : page === 'library' ? 'Challenge library' : page === 'new-hunt' ? 'New hunt' : page === 'manage-hunt' ? 'Hunt lobby' : page === 'review-hunt' ? 'Results' : page === 'account' ? 'Account settings' : 'My hunts'}</div><div className="topbar-actions">{playerGames.length > 1 && <label className="resume-game-picker"><span className="sr-only">Choose team game</span><select value={selectedResumeGame?.hunt_id ?? ''} onChange={event => setResumeHuntId(event.target.value)}>{playerGames.map(game => <option value={game.hunt_id} key={game.hunt_id}>{game.hunt_title} — {game.team_name}</option>)}</select></label>}{selectedResumeGame && <a className="outline-button" href={`#/play/${selectedResumeGame.hunt_id}`}><Camera size={14}/> Player view · {selectedResumeGame.team_name}</a>}<details className="account-menu"><summary><span className="sidebar-avatar">{displayName.slice(0,1).toUpperCase()}</span><span>{displayName}</span></summary><div className="account-menu-body">{isSystemAdmin && <button className="outline-button" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); window.location.hash = '/system-admin' }}><ShieldCheck size={15}/> System admin</button>}<button className="outline-button" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setAccountMessage(''); setAccountError(''); setPage('account') }}><Settings2 size={15}/> Account settings</button><button className="outline-button" onClick={onSignOut}><LogOut size={15}/> Sign out</button></div></details><div className="topbar-badge"><ShieldCheck size={15}/> Private organizer space</div></div></header>
+      <header className="workspace-topbar"><div className="breadcrumb">Workspace <span>/</span> {page === 'overview' ? 'Home' : page === 'hunt-library' ? 'Hunt Library' : page === 'new-hunt' ? 'New hunt' : page === 'manage-hunt' ? 'Hunt lobby' : page === 'review-hunt' ? 'Results' : page === 'account' ? 'Account settings' : 'My Hunts'}</div><div className="topbar-actions">{playerGames.length > 1 && <label className="resume-game-picker"><span className="sr-only">Choose team game</span><select value={selectedResumeGame?.hunt_id ?? ''} onChange={event => setResumeHuntId(event.target.value)}>{playerGames.map(game => <option value={game.hunt_id} key={game.hunt_id}>{game.hunt_title} — {game.team_name}</option>)}</select></label>}{selectedResumeGame && <a className="outline-button" href={`#/play/${selectedResumeGame.hunt_id}`}><Camera size={14}/> Player view · {selectedResumeGame.team_name}</a>}<details className="account-menu"><summary><span className="sidebar-avatar">{displayName.slice(0,1).toUpperCase()}</span><span>{displayName}</span></summary><div className="account-menu-body">{isSystemAdmin && <button className="outline-button" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); window.location.hash = '/system-admin' }}><ShieldCheck size={15}/> System admin</button>}<button className="outline-button" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setAccountMessage(''); setAccountError(''); setPage('account') }}><Settings2 size={15}/> Account settings</button><button className="outline-button" onClick={onSignOut}><LogOut size={15}/> Sign out</button></div></details><div className="topbar-badge"><ShieldCheck size={15}/> Private organizer space</div></div></header>
       {routeMessage && <div className="inline-alert" role="status">{routeMessage}</div>}
       {loading ? <div className="workspace-loading">Opening your organizer space…</div> : loadError && !organizer ? <section className="workspace-content"><div className="workspace-alert"><CircleHelp size={19}/><div><b>Organizer access needs attention</b><p>{loadError}</p>{playerGames.map(game => <a className="outline-button" key={game.hunt_id} href={`#/play/${game.hunt_id}`}><Camera size={14}/> Return to {game.team_name} · {game.hunt_title}</a>)}<button className="outline-button" onClick={() => { setLoading(true); setLoadError(''); void loadWorkspace() }}>Try again</button></div></div></section> : page === 'overview' ? <section className="workspace-content">
         <div className="workspace-greeting"><div><div className="eyebrow"><Sparkles size={14}/> YOUR FAMILY GAME NIGHT</div><h1>Welcome in, {displayName}!</h1><p>Your organizer space is ready. Let’s start gathering the fun.</p></div><div className="greeting-sticker"><Camera size={30}/><span>Let’s play!</span></div></div>
@@ -806,30 +855,38 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
           </article>)}</div> : <div className="active-hunts-empty"><span className="active-hunts-empty-icon"><Clock3 size={19}/></span><div><b>No hunts are running right now</b><p>When you start a hunt, it will appear here so you can manage it.</p></div></div>}
         </section>
         <div className="stats-grid"><div className="stat-card"><span className="stat-icon stat-pink"><Sparkles size={18}/></span><small>ACTIVE CHALLENGES</small><b>{activeCount}</b><span>Ready to add to a hunt</span></div><div className="stat-card"><span className="stat-icon stat-yellow"><Users size={18}/></span><small>LIVE OR SCHEDULED</small><b>{hunts.filter(hunt => ['scheduled','active'].includes(hunt.status)).length}</b><span>Ready for participants</span></div><div className="stat-card"><span className="stat-icon stat-lilac"><Clock3 size={18}/></span><small>YOUR HUNTS</small><b>{hunts.length}</b><span>Venue-based photo adventures</span></div></div>
-        <div className="home-panels"><article className="panel-card plan-hunt-panel"><div className="panel-heading"><div><span className="eyebrow">PLAN A NEW HUNT</span><h2>Plan a new hunt</h2><p>Choose a venue, add photo challenges, and set the ground rules.</p></div><span className="panel-illustration"><MapPin size={25}/></span></div><button className="primary-button small-button" onClick={() => { setPage('new-hunt'); setHuntMessage('') }}><Plus size={16}/> Start planning</button></article><article className="panel-card"><div className="eyebrow">MAKE IT YOURS</div><h2>Challenge library</h2><p>Photo ideas added to a hunt also become reusable challenges for next time.</p><button className="outline-button panel-link" onClick={() => setPage('library')}><Library size={15}/> Open library</button></article></div>
-        <div className="workspace-footnote">Your hunts and challenge lists are private to your organizer account. <ShieldCheck size={14}/></div>
-      </section> : page === 'library' ? <section className="workspace-content library-content">
-        <div className="library-title-row"><div><div className="eyebrow"><Library size={14}/> REUSABLE IDEAS</div><h1>Challenge library</h1><p>Collect photo prompts now; add them to games as you plan.</p></div><button className="primary-button library-add" onClick={() => { setShowForm(value => !value); setFormMessage('') }}><Plus size={17}/>{showForm ? 'Close form' : 'New challenge'}</button></div>
-        {loadError && <div className="inline-alert">{loadError}</div>}
-        {showForm && <form className="challenge-form" onSubmit={addItem}><div className="form-header"><div><b>Add a challenge</b><small>Keep it easy to spot and fun to photograph.</small></div><button type="button" className="icon-button" aria-label="Close" onClick={() => setShowForm(false)}><X size={17}/></button></div><div className="form-fields"><label>Challenge name<input name="title" required maxLength={120} placeholder="Something that makes you smile"/></label><label>Category <span className="optional">Optional</span><input name="category" maxLength={80} placeholder="Silly, nature, colors…"/></label><label className="wide-field">Extra instructions <span className="optional">Optional</span><textarea name="description" maxLength={1000} rows={2} placeholder="Add a hint or a fun twist"/></label></div>{formMessage && <div className="form-error" role="alert">{formMessage}</div>}<div className="form-footer"><button type="button" className="outline-button" onClick={() => setShowForm(false)}>Cancel</button><button className="primary-button form-submit" disabled={saving}>{saving ? 'Saving…' : <><Check size={15}/> Save challenge</>}</button></div></form>}
-        <div className="library-toolbar"><div className="search-box"><Search size={16}/><input aria-label="Search challenges" placeholder="Search your challenges" value={search} onChange={e => setSearch(e.target.value)}/></div><button className={`outline-button filter-button ${showArchived ? 'filter-active' : ''}`} onClick={() => setShowArchived(value => !value)}><Archive size={15}/>{showArchived ? 'Archived' : 'Active'}<ArrowDownUp size={13}/></button><span className="item-count">{visibleItems.length} {visibleItems.length === 1 ? 'challenge' : 'challenges'}</span></div>
-        {loading ? <div className="empty-library">Loading your saved ideas…</div> : visibleItems.length ? <div className="challenge-list">{visibleItems.map(item => <article className="challenge-row" key={item.id}><span className="challenge-mark"><Camera size={18}/></span><div className="challenge-info"><b>{item.title}</b><p>{item.description || 'Ready to capture a fun moment.'}</p></div>{item.category && <span className="category-chip">{item.category}</span>}<button className="icon-button archive-action" title={item.archived ? 'Restore challenge' : 'Archive challenge'} onClick={() => void toggleArchived(item)}><Archive size={16}/></button></article>)}</div> : <div className="empty-library"><span className="empty-icon"><Camera size={24}/></span><b>{search ? 'No matches yet' : showArchived ? 'Nothing archived' : 'Your ideas start here'}</b><p>{search ? 'Try another search.' : showArchived ? 'Archived challenges will show up here.' : 'Add a photo prompt to make it reusable for your future hunts.'}</p>{!search && !showArchived && <button className="outline-button" onClick={() => setShowForm(true)}><Plus size={15}/> Add your first challenge</button>}</div>}
+        <div className="home-panels"><article className="panel-card plan-hunt-panel"><div className="panel-heading"><div><span className="eyebrow">PLAN A NEW HUNT</span><h2>Plan a new hunt</h2><p>Choose a venue, add photo challenges, and set the ground rules.</p></div><span className="panel-illustration"><MapPin size={25}/></span></div><button className="primary-button small-button" onClick={beginBlankHunt}><Plus size={16}/> Create a Hunt</button></article><article className="panel-card"><div className="eyebrow">FIND A GAME TO MAKE YOUR OWN</div><h2>Hunt Library</h2><p>Browse complete hunts other groups have played, with rules and every photo challenge.</p><button className="outline-button panel-link" onClick={openHuntLibrary}><Library size={15}/> Browse Hunt Library</button></article></div>
+        <div className="workspace-footnote">Your game, participants, photos, and results stay private. Finalized hunts contribute reusable rules and challenge lists. <ShieldCheck size={14}/></div>
+      </section> : page === 'hunt-library' ? <section className="workspace-content library-content hunt-library-content">
+        {libraryError && <div className="inline-alert" role="alert">{libraryError}</div>}
+        {selectedPublicHunt ? <>
+          <button className="back-link" onClick={() => { setSelectedPublicHunt(null); setLibraryError('') }}><ArrowLeft size={15}/> Back to Hunt Library</button>
+          <div className="new-hunt-heading"><div className="eyebrow"><Library size={14}/> COMPLETED HUNT</div><h1>{selectedPublicHunt.title}</h1><p>{selectedPublicHunt.description || 'A complete hunt shared after final results were published.'}</p></div>
+          <div className="public-hunt-meta"><span>{selectedPublicHunt.defaultDuration} minute time limit</span><span>{selectedPublicHunt.challenges.length} photo challenges</span></div>
+          <section className="public-hunt-section"><h2>Rules</h2>{selectedPublicHunt.rules.length ? <ul>{selectedPublicHunt.rules.map((rule, index) => <li key={`${index}-${rule}`}>{rule}</li>)}</ul> : <p>No special rules were added.</p>}</section>
+          <section className="public-hunt-section"><h2>Photo challenges</h2><ol className="public-hunt-challenges">{[...selectedPublicHunt.challenges].sort((a, b) => a.displayOrder - b.displayOrder).map((challenge, index) => <li key={`${index}-${challenge.title}`}><div><b>{challenge.title}</b><span>{challenge.points} {challenge.points === 1 ? 'point' : 'points'}</span></div>{challenge.description && <p>{challenge.description}</p>}</li>)}</ol></section>
+          <div className="public-hunt-copy-row"><p>This preview contains reusable hunt content only. Player photos and results are not part of the library.</p><button className="primary-button" disabled={Boolean(copyingPublicHuntId)} onClick={() => void openFreshDraft('copy', selectedPublicHunt)}><Plus size={16}/>{copyingPublicHuntId === selectedPublicHunt.id ? 'Copying…' : 'Copy to My Hunts'}</button></div>
+        </> : <>
+          <div className="library-title-row"><div><div className="eyebrow"><Library size={14}/> PLAYED AND SHARED</div><h1>Hunt Library</h1><p>Explore complete hunts other groups have finished. Open a preview for every rule and challenge.</p></div><button className="primary-button library-add" onClick={() => setPage('hunts')}><ClipboardList size={16}/> My Hunts</button></div>
+          <div className="hunt-library-note">Only hunts with final results published appear here. Player photos, teams, messages, and scores stay with each original game.</div>
+          <div className="library-toolbar"><label className="search-box"><Search size={16}/><input aria-label="Search Hunt Library" placeholder="Search hunts or photo challenges" value={librarySearch} onChange={event => setLibrarySearch(event.target.value)}/></label><span className="item-count">{visiblePublicHunts.length} {visiblePublicHunts.length === 1 ? 'hunt' : 'hunts'}</span></div>
+          {libraryLoading ? <div className="empty-library">Loading completed hunts…</div> : visiblePublicHunts.length ? <div className="public-hunt-grid">{visiblePublicHunts.map(hunt => <article className="public-hunt-card" key={hunt.id}><div className="eyebrow">{hunt.challenges.length} PHOTO CHALLENGES · {hunt.defaultDuration} MINUTES</div><h2>{hunt.title}</h2><p>{hunt.description || 'A reusable hunt shared after final results were published.'}</p><div className="public-hunt-card-preview">{hunt.challenges.slice(0, 3).map((challenge, index) => <span key={`${index}-${challenge.title}`}>{index + 1}. {challenge.title}</span>)}{hunt.challenges.length > 3 && <span>+ {hunt.challenges.length - 3} more</span>}</div><button className="outline-button" onClick={() => setSelectedPublicHunt(hunt)}>Preview complete hunt</button></article>)}</div> : <div className="empty-library"><span className="empty-icon"><Library size={23}/></span><b>{librarySearch ? 'No hunts match your search' : 'No completed hunts in the library yet'}</b><p>{librarySearch ? 'Try another title, rule, or photo challenge.' : 'When an organizer publishes final results, the reusable hunt appears here.'}</p></div>}
+        </>}
       </section> : page === 'new-hunt' ? <section className="workspace-content new-hunt-content">
         <button className="back-link" onClick={() => setPage('hunts')}><ArrowLeft size={15}/> Back to your hunts</button>
-        <div className="new-hunt-heading"><div className="eyebrow"><Sparkles size={14}/> PLAN YOUR ADVENTURE</div><h1>{editingDraftId ? 'Edit your draft hunt' : reuseSourceTitle ? 'Plan a rematch' : 'Create a venue hunt'}</h1><p>{reuseSourceTitle ? `Challenges, venue, and rules copied from “${reuseSourceTitle}”. Saving creates a separate new hunt; the original results stay unchanged.` : 'Start with where you’ll play, then make a list of things to find and photograph.'}</p></div>
+        <div className="new-hunt-heading"><div className="eyebrow"><Sparkles size={14}/> PLAN YOUR ADVENTURE</div><h1>{editingDraftId ? 'Edit your draft hunt' : reuseSourceTitle ? 'Plan a rematch' : 'Create a venue hunt'}</h1><p>{reuseSourceTitle ? `Based on “${reuseSourceTitle}”. Changes save to this private draft; the source hunt and any published library version stay unchanged.` : 'Start with where you’ll play, then make a list of things to find and photograph.'}</p></div>
         <form className="hunt-builder" onSubmit={createHunt}>
           <section className="builder-section"><div className="builder-step">1</div><div className="builder-main"><h2>Choose your venue</h2><p>Where will participants explore?</p><label className="builder-field">Venue name<input value={venue} onChange={event => setVenue(event.target.value)} required maxLength={160} placeholder="e.g. Riverside Park, Main Street Market"/></label><label className="builder-field">Hunt title <span className="optional">Optional — defaults to “[venue] Photo Hunt”</span><input value={huntTitle} onChange={event => setHuntTitle(event.target.value)} maxLength={120} placeholder={venue ? `${venue} Photo Hunt` : 'Saturday Family Photo Hunt'}/></label><label className="builder-field duration-field">Time limit (minutes)<input type="number" min={1} max={2147483647} step={1} required value={huntDuration} onChange={event => setHuntDuration(Number(event.target.value))}/><span className="optional">Choose any whole-number duration. There is no 24-hour cap.</span></label></div></section>
           <section className={`builder-section ${venue.trim() ? '' : 'builder-locked'}`}><div className="builder-step">2</div><div className="builder-main"><h2>Set the ground rules</h2><p>Keep the suggested rules, or add custom rules for this hunt.</p>{!venue.trim() && <div className="locked-note"><MapPin size={15}/> Enter a venue above to continue.</div>}{venue.trim() && <><div className="suggested-rules">{SUGGESTED_RULES.map(rule => <label key={rule.id} className="rule-option"><input type="checkbox" checked={selectedRules.includes(rule.text)} onChange={() => setSelectedRules(current => current.includes(rule.text) ? current.filter(text => text !== rule.text) : current.length >= 30 ? current : [...current, rule.text])}/><span>{rule.text}{rule.recommended && <small>Suggested</small>}</span></label>)}</div><div className="custom-rule-editor"><label htmlFor="custom-hunt-rule">Add your own rule</label><div><input id="custom-hunt-rule" maxLength={1000} value={customRuleDraft} onChange={event => setCustomRuleDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addCustomRule() } }} placeholder="Add a rule for this hunt"/><button type="button" className="outline-button" disabled={!customRuleDraft.trim() || selectedRules.length >= 30} onClick={addCustomRule}><Plus size={14}/> Add rule</button></div><small>Up to 30 rules, 1,000 characters each.</small></div>{selectedRules.filter(rule => !SUGGESTED_RULES.some(suggested => suggested.text === rule)).length > 0 && <ul className="custom-rule-list" aria-label="Custom rules">{selectedRules.filter(rule => !SUGGESTED_RULES.some(suggested => suggested.text === rule)).map(rule => <li key={rule}><span>{rule}</span><button type="button" aria-label={`Remove rule: ${rule}`} onClick={() => setSelectedRules(current => current.filter(existing => existing !== rule))}><X size={14}/></button></li>)}</ul>}</>}</div></section>
           <section className={`builder-section ${venue.trim() ? '' : 'builder-locked'}`}><div className="builder-step">3</div><div className="builder-main"><div className="builder-items-heading"><div><h2>Build the photo list</h2><p>Add the items participants need to find and photograph.</p></div>{venue.trim() && <button type="button" className="outline-button" onClick={addDraftItem}><Plus size={15}/> Add item</button>}</div>{!venue.trim() ? <div className="locked-note"><ClipboardList size={15}/> Enter a venue above to start your list.</div> : draftItems.length === 0 ? <div className="item-prompt"><span><Camera size={19}/></span><div><b>Your hunt needs at least one photo challenge</b><p>Choose recognizable things participants can find at this venue.</p></div><button type="button" className="outline-button" onClick={addDraftItem}><Plus size={15}/> Add first item</button></div> : <ChallengeListEditor items={draftItems.map(item => ({ id: item.key, title: item.title, description: item.description, points: item.pointValue }))} variant="production" onChange={updateDraftChallengeList}/>}<details className="production-challenge-import"><summary>Paste a challenge list</summary><p>One challenge per line. You can review and edit every imported item before saving.</p><label className="editor-label">Challenge list<textarea rows={5} value={challengePaste} onChange={event => setChallengePaste(event.target.value)} placeholder="Find something red, then a team selfie"/></label><label className="import-option"><input type="checkbox" checked={stripListMarkers} onChange={event => setStripListMarkers(event.target.checked)}/> Remove leading list bullets and numbering</label><button type="button" className="outline-button" onClick={importDraftChallenges}>Import and edit challenges</button></details>{venue.trim() && selectableLibraryItems.length > 0 && <div className="library-picker"><div><b>From your challenge library</b><span>Saved ideas can be reused in any hunt.</span></div><label className="library-picker-search">Search saved challenges<input type="search" value={libraryPickerSearch} onChange={event => setLibraryPickerSearch(event.target.value)} placeholder="Search by name or clue" /></label>{libraryAddedMessage && <p role="status">{libraryAddedMessage}</p>}<div className="library-picker-list">{filteredLibraryItems.map(item => <button type="button" className="library-picker-item" key={item.id} onClick={() => addLibraryChallenge(item)}><span><b>{item.title}</b><small>{item.category || item.description || 'Reusable challenge'}</small></span><Plus size={15}/></button>)}</div>{filteredLibraryItems.length === 0 && <p className="locked-note">No saved challenges match this search.</p>}</div>}</div></section>
           {huntMessage && <div className="form-error" role="alert">{huntMessage}</div>}
-          <div className="builder-actions"><button type="button" className="outline-button" onClick={() => {setEditingDraftId(''); setPage('hunts')}}>Cancel</button><button type="submit" className="primary-button save-hunt-button" disabled={huntSaving || !venue.trim() || !draftItems.some(item => item.title.trim())}>{huntSaving ? 'Saving hunt…' : <><Check size={16}/> {editingDraftId ? 'Save draft changes' : 'Save draft hunt'}</>}</button></div>
+          <div className="builder-actions"><button type="button" className="outline-button" onClick={() => setPage('hunts')}>Cancel</button><button type="submit" className="primary-button save-hunt-button" disabled={huntSaving || !venue.trim() || !draftItems.some(item => item.title.trim())}>{huntSaving ? 'Saving hunt…' : <><Check size={16}/> {editingDraftId ? 'Save draft changes' : 'Save draft hunt'}</>}</button></div>
         </form>
       </section> : page === 'hunts' ? <section className="workspace-content hunts-content">
-        <div className="library-title-row"><div><div className="eyebrow"><ClipboardList size={14}/> YOUR ADVENTURES</div><h1>Your hunts</h1><p>Pick up a draft, start a waiting hunt, or manage a live game.</p></div><button className="primary-button library-add" onClick={() => { setPage('new-hunt'); setHuntMessage('') }}><Plus size={17}/> Create a hunt</button></div>
+        <div className="library-title-row"><div><div className="eyebrow"><ClipboardList size={14}/> ORGANIZER WORKSPACE</div><h1>My Hunts</h1><p>Your drafts, games in progress, completed games, and copies all stay together here.</p></div><div className="my-hunts-actions"><button className="primary-button library-add" onClick={beginBlankHunt}><Plus size={17}/> Create a Hunt</button><button className="outline-button" onClick={openHuntLibrary}><Library size={15}/> Browse Hunt Library</button></div></div>
         {loadError && <div className="inline-alert">{loadError}</div>}
         {huntMessage && <div className="inline-alert" role="alert">{huntMessage}</div>}
-        {unfinishedHunts.length ? <div className="hunt-list">{unfinishedHunts.map(renderHuntCard)}</div> : completedHunts.length ? <div className="empty-library"><span className="empty-icon"><Check size={24}/></span><b>No hunts need attention</b><p>Your completed results are filed under Past results.</p></div> : <div className="empty-library"><span className="empty-icon"><MapPin size={24}/></span><b>No hunts yet</b><p>Pick a venue and create a photo list to start planning.</p><button className="outline-button" onClick={() => setPage('new-hunt')}><Plus size={15}/> Create your first hunt</button></div>}
-        {completedHunts.length > 0 && <details className="organizer-history-disclosure"><summary>Past results ({completedHunts.length})</summary><div className="hunt-list">{completedHunts.map(renderHuntCard)}</div></details>}
+        {hunts.length ? <div className="hunt-list">{[...unfinishedHunts, ...completedHunts].map(renderHuntCard)}</div> : <div className="empty-library"><span className="empty-icon"><MapPin size={24}/></span><b>No hunts yet</b><p>Create a blank hunt or start from a complete hunt in the library.</p></div>}
       </section> : page === 'account' ? <section className="workspace-content account-settings-content">
         <button className="back-link" onClick={() => setPage('hunts')}><ArrowLeft size={15}/> Back to My hunts</button>
         <div className="new-hunt-heading"><div className="eyebrow"><Settings2 size={14}/> ACCOUNT</div><h1>Account settings</h1><p>Manage the name other players see and your private sign-in details.</p></div>

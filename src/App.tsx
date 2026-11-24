@@ -24,18 +24,24 @@ function isPasswordRecoveryRedirect() {
   return fragment.get('type') === 'recovery' || query.get('type') === 'recovery'
 }
 
+function isExpiredEmailLink() {
+  const fragment = new URLSearchParams(window.location.hash.slice(1))
+  const query = new URLSearchParams(window.location.search)
+  return fragment.get('error_code') === 'otp_expired' || query.get('error_code') === 'otp_expired'
+}
+
 function App() {
   const collageUrl = `${import.meta.env.BASE_URL}adventure-collage.webp`
-  const [homeMode, setHomeMode] = useState<'welcome' | 'player' | 'organizer' | 'development'>(() => isPasswordRecoveryRedirect() ? 'organizer' : 'welcome')
+  const [homeMode, setHomeMode] = useState<'welcome' | 'player' | 'organizer' | 'development'>(() => isPasswordRecoveryRedirect() || isExpiredEmailLink() ? 'organizer' : 'welcome')
   const [email, setEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
-  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
+  const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'confirm'>('signin')
   const [passwordRecovery, setPasswordRecovery] = useState(isPasswordRecoveryRedirect)
   const [inviteInput, setInviteInput] = useState('')
   const [inviteError, setInviteError] = useState('')
   const [scannerOpen, setScannerOpen] = useState(false)
-  const [message, setMessage] = useState('')
+  const [message, setMessage] = useState(() => isExpiredEmailLink() ? 'This email link has expired. Request a fresh link below.' : '')
   const [loading, setLoading] = useState(false)
   const [session, setSession] = useState<Session | null>(null)
   const [authReady, setAuthReady] = useState(!supabase)
@@ -104,16 +110,44 @@ function App() {
       const redirectTo = `${window.location.origin}${window.location.pathname}`
       if (authMode === 'signup') {
         const { data, error } = await supabase.auth.signUp({ email: email.trim(), password: authPassword, options: { emailRedirectTo: redirectTo } })
-        setMessage(error ? error.message : data.session ? 'Your organizer account is ready.' : 'If this is a new account, check your inbox for a confirmation link. If you used this email before and no email arrives, return to sign in and request a secure sign-in link or password reset.')
+        if (error) setMessage(error.message)
+        else if (!data.session) {
+          setAuthPassword('')
+          setAuthMode('confirm')
+        }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: authPassword })
-        setMessage(error ? error.message : 'Signing you in...')
+        if (error?.code === 'email_not_confirmed') {
+          setAuthPassword('')
+          setAuthMode('confirm')
+        } else setMessage(error ? error.message : 'Signing you in...')
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Unknown connection error'
       setMessage(detail.toLowerCase().includes('fetch')
         ? 'Could not reach Supabase. Check the project connection and try again.'
         : `Sign-in could not be completed: ${detail}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function resendOrganizerConfirmation() {
+    if (!supabase || !email.trim()) return
+    setLoading(true); setMessage('')
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: email.trim(),
+        options: { emailRedirectTo: `${window.location.origin}${window.location.pathname}` },
+      })
+      setMessage(error?.status === 429
+        ? 'Please wait a minute before asking for another email.'
+        : (error?.status ?? 0) >= 500
+          ? 'Email is temporarily unavailable. Try again shortly.'
+          : 'If this address is awaiting confirmation, a new link is on its way.')
+    } catch {
+      setMessage('Could not send the confirmation. Check your connection and try again.')
     } finally {
       setLoading(false)
     }
@@ -239,7 +273,7 @@ function App() {
         {homeMode === 'organizer' && <section className="home-form-card">
           <div className="home-form-icon"><Users size={27}/></div>
           <p className="home-form-kicker">ORGANIZER ACCOUNT</p>
-          <h1>{passwordRecovery ? 'Choose a new password' : authMode === 'signup' ? 'Create your account' : 'Welcome back!'}</h1>
+          <h1>{passwordRecovery ? 'Choose a new password' : authMode === 'confirm' ? 'Check your email' : authMode === 'signup' ? 'Create your account' : 'Welcome back!'}</h1>
           {passwordRecovery ? <>
             {!authReady ? <p className="home-form-message" role="status">Verifying your password recovery link...</p> : session ? <>
               <p className="home-form-description">Use at least 8 characters. After saving, you will return to your organizer workspace.</p>
@@ -253,6 +287,14 @@ function App() {
               <p className="home-form-message" role="alert">This recovery link is expired or unavailable. Return to sign in and request a new password reset.</p>
               <button type="button" className="text-button" onClick={() => { setPasswordRecovery(false); setMessage('') }}>Return to sign in</button>
             </>}
+          </> : authMode === 'confirm' ? <>
+            <p className="home-form-description">If you just created an account, look for a confirmation link for <strong>{email.trim().slice(0, 1)}•••@{email.trim().split('@').pop()}</strong>. Check spam or junk if it hasn’t arrived.</p>
+            <button className="home-form-submit" type="button" disabled={loading} onClick={() => void resendOrganizerConfirmation()}>{loading ? 'Sending…' : 'Resend confirmation email'}</button>
+            {message && <p className="home-form-message" role="status">{message}</p>}
+            <div className="home-form-auth-options">
+              <button type="button" className="text-button" disabled={loading} onClick={() => { setAuthMode('signup'); setMessage('') }}>Change email address</button>
+              <button type="button" className="text-button" disabled={loading} onClick={() => { setAuthMode('signin'); setMessage('') }}>Return to sign in</button>
+            </div>
           </> : <>
             <p className="home-form-description">Use your email as your login. If you used SnapQuest's earlier passwordless login, use the sign-in link below. Players can still join a hunt with a team invite and no account.</p>
             <form onSubmit={signIn}>
@@ -267,7 +309,15 @@ function App() {
             <div className="home-form-helper home-form-secure"><ShieldCheck size={15}/> Email is your private login; your display name is public.</div>
             <div className="home-form-auth-options">
               <button type="button" className="text-button" onClick={() => { setAuthMode(authMode === 'signup' ? 'signin' : 'signup'); setMessage('') }}>{authMode === 'signup' ? 'Already have an account? Sign in' : 'Create an organizer account'}</button>
-              {authMode === 'signin' && <><button type="button" className="text-button" disabled={loading} onClick={() => void sendOrganizerSignInLink()}>Email me a sign-in link</button><button type="button" className="text-button" disabled={loading} onClick={() => void requestPasswordReset()}>Forgot password?</button></>}
+              {authMode === 'signin' && <><button type="button" className="text-button" disabled={loading} onClick={() => void sendOrganizerSignInLink()}>Email me a sign-in link</button><button type="button" className="text-button" disabled={loading} onClick={() => void requestPasswordReset()}>Forgot password?</button><button type="button" className="text-button" disabled={loading} onClick={() => {
+                if (!email.trim() || !emailFieldRef.current?.checkValidity()) {
+                  setMessage('Enter your email address first.')
+                  emailFieldRef.current?.focus()
+                  return
+                }
+                setAuthMode('confirm')
+                void resendOrganizerConfirmation()
+              }}>Resend account confirmation</button></>}
             </div>
           </>}
         </section>}
