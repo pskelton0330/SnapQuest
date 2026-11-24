@@ -311,7 +311,7 @@ test.beforeEach(async ({ page }) => {
       const requestedPath = new URL(request.url()).searchParams.get('storage_path')?.replace(/^eq\./, '')
       if (photoReplacementRaceMode) {
         const row = raceCurrentPhotoPath && (!requestedPath || requestedPath === raceCurrentPhotoPath)
-          ? [{ id: '99999999-9999-4999-8999-999999999999', hunt_item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: raceCurrentPhotoPath, submitted_at: new Date().toISOString(), approval_status: 'approved' }]
+          ? [{ id: '99999999-9999-4999-8999-999999999999', hunt_item_id: '77777777-7777-4777-8777-777777777777', team_id: '44444444-4444-4444-8444-444444444444', participant_id: '55555555-5555-4555-8555-555555555555', storage_path: raceCurrentPhotoPath, submitted_at: new Date().toISOString(), approval_status: raceAcceptedPaths.length ? 'pending' : 'approved' }]
           : []
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(row) })
         return
@@ -992,7 +992,7 @@ test('stale device photo replacement reloads the winning photo and cleans only i
 
   await secondSlot.locator('input[type="file"]').setInputFiles({ name: 'stale-replacement.png', mimeType: 'image/png', buffer: image })
   await expect(secondSlot.getByRole('status')).toContainText('A teammate replaced this photo first. Their saved photo is still in place; your replacement was not saved.')
-  await expect(secondSlot.locator('.photo-submission-status')).toContainText('Photo by Taylor · Team Cedar · approved')
+  await expect(secondSlot.locator('.photo-submission-status')).toContainText('Photo by Taylor · Team Cedar · awaiting review')
   const displayedSource = await secondSlot.locator('.submission-preview').getAttribute('src')
   expect(decodeURIComponent(displayedSource ?? '')).toContain(winningPath)
   expect(raceAcceptedPaths).toEqual([winningPath])
@@ -1485,6 +1485,51 @@ test('organizer can start a rematch from a completed hunt without changing its r
   await expect(page.getByRole('button', { name: 'Save draft changes' })).toBeEnabled()
 })
 
+test('Hunt Library retries with the same request ID after a lost response', async ({ page }) => {
+  organizerHuntLibraryMode = true
+  organizerReviewMode = true
+  organizerReviewStatus = 'completed'
+  await restoreOrganizerSession(page)
+  const requests: string[] = []
+  await page.route('**/rest/v1/rpc/copy_hunt_library_to_draft', async route => {
+    requests.push(route.request().postDataJSON().p_request_id)
+    if (requests.length === 1) {
+      await route.fulfill({ status: 503, json: { message: 'Response unavailable' } })
+    } else {
+      await route.fallback()
+    }
+  })
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'Browse Hunt Library' }).click()
+  await page.getByRole('article').filter({ hasText: 'Christmas Lights Hunt' }).getByRole('button', { name: 'Preview complete hunt' }).click()
+  const copy = page.getByRole('button', { name: 'Copy to My Hunts' })
+  await copy.click()
+  await expect(page.getByText('Response unavailable')).toBeVisible()
+  await copy.click()
+  await expect(page.getByRole('heading', { name: 'Edit your draft hunt' })).toBeVisible()
+  expect(requests).toHaveLength(2)
+  expect(requests[0]).toMatch(/^[\da-f-]{36}$/i)
+  expect(requests[1]).toBe(requests[0])
+})
+
+test('My Hunts follows the server clock when the device is a day behind', async ({ page }) => {
+  await restoreOrganizerSession(page)
+  const serverNow = Date.now() + 24 * 60 * 60 * 1000
+  await page.route('**/rest/v1/rpc/get_organizer_hunt_clock', route => route.fulfill({ json: new Date(serverNow).toISOString() }))
+  await page.route('**/rest/v1/hunts?*', route => {
+    if (!route.request().url().includes('organizer_id=')) return route.fallback()
+    return route.fulfill({ json: [
+      { id: 'clock-hunt', title: 'Start by server time', venue: 'Park', status: 'scheduled',
+        start_at: new Date(serverNow - 20_000).toISOString(), duration_minutes: 60, created_at: new Date(serverNow - 100_000).toISOString() },
+      { id: 'expired-hunt', title: 'End by server time', venue: 'Park', status: 'active',
+        start_at: new Date(serverNow - 120_000).toISOString(), duration_minutes: 1, created_at: new Date(serverNow - 200_000).toISOString() },
+    ] })
+  })
+  await page.goto('/#/')
+  await expect(page.getByRole('article').filter({ hasText: 'Start by server time' }).getByRole('button', { name: 'Manage live hunt' })).toBeVisible()
+  await expect(page.getByRole('article').filter({ hasText: 'End by server time' }).getByRole('button', { name: 'Review photos' })).toBeVisible()
+})
+
 test('organizer reviews a photo, changes its decision, and finalizes results', async ({ page }) => {
   organizerReviewMode = true
   organizerReviewDecision = 'pending'
@@ -1646,6 +1691,25 @@ test('organizer login confirms that the email link was requested', async ({ page
   await expect(page.getByRole('status')).toContainText('Check your email')
 })
 
+test('unconfirmed organizers can resend confirmation or change the address', async ({ page }) => {
+  await page.route('**/auth/v1/signup**', route => route.fulfill({ json: { user: { id: 'organizer' }, session: null } }))
+  await page.route('**/auth/v1/resend**', route => route.fulfill({ json: {} }))
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'Organizer Login' }).click()
+  await page.getByRole('button', { name: 'Create an organizer account' }).click()
+  await page.getByLabel('Email address').fill('host@example.test')
+  await page.getByLabel('Password', { exact: true }).fill('example-hunt-123')
+  await page.getByRole('button', { name: 'Create organizer account' }).click()
+  await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible()
+  const resent = page.waitForRequest(request => request.url().includes('/auth/v1/resend'))
+  await page.getByRole('button', { name: 'Resend confirmation email' }).click()
+  expect((await resent).postDataJSON()).toMatchObject({ email: 'host@example.test', type: 'signup' })
+  await expect(page.getByText('If this address is awaiting confirmation')).toBeVisible()
+  await page.getByRole('button', { name: 'Change email address' }).click()
+  await expect(page.getByLabel('Email address')).toBeEditable()
+  await expect(page.getByLabel('Password', { exact: true })).toHaveValue('')
+})
+
 test('organizer email callback restores the session at the site root', async ({ page }) => {
   await page.goto('/#/')
   await page.getByRole('button', { name: /Organizer Login/ }).click()
@@ -1749,11 +1813,13 @@ test('organizer can save, reopen, edit, and save a production draft', async ({ p
     { title: 'Find a park sign', description: null, pointValue: 1, libraryItemId: undefined },
   ])
 
-  await huntCard.getByRole('button', { name: 'Continue setup' }).click()
+  await huntCard.getByRole('button', { name: 'Edit draft' }).click()
   await expect(page.getByRole('heading', { name: 'Edit your draft hunt' })).toBeVisible()
   await expect(page.getByLabel('Venue name')).toHaveValue('Riverside Park')
   await expect(challengeTitles.nth(0)).toHaveValue('Find a red leaf')
   await page.getByLabel(/Hunt title/).fill('Saturday Family Adventure')
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Keep editing' }).click()
   await challengeTitles.nth(0).fill('Find a bright red leaf')
   await page.getByRole('button', { name: 'Move item 2 up' }).click()
   await expect(challengeTitles.nth(0)).toHaveValue('Find a park sign')

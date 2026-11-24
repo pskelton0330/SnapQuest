@@ -611,7 +611,10 @@ test('two organizers get an immutable public hunt only after final results, then
   assert.deepEqual(retried,finalScores)
   assert.equal((await as('anon',null,'select public.list_hunt_templates(false) data')).rows[0].data.filter(hunt=>hunt.title==='Christmas Lights Hunt').length,1,'retries do not duplicate the public entry')
 
-  const copiedId=(await as('authenticated',other,'select public.copy_hunt_library_to_draft($1) id',[templateId])).rows[0].id
+  const request = 'c08eb129-70c1-45b7-b72d-606f8e8c29eb'
+  const copiedId=(await as('authenticated',other,'select public.copy_hunt_library_to_draft($1,$2) id',[templateId,request])).rows[0].id
+  const retriedCopy=(await as('authenticated',other,'select public.copy_hunt_library_to_draft($1,$2) id',[templateId,request])).rows[0].id
+  assert.equal(retriedCopy,copiedId,'retry after a lost response returns the same private draft')
   const copied=(await as('authenticated',other,'select id,organizer_id,title,venue,status,duration_minutes,rules,final_scores from public.hunts where id=$1',[copiedId])).rows[0]
   assert.equal(copied.organizer_id,other); assert.equal(copied.status,'draft'); assert.equal(copied.venue,'Choose a venue')
   assert.equal(copied.duration_minutes,95); assert.deepEqual(copied.rules,publicHunt.rules); assert.deepEqual(copied.final_scores,[])
@@ -879,4 +882,29 @@ test('admin deletion commits references and durable inventory together, and reus
   await assert.rejects(as('authenticated', accountId, 'select public.ensure_my_organizer_profile()'),/account is being removed/)
   await db.query('delete from auth.users where id=$1',[accountId])
   assert.equal((await as('service_role', null, start, [adminId,'account',accountId])).rows[0].id,accountJob)
+})
+
+test('community handoff and moderation preserve an independent draft', async () => {
+  const adminId = 'c78a0ed6-0c3f-4af9-8cc1-24b5d40432da'
+  const creator = '3d62e61e-2188-4743-9b88-6e9207f386a2'
+  await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'snapshot-creator@example.test',now())",[creator])
+  await db.query('insert into public.organizers(id,auth_user_id) values($1,$1)',[creator])
+  const gameId = (await as('authenticated',creator,"select public.create_hunt_draft('Community Lights','Park',array['Stay together'],$1::jsonb,45) id",[JSON.stringify([{title:'Spot a wreath',pointValue:4}])])).rows[0].id
+  await db.query("update public.hunts set status='review' where id=$1",[gameId])
+  await as('authenticated',creator,'select public.finalize_hunt($1)',[gameId])
+  const entry = (await db.query('select id from public.hunt_templates where completed_game_id=$1',[gameId])).rows[0]
+  const list = 'select public.list_hunt_templates(false) docs'
+  const before = (await as('anon',null,list)).rows[0].docs.find(doc=>doc.id===entry.id)
+  const copy = (await as('authenticated',other,'select public.copy_hunt_library_to_draft($1) id',[entry.id])).rows[0].id
+  await assert.rejects(as('authenticated',other,'select public.system_admin_delete_template($1,$2)',[adminId,entry.id]),/permission denied/)
+  await as('service_role',null,"select public.system_admin_start_deletion($1,'account',$2)",[adminId,creator])
+  const community = (await db.query('select o.is_system_profile from public.hunt_templates t join public.organizers o on o.id=t.organizer_id where t.id=$1',[entry.id])).rows[0]
+  assert.equal(community.is_system_profile,true)
+  const after = (await as('anon',null,list)).rows[0].docs.find(doc=>doc.id===entry.id)
+  assert.deepEqual(after,before)
+  await as('service_role',null,'select public.system_admin_delete_template($1,$2)',[adminId,entry.id])
+  assert.equal((await as('anon',null,list)).rows[0].docs.some(doc=>doc.id===entry.id),false)
+  const draft = (await as('authenticated',other,'select status,template_id from public.hunts where id=$1',[copy])).rows[0]
+  assert.deepEqual(draft,{status:'draft',template_id:null})
+  assert.equal((await db.query('select status from public.hunts where id=$1',[gameId])).rows[0].status,'completed')
 })

@@ -155,8 +155,22 @@ language plpgsql set search_path = '' as $$
 begin
   if coalesce(current_setting('snapquest.library_snapshot_write', true), '') <> 'on' then
     if tg_table_name = 'hunt_templates' then
+      if tg_op = 'UPDATE' and old.is_completed_snapshot and new.is_completed_snapshot
+         and (to_jsonb(new) - array['organizer_id','creator_profile_id']) =
+             (to_jsonb(old) - array['organizer_id','creator_profile_id'])
+         and exists (
+           select 1 from public.organizers o join public.hunt_creator_profiles c on c.organizer_id = o.id
+           where o.is_system_profile and new.organizer_id = o.id and new.creator_profile_id = c.id
+         ) then
+        return new;
+      end if;
+      if tg_op = 'DELETE' and old.is_completed_snapshot
+         and current_setting('snapquest.withdraw_hunt_template', true) = old.id::text then
+        return old;
+      end if;
       if (tg_op = 'INSERT' and new.is_completed_snapshot)
-         or (tg_op in ('UPDATE', 'DELETE') and old.is_completed_snapshot) then
+         or (tg_op = 'UPDATE' and (old.is_completed_snapshot or new.is_completed_snapshot))
+         or (tg_op = 'DELETE' and old.is_completed_snapshot) then
         raise exception 'Completed Hunt Library snapshots are immutable';
       end if;
     elsif exists(select 1 from public.hunt_templates t
@@ -208,12 +222,34 @@ drop trigger if exists publish_completed_hunt_to_library on public.hunts;
 create trigger publish_completed_hunt_to_library after update of status on public.hunts
   for each row execute function public.snapshot_completed_hunt_for_library();
 
-create or replace function public.copy_hunt_library_to_draft(p_template_id uuid) returns uuid
+create table if not exists public.hunt_draft_requests (
+  organizer_id uuid not null references public.organizers(id) on delete cascade,
+  request_id uuid not null,
+  draft_id uuid not null references public.hunts(id) on delete cascade,
+  kind text not null check (kind in ('copy', 'replay')),
+  source_id uuid not null,
+  primary key (organizer_id, request_id)
+);
+alter table public.hunt_draft_requests enable row level security;
+revoke all on public.hunt_draft_requests from public, anon, authenticated;
+create index if not exists hunt_draft_requests_draft_idx on public.hunt_draft_requests(draft_id);
+
+create or replace function public.copy_hunt_library_to_draft(p_template_id uuid, p_request_id uuid default gen_random_uuid()) returns uuid
 language plpgsql security definer set search_path = '' as $$
-declare v_owner uuid; v_template public.hunt_templates%rowtype; v_hunt_id uuid;
+declare v_owner uuid; v_template public.hunt_templates%rowtype; v_hunt_id uuid; v_request public.hunt_draft_requests%rowtype;
 begin
   select id into v_owner from public.organizers where auth_user_id = auth.uid();
   if v_owner is null then raise exception 'Organizer access required'; end if;
+  if p_request_id is null then raise exception 'A request ID is required'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(v_owner::text || ':' || p_request_id::text, 0));
+  select * into v_request from public.hunt_draft_requests
+    where organizer_id = v_owner and request_id = p_request_id;
+  if found then
+    if v_request.kind <> 'copy' or v_request.source_id is distinct from p_template_id then
+      raise exception 'This request ID was already used for another hunt';
+    end if;
+    return v_request.draft_id;
+  end if;
   select * into v_template from public.hunt_templates t
     where t.id = p_template_id and t.is_completed_snapshot and t.visibility = 'public' for share;
   if not found then raise exception 'Hunt not available'; end if;
@@ -224,18 +260,30 @@ begin
   insert into public.hunt_items(hunt_id, title_snapshot, description_snapshot, point_value, display_order)
   select v_hunt_id, title, nullif(description, ''), points, display_order
   from public.hunt_template_items where template_id = v_template.id order by display_order;
+  insert into public.hunt_draft_requests(organizer_id, request_id, draft_id, kind, source_id)
+    values(v_owner, p_request_id, v_hunt_id, 'copy', p_template_id);
   return v_hunt_id;
 end;
 $$;
-revoke all on function public.copy_hunt_library_to_draft(uuid) from public;
-grant execute on function public.copy_hunt_library_to_draft(uuid) to authenticated;
+revoke all on function public.copy_hunt_library_to_draft(uuid, uuid) from public;
+grant execute on function public.copy_hunt_library_to_draft(uuid, uuid) to authenticated;
 
-create or replace function public.create_hunt_draft_from_game(p_hunt_id uuid) returns uuid
+create or replace function public.create_hunt_draft_from_game(p_hunt_id uuid, p_request_id uuid default gen_random_uuid()) returns uuid
 language plpgsql security definer set search_path = '' as $$
-declare v_owner uuid; v_source public.hunts%rowtype; v_hunt_id uuid;
+declare v_owner uuid; v_source public.hunts%rowtype; v_hunt_id uuid; v_request public.hunt_draft_requests%rowtype;
 begin
   select id into v_owner from public.organizers where auth_user_id = auth.uid();
   if v_owner is null then raise exception 'Organizer access required'; end if;
+  if p_request_id is null then raise exception 'A request ID is required'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(v_owner::text || ':' || p_request_id::text, 0));
+  select * into v_request from public.hunt_draft_requests
+    where organizer_id = v_owner and request_id = p_request_id;
+  if found then
+    if v_request.kind <> 'replay' or v_request.source_id is distinct from p_hunt_id then
+      raise exception 'This request ID was already used for another hunt';
+    end if;
+    return v_request.draft_id;
+  end if;
   select * into v_source from public.hunts h where h.id = p_hunt_id and h.organizer_id = v_owner and h.status = 'completed' for share;
   if not found then raise exception 'Only your completed hunt can be used again'; end if;
   if not exists(select 1 from public.hunt_items where hunt_id = v_source.id) then raise exception 'Hunt has no challenges'; end if;
@@ -245,10 +293,48 @@ begin
   insert into public.hunt_items(hunt_id, title_snapshot, description_snapshot, point_value, display_order)
   select v_hunt_id, title_snapshot, description_snapshot, point_value, display_order
   from public.hunt_items where hunt_id = v_source.id order by display_order;
+  insert into public.hunt_draft_requests(organizer_id, request_id, draft_id, kind, source_id)
+    values(v_owner, p_request_id, v_hunt_id, 'replay', p_hunt_id);
   return v_hunt_id;
 end;
 $$;
-revoke all on function public.create_hunt_draft_from_game(uuid) from public;
-grant execute on function public.create_hunt_draft_from_game(uuid) to authenticated;
+revoke all on function public.create_hunt_draft_from_game(uuid, uuid) from public;
+grant execute on function public.create_hunt_draft_from_game(uuid, uuid) to authenticated;
+
+-- Games keep their saved snapshot but no longer point at a deleted template.
+create or replace function public.system_admin_delete_template(p_actor_user_id uuid, p_template_id uuid)
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare v_title text;
+begin
+  if not exists (select 1 from public.system_admins a where a.user_id = p_actor_user_id) then
+    raise exception 'System administrator access required';
+  end if;
+
+  select title into v_title from public.hunt_templates where id = p_template_id for update;
+  if v_title is null then raise exception 'Hunt template not found'; end if;
+
+  update public.hunts set template_id = null where template_id = p_template_id;
+  perform set_config('snapquest.withdraw_hunt_template', p_template_id::text, true);
+  delete from public.hunt_templates where id = p_template_id;
+  perform set_config('snapquest.withdraw_hunt_template', '', true);
+
+  insert into public.system_admin_action_log(actor_user_id, action, subject_type, subject_id, details)
+  values (p_actor_user_id, 'delete_template', 'hunt_template', p_template_id, jsonb_build_object('title', v_title));
+  return v_title;
+end;
+$$;
+revoke all on function public.system_admin_delete_template(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.system_admin_delete_template(uuid, uuid) to service_role;
+
+create or replace function public.get_organizer_hunt_clock() returns timestamptz
+language sql stable security invoker set search_path = '' as $$
+  select statement_timestamp();
+$$;
+revoke all on function public.get_organizer_hunt_clock() from public, anon;
+grant execute on function public.get_organizer_hunt_clock() to authenticated;
 
 commit;
