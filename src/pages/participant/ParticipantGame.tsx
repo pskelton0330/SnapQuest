@@ -9,6 +9,7 @@ import { celebrationFilename, renderWinnerCelebrationCard, winnerCaption } from 
 import { copyTextToClipboard } from '../../lib/clipboard'
 import { normalizeFinalScores } from '../../lib/scoring'
 import { reportOperation, reportOperationFailure } from '../../lib/operationLog'
+import { isAuthorizationFailure } from '../../lib/operationFailure'
 
 type ParticipantGameProps = { huntId: string; session: Session }
 type TeamMate = { id: string; display_name: string }
@@ -41,6 +42,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   const [galleryMode, setGalleryMode] = useState<'submitted' | 'all'>('submitted')
   const [uploading, setUploading] = useState<Record<string, boolean>>({})
   const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({})
+  const [itemRefreshTick, setItemRefreshTick] = useState(0)
   const [submissionRefreshTick, setSubmissionRefreshTick] = useState(0)
   const [reviewGallery, setReviewGallery] = useState<ReviewGallery | null>(null)
   const [previewRetryingPath, setPreviewRetryingPath] = useState('')
@@ -48,6 +50,9 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   const [celebrationError, setCelebrationError] = useState('')
   const [copiedCaption, setCopiedCaption] = useState('')
   const [loading, setLoading] = useState(true)
+  const [contextLoadError, setContextLoadError] = useState('')
+  const [itemsUnavailable, setItemsUnavailable] = useState(false)
+  const [submissionsUnavailable, setSubmissionsUnavailable] = useState(false)
   const [error, setError] = useState('')
   const [serverNow, setServerNow] = useState(0)
   const [teamProgress, setTeamProgress] = useState<TeamProgress[]>([])
@@ -61,6 +66,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   const [selfiePreviewRetry, setSelfiePreviewRetry] = useState(0)
   const [organizerCapability, setOrganizerCapability] = useState<{ huntId: string; allowed: boolean }>({ huntId: '', allowed: false })
   const contextRequestId = useRef(0)
+  const itemsNeedRefresh = useRef(false)
   const galleryRequestId = useRef(0)
   const reviewGalleryRef = useRef<ReviewGallery | null>(null)
   const submissionUrlCache = useRef(new Map<string, { url: string; expiresAt: number }>())
@@ -84,13 +90,22 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     const requestId = ++contextRequestId.current
     const { data, error: contextError } = await supabase.rpc('get_participant_context', { p_hunt_id: huntId })
     if (requestId !== contextRequestId.current) return
-    if (contextError) { setProgressStatus('stale'); setError(contextError.message); setLoading(false); return }
+    if (contextError) {
+      setProgressStatus('stale')
+      setContextLoadError(isAuthorizationFailure(contextError)
+        ? 'This session could not open the hunt. Reopen your team invitation to reconnect.'
+        : 'Could not refresh the hunt. Check your connection and try again.')
+      setLoading(false)
+      return
+    }
     const next = data as HuntContext
+    setContextLoadError('')
     setContext(next)
     if (!teamNameDirty) setTeamNameDraft(next.team.name)
     setServerNow(new Date(next.server_now).getTime())
     if (['active', 'ended', 'review', 'completed'].includes(next.runtime_state)) setSubmissionRefreshTick(value => value + 1)
     else { setTeamProgress([]); setProgressStatus('loading') }
+    if (itemsNeedRefresh.current) setItemRefreshTick(value => value + 1)
     if (next.runtime_state !== 'active') {
       setLoading(false)
       return
@@ -264,12 +279,14 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       const { data, error: itemError } = await supabase!.from('hunt_items')
         .select('id,title_snapshot,description_snapshot,point_value,display_order').eq('hunt_id', huntId).order('display_order')
       if (cancelled) return
-      if (itemError) { setError(itemError.message); return }
+      itemsNeedRefresh.current = Boolean(itemError)
+      setItemsUnavailable(Boolean(itemError))
+      if (itemError) return
       setItems(data ?? [])
     }
     void loadItems()
     return () => { cancelled = true }
-  }, [huntId, runtimeState])
+  }, [huntId, itemRefreshTick, runtimeState])
 
   useEffect(() => {
     if (!supabase || !currentTeamId || !['active', 'ended', 'review', 'completed'].includes(runtimeState)) return
@@ -279,7 +296,8 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
         .select('id,hunt_item_id,team_id,participant_id,storage_path,submitted_at,approval_status')
         .eq('hunt_id', huntId).eq('team_id', currentTeamId!)
       if (cancelled) return
-      if (submissionError) { setError(submissionError.message); return }
+      setSubmissionsUnavailable(Boolean(submissionError))
+      if (submissionError) return
       const photoRows = (data ?? []) as Omit<PhotoSubmission, 'photoUrl'>[]
       const activePaths = new Set(photoRows.map(row => row.storage_path))
       for (const path of submissionUrlCache.current.keys()) if (!activePaths.has(path)) submissionUrlCache.current.delete(path)
@@ -593,9 +611,17 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
 
   return <main className={`participant-shell game-shell ${!context?.start_at && runtimeState === 'waiting' ? 'manual-start-lobby' : ''} ${runtimeState === 'completed' ? 'completed-state' : ''}`}>
     <header className="participant-topbar"><a className="brand" href="#"><span className="brand-icon"><Camera size={19}/></span> SnapQuest</a><span className="nav-note"><ShieldCheck size={15}/> {context ? context.team.name : 'Participant space'} {canManageCurrentHunt && <a className="outline-button" href={`#/manage/${huntId}`}><Settings2 size={14}/> Manage hunt</a>}</span></header>
-    {loading ? <div className="participant-loading"><LoaderCircle className="spin" size={24}/> Loading your hunt…</div> : error && !context ? <section className="participant-message"><CircleHelp size={24}/><h1>We couldn’t open this hunt</h1><p>{error}</p><button className="outline-button" onClick={() => { setLoading(true); setError(''); void loadContext() }}>Try again</button></section> : context ? <>
+    {loading ? <div className="participant-loading"><LoaderCircle className="spin" size={24}/> Loading your hunt…</div> : contextLoadError && !context ? <section className="participant-message"><CircleHelp size={24}/><h1>We couldn’t open this hunt</h1><p>{contextLoadError}</p><button className="outline-button" onClick={() => { setLoading(true); void loadContext() }}>Try again</button></section> : context ? <>
       <section className="participant-game-heading"><div><div className="eyebrow"><MapPin size={14}/> {context.venue}</div><h1>{context.title}</h1><p>You’re playing as <b>{context.participant.display_name}</b> on <span className="team-name-pill">{context.team.name}</span></p></div>{runtimeState === 'active' && <div className="game-clock"><Clock3 size={19}/><span>{clockLabel(remainingSeconds)}</span><small>TIME LEFT</small></div>}</section>
       {runtimeState === 'active' && <section className="participant-live-status" aria-label="Live hunt progress"><div className="live-time-progress"><div className="live-status-heading"><b>Time remaining</b><span>{clockLabel(remainingSeconds)}</span></div><div className="live-progress-track" role="progressbar" aria-label="Time remaining" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, Math.min(100, remainingSeconds / (context.duration_minutes * 60) * 100)))}><span className="live-time-fill" style={{width: `${Math.max(0, Math.min(100, remainingSeconds / (context.duration_minutes * 60) * 100))}%`}}/></div></div>{<div className="live-team-progress"><div className="live-status-heading"><b>Team progress</b><span>Accepted photos</span></div><p className="progress-update-status" role="status">{progressStatus === 'loading' ? 'Updating team progress...' : progressStatus === 'stale' ? 'Team progress may be out of date. Reconnecting...' : 'Team progress is up to date.'}</p>{teamProgress.map(team => <div className="live-team-row" key={team.team_id}><span className="team-swatch" style={{backgroundColor: team.display_color}}/><b>{team.team_name}</b><span>{team.accepted_count}/{team.total_items}</span><div className="live-progress-track" role="progressbar" aria-label={`${team.team_name} accepted photos`} aria-valuemin={0} aria-valuemax={team.total_items} aria-valuenow={team.accepted_count}><span style={{width: `${team.total_items ? Math.min(100, team.accepted_count / team.total_items * 100) : 0}%`}}/></div></div>)}</div>}</section>}
+      {(contextLoadError || runtimeState === 'active' && (itemsUnavailable || submissionsUnavailable)) && <div className="participant-error game-error" role="status">
+        <CircleHelp size={15}/>
+        <span>{contextLoadError || (itemsUnavailable ? 'Could not refresh the challenge list.' : 'Could not refresh your team photos. Showing the last update.')}</span>
+        <button className="outline-button" onClick={() => {
+          if (itemsUnavailable) setItemRefreshTick(value => value + 1)
+          void loadContext()
+        }}>Retry hunt refresh</button>
+      </div>}
       {error && <div className="participant-error game-error"><CircleHelp size={15}/>{error}{['review','completed'].includes(runtimeState) && <button className="outline-button" onClick={() => void loadReviewGallery()}>Retry gallery</button>}</div>}
       {runtimeState === 'waiting' && context.team.selfie && selfiePreviewUnavailable && <div className="participant-error" role="status">Team selfie saved, but its preview is unavailable. <button className="outline-button" onClick={() => setSelfiePreviewRetry(value => value + 1)}>Retry preview</button></div>}
 

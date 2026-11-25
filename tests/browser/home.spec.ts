@@ -789,6 +789,47 @@ test('team progress retains the last counts and recovers after a failed refresh'
   await expect(page.getByText('Team progress is up to date.')).toBeVisible()
 })
 
+test('a failed hunt refresh keeps play available and clears when the same data recovers', async ({ page }) => {
+  participantRuntimeState = 'active'
+  let failedRead: 'context' | 'submissions' | null = null
+  const failedResponse = { status: 400, json: { message: 'TypeError: Load failed' } }
+  await page.route('**/rest/v1/rpc/get_participant_context', route =>
+    failedRead === 'context' ? route.fulfill(failedResponse) : route.fallback())
+  await page.route('**/rest/v1/submissions?*', route => {
+    if (failedRead === 'submissions') return route.fulfill(failedResponse)
+    return route.fulfill({ json: [{
+      id: '99999999-9999-4999-8999-999999999999',
+      hunt_item_id: '77777777-7777-4777-8777-777777777777',
+      team_id: '44444444-4444-4444-8444-444444444444',
+      participant_id: '55555555-5555-4555-8555-555555555555',
+      storage_path: 'saved-photo', submitted_at: new Date().toISOString(), approval_status: 'pending',
+    }] })
+  })
+  await page.goto(`/#/join/${'a'.repeat(64)}`)
+  await page.getByLabel('What should your team call you?').fill('Taylor')
+  await page.getByRole('button', { name: 'Join the hunt' }).click()
+  const challenge = page.getByRole('article').filter({ hasText: 'A red leaf' })
+  await expect(challenge.getByText(/awaiting review/)).toBeVisible()
+  const retry = page.getByRole('button', { name: 'Retry hunt refresh' })
+  const reconnect = () => page.evaluate(() => window.dispatchEvent(new Event('online')))
+
+  failedRead = 'context'
+  await reconnect()
+  await expect(page.getByText('Could not refresh the hunt. Check your connection and try again.')).toBeVisible()
+  await expect(challenge.getByText(/awaiting review/)).toBeVisible()
+  await expect(page.getByText('TypeError: Load failed')).toHaveCount(0)
+  failedRead = 'submissions'
+  await retry.click()
+  await expect(page.getByText(/Could not refresh your team photos/)).toBeVisible()
+  await expect(challenge.getByText(/awaiting review/)).toBeVisible()
+  await expect(page.getByText('Team progress is up to date.')).toBeVisible()
+
+  failedRead = null
+  await reconnect()
+  await expect(retry).toHaveCount(0)
+  await expect(challenge.getByText(/awaiting review/)).toBeVisible()
+})
+
 test('an initial team progress failure does not imply zero photos', async ({ page }) => {
   participantRuntimeState = 'active'
   await page.route('**/rest/v1/rpc/get_hunt_progress', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'Unavailable' }) }))
