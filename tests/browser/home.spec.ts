@@ -792,7 +792,16 @@ test('team progress retains the last counts and recovers after a failed refresh'
 test('a failed hunt refresh keeps play available and clears when the same data recovers', async ({ page }) => {
   participantRuntimeState = 'active'
   let failedRead: 'context' | 'submissions' | null = null
+  const contextWrites: string[] = []
   const failedResponse = { status: 400, json: { message: 'TypeError: Load failed' } }
+  await page.route('**/rest/v1/rpc/record_audit_event', route => {
+    const details = route.request().postDataJSON().p_details
+    if (details.stage === 'player_context_refresh_failed') {
+      contextWrites.push(details.operation_id)
+      if (contextWrites.length === 1) return route.fulfill(failedResponse)
+    }
+    return route.fallback()
+  })
   await page.route('**/rest/v1/rpc/get_participant_context', route =>
     failedRead === 'context' ? route.fulfill(failedResponse) : route.fallback())
   await page.route('**/rest/v1/submissions?*', route => {
@@ -818,6 +827,7 @@ test('a failed hunt refresh keeps play available and clears when the same data r
   await expect(page.getByText('Could not refresh the hunt. Check your connection and try again.')).toBeVisible()
   await expect(challenge.getByText(/awaiting review/)).toBeVisible()
   await expect(page.getByText('TypeError: Load failed')).toHaveCount(0)
+  await expect.poll(() => contextWrites.length).toBe(1)
   failedRead = 'submissions'
   await retry.click()
   await expect(page.getByText(/Could not refresh your team photos/)).toBeVisible()
@@ -828,6 +838,23 @@ test('a failed hunt refresh keeps play available and clears when the same data r
   await reconnect()
   await expect(retry).toHaveCount(0)
   await expect(challenge.getByText(/awaiting review/)).toBeVisible()
+  for (const area of ['player_context', 'player_submissions']) {
+    const byStage = (stage: string) => auditReports.filter(report =>
+      (report.p_details as Record<string, unknown>)?.stage === stage)
+    await expect.poll(() => byStage(area + '_refresh_recovered').length).toBe(1)
+    const failure = byStage(area + '_refresh_failed')
+    const [recovery] = byStage(area + '_refresh_recovered')
+    expect(failure).toHaveLength(1)
+    expect(recovery.p_outcome).toBe('success')
+    const recoveryDetails = recovery.p_details as Record<string, unknown>
+    expect(recoveryDetails).toMatchObject({
+      operation_id: (failure[0].p_details as Record<string, unknown>).operation_id,
+      app: 'participant_web', recovery_ms: expect.any(Number),
+    })
+    expect(recoveryDetails.recovery_ms).toBeGreaterThanOrEqual(0)
+    expect(Object.keys(recoveryDetails).sort()).toEqual(['app', 'client_report', 'operation_id', 'recovery_ms', 'stage'])
+  }
+  expect(contextWrites).toEqual([contextWrites[0], contextWrites[0]])
 })
 
 test('an initial team progress failure does not imply zero photos', async ({ page }) => {
@@ -1974,13 +2001,18 @@ test('hunt chat offers retry after read failure and keeps a message after send f
   await expect(chatError).toContainText('Messages could not be refreshed')
   await expect.poll(() => auditReports.some(report => {
     const details = report.p_details as Record<string, unknown> | undefined
-    return details?.stage === 'chat_load_failed' && details.app === 'organizer_web'
+    return details?.stage === 'chat_refresh_failed' && details.app === 'organizer_web'
   })).toBe(true)
-  const loadFailure = auditReports.find(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'chat_load_failed')
+  const loadFailure = auditReports.find(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'chat_refresh_failed')
   expect(loadFailure?.p_outcome).toBe('failure')
   expect(Object.keys(loadFailure?.p_details as Record<string, unknown>).sort()).toEqual(['app', 'client_report', 'operation_id', 'stage'])
   await chatError.getByRole('button', { name: 'Retry' }).click()
   await expect(chatError).toHaveCount(0)
+  const chatRecovery = () => auditReports.find(report => (report.p_details as Record<string, unknown> | undefined)?.stage === 'chat_refresh_recovered')
+  await expect.poll(() => chatRecovery()?.p_details).toMatchObject({
+    operation_id: (loadFailure?.p_details as Record<string, unknown>).operation_id,
+    app: 'organizer_web', recovery_ms: expect.any(Number),
+  })
 
   const message = page.getByRole('textbox', { name: 'Message' })
   await message.fill('Please meet by the fountain')
