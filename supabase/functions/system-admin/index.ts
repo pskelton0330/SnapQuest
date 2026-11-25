@@ -359,7 +359,7 @@ async function handleOrganizerDeletion(action: string, body: Record<string, unkn
   }
 
   if (!isUuid(body.huntId) || typeof body.confirmation !== "string") {
-    return respond({ error: "Choose a hunt and type its name to delete it" }, 400)
+    return respond({ error: "Choose a hunt and confirm deletion" }, 400)
   }
   const { data, error } = await admin.rpc("organizer_start_hunt_deletion", {
     p_actor_user_id: actorId, p_hunt_id: body.huntId, p_confirmation: body.confirmation,

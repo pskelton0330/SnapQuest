@@ -701,8 +701,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .game-confirm-overlay { position:fixed; inset:0; z-index:100; display:grid; place-items:center; padding:20px; background:rgb(10 26 39 / 65%); backdrop-filter:blur(4px); }
 .game-confirm-dialog { width:min(100%,480px); box-shadow:0 25px 70px rgb(0 0 0 / 25%); }
 .game-confirm-dialog h2 { margin-top:0; }
-.game-confirm-input { display:grid; gap:6px; margin:14px 0; font-weight:650; }
-.game-confirm-input input { min-width:0; width:100%; padding:10px 12px; border:1px solid var(--line, #b9b2a7); border-radius:8px; font:inherit; }
 @media(max-width:700px) { .game-lobby-summary { grid-template-columns:1fr; } .lobby-teams { grid-template-columns:1fr; } .game-reschedule label { width:100%; } .game-controls .editor-actions { align-items:flex-end; } }
 @media(max-width:620px) {
   .discovery-controls { grid-template-columns:repeat(2,minmax(0,1fr)); }

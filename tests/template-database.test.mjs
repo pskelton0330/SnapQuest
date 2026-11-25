@@ -994,7 +994,7 @@ test('organizer deletion is owner-scoped, resumable and preserves published reus
   const params = [owner,hunt,'Leave no traces']
   await assert.rejects(as('authenticated',owner,start,params),/permission denied/)
   await assert.rejects(as('service_role',null,start,[other,hunt,'Leave no traces']),/Hunt not found/)
-  await assert.rejects(as('service_role',null,start,[owner,hunt,'Incorrect']),/Type the hunt name/)
+  await assert.rejects(as('service_role',null,start,[owner,hunt,'Incorrect']),/hunt name changed/)
   const job = (await as('service_role',null,start,params)).rows[0].id
   assert.ok(job)
   assert.equal((await as('service_role',null,start,params)).rows[0].id,job)

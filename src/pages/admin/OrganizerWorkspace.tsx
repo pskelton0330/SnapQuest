@@ -995,10 +995,10 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       message={huntToDelete.status === 'draft'
         ? 'This permanently deletes the draft and its challenge list.'
         : 'This permanently deletes this game, its photos, chat, invitations, and results. Invitations stop working immediately. Any published Hunt Library entry stays available.'}
-      confirmLabel="Delete hunt" confirmationText={huntToDelete.title} destructive
+      confirmLabel="Delete hunt" destructive
       onCancel={() => setHuntToDelete(null)}
-      onConfirm={confirmation => void runHuntDeletion(huntToDelete.id, huntToDelete.title, {
-        action: 'delete-my-hunt', huntId: huntToDelete.id, confirmation,
+      onConfirm={() => void runHuntDeletion(huntToDelete.id, huntToDelete.title, {
+        action: 'delete-my-hunt', huntId: huntToDelete.id, confirmation: huntToDelete.title,
       })}
     />}
   </div>

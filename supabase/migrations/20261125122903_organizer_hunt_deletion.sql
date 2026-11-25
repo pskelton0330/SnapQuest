@@ -44,7 +44,7 @@ begin
     for update of h;
   if not found then raise sqlstate 'PT404' using message = 'Hunt not found'; end if;
   if p_confirmation is distinct from v_title then
-    raise sqlstate 'PT400' using message = 'Type the hunt name exactly to confirm deletion';
+    raise sqlstate 'PT400' using message = 'The hunt name changed. Confirm the deletion again from My Hunts.';
   end if;
 
   select coalesce(jsonb_agg(object), '[]'::jsonb) into v_objects

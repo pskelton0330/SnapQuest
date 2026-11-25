@@ -1,11 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 
-export default function ConfirmDialog({ message, title = 'Confirm game action', confirmLabel = 'Confirm', cancelLabel = 'Cancel', destructive = false, confirmationText, onCancel, onConfirm }: {
-  message: string; title?: string; confirmLabel?: string; cancelLabel?: string; destructive?: boolean
-  confirmationText?: string; onCancel: () => void; onConfirm: (confirmation: string) => void
-}) {
-  const [confirmation, setConfirmation] = useState('')
-  const canConfirm = confirmationText === undefined || confirmation === confirmationText
+export default function ConfirmDialog({ message, title = 'Confirm game action', confirmLabel = 'Confirm', cancelLabel = 'Cancel', destructive = false, onCancel, onConfirm }: { message: string; title?: string; confirmLabel?: string; cancelLabel?: string; destructive?: boolean; onCancel: () => void; onConfirm: () => void }) {
   const container = useRef<HTMLDivElement>(null)
   const cancelRef = useRef(onCancel)
   useEffect(() => { cancelRef.current = onCancel }, [onCancel])
@@ -51,19 +46,5 @@ export default function ConfirmDialog({ message, title = 'Confirm game action', 
     }
   }, [])
 
-  return <div className="game-confirm-overlay">
-    <div className="v12-card game-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="game-confirm-title" aria-describedby="game-confirm-message" ref={container} tabIndex={-1}>
-      <h2 id="game-confirm-title">{title}</h2>
-      <p id="game-confirm-message">{message}</p>
-      <form onSubmit={event => { event.preventDefault(); if (canConfirm) onConfirm(confirmation) }}>
-        {confirmationText !== undefined && <label className="game-confirm-input">Type the hunt name to confirm
-          <input value={confirmation} onChange={event => setConfirmation(event.target.value)} autoComplete="off"/>
-        </label>}
-        <div className="editor-actions">
-          <button type="button" className="outline-button" onClick={onCancel}>{cancelLabel}</button>
-          <button type="submit" disabled={!canConfirm} className={destructive ? 'reject-button' : 'primary-button'}>{confirmLabel}</button>
-        </div>
-      </form>
-    </div>
-  </div>
+  return <div className="game-confirm-overlay"><div className="v12-card game-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="game-confirm-title" aria-describedby="game-confirm-message" ref={container} tabIndex={-1}><h2 id="game-confirm-title">{title}</h2><p id="game-confirm-message">{message}</p><div className="editor-actions"><button className="outline-button" onClick={onCancel}>{cancelLabel}</button><button className={destructive ? 'reject-button' : 'primary-button'} onClick={onConfirm}>{confirmLabel}</button></div></div></div>
 }
