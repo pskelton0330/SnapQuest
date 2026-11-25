@@ -8,7 +8,7 @@ import HuntChat from '../../components/HuntChat'
 import { celebrationFilename, renderWinnerCelebrationCard, winnerCaption } from '../../lib/celebrationCard'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import { normalizeFinalScores } from '../../lib/scoring'
-import { reportOperation, reportOperationFailure } from '../../lib/operationLog'
+import { createRefreshDiagnostics, reportOperation, reportOperationFailure } from '../../lib/operationLog'
 import { isAuthorizationFailure } from '../../lib/operationFailure'
 
 type ParticipantGameProps = { huntId: string; session: Session }
@@ -72,6 +72,13 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
   const submissionUrlCache = useRef(new Map<string, { url: string; expiresAt: number }>())
   const submissionPreviewAttempts = useRef(new Set<string>())
   const currentTeamId = context?.team.id
+  const refreshDiagnostics = useMemo(() => ({
+    context: createRefreshDiagnostics(huntId, 'player_context'),
+    challenges: createRefreshDiagnostics(huntId, 'player_challenges'),
+    submissions: createRefreshDiagnostics(huntId, 'player_submissions'),
+    progress: createRefreshDiagnostics(huntId, 'player_progress'),
+    gallery: createRefreshDiagnostics(huntId, 'player_gallery'),
+  }), [huntId])
 
   const flushPhotoCleanup = useCallback(async () => {
     const teamId = currentTeamId
@@ -91,6 +98,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     const { data, error: contextError } = await supabase.rpc('get_participant_context', { p_hunt_id: huntId })
     if (requestId !== contextRequestId.current) return
     if (contextError) {
+      refreshDiagnostics.context.failed(contextError)
       setProgressStatus('stale')
       setContextLoadError(isAuthorizationFailure(contextError)
         ? 'This session could not open the hunt. Reopen your team invitation to reconnect.'
@@ -98,6 +106,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       setLoading(false)
       return
     }
+    refreshDiagnostics.context.recovered()
     const next = data as HuntContext
     setContextLoadError('')
     setContext(next)
@@ -113,21 +122,33 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     try {
       const { data: progress, error: progressError } = await supabase.rpc('get_hunt_progress', { p_hunt_id: huntId })
       if (requestId !== contextRequestId.current) return
-      if (!progressError && Array.isArray(progress)) { setTeamProgress(progress as TeamProgress[]); setProgressStatus('current') }
-      else setProgressStatus('stale')
-    } catch {
+      if (!progressError && Array.isArray(progress)) {
+        refreshDiagnostics.progress.recovered()
+        setTeamProgress(progress as TeamProgress[])
+        setProgressStatus('current')
+      } else {
+        refreshDiagnostics.progress.failed(progressError)
+        setProgressStatus('stale')
+      }
+    } catch (progressError) {
       if (requestId !== contextRequestId.current) return
+      refreshDiagnostics.progress.failed(progressError)
       setProgressStatus('stale')
     }
     setLoading(false)
-  }, [huntId, teamNameDirty])
+  }, [huntId, refreshDiagnostics, teamNameDirty])
 
   const loadReviewGallery = useCallback(async () => {
     if (!supabase) return
     const requestId = ++galleryRequestId.current
     const { data, error: galleryError } = await supabase.rpc('get_hunt_review_gallery', { p_hunt_id: huntId })
     if (requestId !== galleryRequestId.current) return
-    if (galleryError) { setError(galleryError.message); return }
+    if (galleryError) {
+      refreshDiagnostics.gallery.failed(galleryError)
+      setError(galleryError.message)
+      return
+    }
+    refreshDiagnostics.gallery.recovered()
     const result = data as ReviewGallery
     const previous = reviewGalleryRef.current
     if (previous) {
@@ -159,7 +180,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     reviewGalleryRef.current = next
     setReviewGallery(next)
     setError('')
-  }, [huntId])
+  }, [huntId, refreshDiagnostics])
 
   function markReviewPreviewUnavailable(path: string) {
     const current = reviewGalleryRef.current
@@ -281,12 +302,13 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
       if (cancelled) return
       itemsNeedRefresh.current = Boolean(itemError)
       setItemsUnavailable(Boolean(itemError))
-      if (itemError) return
+      if (itemError) { refreshDiagnostics.challenges.failed(itemError); return }
+      refreshDiagnostics.challenges.recovered()
       setItems(data ?? [])
     }
     void loadItems()
     return () => { cancelled = true }
-  }, [huntId, itemRefreshTick, runtimeState])
+  }, [huntId, itemRefreshTick, refreshDiagnostics, runtimeState])
 
   useEffect(() => {
     if (!supabase || !currentTeamId || !['active', 'ended', 'review', 'completed'].includes(runtimeState)) return
@@ -297,7 +319,8 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
         .eq('hunt_id', huntId).eq('team_id', currentTeamId!)
       if (cancelled) return
       setSubmissionsUnavailable(Boolean(submissionError))
-      if (submissionError) return
+      if (submissionError) { refreshDiagnostics.submissions.failed(submissionError); return }
+      refreshDiagnostics.submissions.recovered()
       const photoRows = (data ?? []) as Omit<PhotoSubmission, 'photoUrl'>[]
       const activePaths = new Set(photoRows.map(row => row.storage_path))
       for (const path of submissionUrlCache.current.keys()) if (!activePaths.has(path)) submissionUrlCache.current.delete(path)
@@ -309,7 +332,7 @@ export default function ParticipantGame({ huntId, session }: ParticipantGameProp
     }
     void loadSubmissions()
     return () => { cancelled = true }
-  }, [currentTeamId, huntId, runtimeState, submissionRefreshTick])
+  }, [currentTeamId, huntId, refreshDiagnostics, runtimeState, submissionRefreshTick])
 
   useEffect(() => {
     if (!supabase || !showSubmittedPhotos || runtimeState !== 'active') return

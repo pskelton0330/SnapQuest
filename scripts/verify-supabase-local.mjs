@@ -725,6 +725,29 @@ try {
   })
   assert.ifError(clientAuditError)
   assert.ok(clientAuditId)
+  const refreshOperation = randomUUID()
+  const refreshFailure = {
+    p_event_type: 'client_operation', p_hunt_id: huntId, p_outcome: 'failure',
+    p_details: { client_report: true, operation_id: refreshOperation, stage: 'player_context_refresh_failed', app: 'participant_web' },
+  }
+  const refreshRecovery = {
+    ...refreshFailure, p_outcome: 'success',
+    p_details: { ...refreshFailure.p_details, stage: 'player_context_refresh_recovered', recovery_ms: 1750 },
+  }
+  const [firstReport, retriedReport] = await Promise.all([
+    participantOne.rpc('record_audit_event', refreshFailure),
+    participantOne.rpc('record_audit_event', refreshFailure),
+  ])
+  assert.ifError(firstReport.error)
+  assert.ifError(retriedReport.error)
+  assert.ok(firstReport.data)
+  assert.equal(firstReport.data, retriedReport.data, 'An audit retry must resolve to its original row')
+  assert.ifError((await participantOne.rpc('record_audit_event', refreshRecovery)).error)
+  const refreshAudit = await organizer.rpc('list_hunt_audit_events', { p_hunt_id: huntId, p_limit: 10 })
+  assert.ifError(refreshAudit.error)
+  const refreshPair = refreshAudit.data.filter(event => event.details.operation_id === refreshOperation)
+  assert.deepEqual(refreshPair.map(event => event.details), [refreshRecovery.p_details, refreshFailure.p_details])
+  console.log('Refresh failure retries share one row, and recovery records the measured duration.')
   const failureTraceCases = [
     { actor: participantOne, app: 'participant_web', stage: 'authorization_denied' },
     { actor: participantOne, app: 'participant_web', stage: 'photo_preview_unavailable' },

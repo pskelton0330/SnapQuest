@@ -78,6 +78,8 @@ limit 100;
 
 The audit trail records timing and client failure events without invitation tokens, photo paths, or credentials. It is owner-readable and not participant-readable.
 
+Each player or chat refresh incident has a `*_refresh_failed` stage and, after that same data reloads, a `*_refresh_recovered` stage with the same `operation_id` and a `recovery_ms` value. Duration is measured on the device from the first observed failure to the next successful read and may include the wait for the next poll. The audit row timestamp is when Supabase receives the report. During an outage the open page keeps a small queue and retries it once reads recover. Closing the page before it reconnects can lose unsent reports.
+
 ## 5. Organizer login
 
 This hosted smoke test is optional during development. Run it only when an already-available test account and service quota can be used without charges; the local and GitHub Actions checks above do not require it.

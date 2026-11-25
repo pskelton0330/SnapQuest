@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { LoaderCircle, MessageCircle, Send } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { reportOperationFailure } from '../lib/operationLog'
+import { createRefreshDiagnostics, reportOperationFailure } from '../lib/operationLog'
 import type { OperationApp } from '../lib/operationLog'
 import { countNewMessages } from '../lib/chatMessages'
 
@@ -27,6 +27,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
   const preserveScroll = useRef(false)
   const loadedHuntId = useRef<string | null>(null)
   const legacyPagingHuntId = useRef<string | null>(null)
+  const refreshDiagnostics = useMemo(() => createRefreshDiagnostics(huntId, 'chat', app), [huntId, app])
 
   const loadMessages = useCallback(async (before?: Pick<HuntMessage, 'created_at' | 'id'>, older = false) => {
     if (!supabase) return
@@ -45,7 +46,16 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
     }
     const { data, error: loadError } = result
     if (id !== counter.current) return
-    if (loadError) { reportOperationFailure(huntId, crypto.randomUUID(), 'chat_load_failed', loadError, app); setError('Messages could not be refreshed. Check your connection and retry.'); setErrorAction('load'); setLoading(false); if (older) setLoadingOlder(false); return }
+    if (loadError) {
+      if (older) reportOperationFailure(huntId, crypto.randomUUID(), 'chat_load_failed', loadError, app)
+      else refreshDiagnostics.failed(loadError)
+      setError('Messages could not be refreshed. Check your connection and retry.')
+      setErrorAction('load')
+      setLoading(false)
+      if (older) setLoadingOlder(false)
+      return
+    }
+    if (!older) refreshDiagnostics.recovered()
     const rows = Array.isArray(data) ? data as HuntMessage[] : []
     const page = older ? (rows.length > 100 ? rows.slice(1) : rows) : rows.slice(-100)
     const newHunt = !older && loadedHuntId.current !== huntId
@@ -67,7 +77,7 @@ export default function HuntChat({ huntId, compact = false, readOnly = false, ap
     if (older || newHunt) setHasOlder(usingLegacyPaging ? rows.length === 100 : rows.length > 100)
     if (!older) loadedHuntId.current = huntId
     setError(''); setErrorAction(null); setLoading(false); if (older) setLoadingOlder(false)
-  }, [app, huntId])
+  }, [app, huntId, refreshDiagnostics])
 
   // Chat loads from its database-backed source on mount and when the user returns online.
   // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect

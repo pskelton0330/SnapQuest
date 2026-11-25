@@ -8,7 +8,7 @@ import { calculateTeamScores, normalizeFinalScores, winningTeams } from '../src/
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222', outsider='12345678-1234-4234-9234-123456789abc'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration, systemAdminMigration, organizerDurationMigration, systemAdminSafetyMigration, photoVisibilityMigration, adminDeletionJobsMigration, huntLibraryMigration, holidayLibraryMigration
+let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration, systemAdminMigration, organizerDurationMigration, systemAdminSafetyMigration, photoVisibilityMigration, adminDeletionJobsMigration, huntLibraryMigration, holidayLibraryMigration, refreshAuditMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -34,6 +34,7 @@ before(async () => {
     alter table storage.objects enable row level security;`)
   for(const file of (await readdir(migrationUrl)).filter(f=>f.endsWith('.sql')).sort()) {
     const sql=await readFile(new URL(file,migrationUrl),'utf8')
+    if(file.includes('audit_refresh_recovery')) { refreshAuditMigration=sql; continue }
     if(file.includes('restore_photo_review')) { restorePhotoReviewMigration=sql; continue }
     if(file.includes('self_serve_organizer_accounts')) { selfServeOrganizerMigration=sql; continue }
     if(file.includes('system_admin_community_handoff')) { systemAdminMigration=sql; continue }
@@ -105,6 +106,7 @@ before(async () => {
   await db.exec(huntLibraryMigration)
   await db.exec(photoVisibilityMigration)
   await db.exec(adminDeletionJobsMigration)
+  await db.exec(refreshAuditMigration)
 })
 after(async()=> { await db?.close() })
 test('anonymous role can execute only explicitly public security-definer RPCs', async () => {
@@ -183,6 +185,31 @@ test('client audit events are source-labeled, sanitized, and retained beyond one
   await assert.rejects(as('authenticated',owner,"select public.record_audit_event('client_operation',$1,'failure',$2::jsonb)",[id,JSON.stringify({client_report:true,operation_id:operationId,stage:'photo_upload_failed',app:'participant_web',email:'private@example.test'})]),/Unsupported client audit detail/)
   const expired=(await db.query("select count(*)::int count from public.audit_events where event_type='old_test_event'")).rows[0].count
   assert.equal(expired,1)
+})
+test('refresh audit pairs deduplicate retries and constrain timing data', async () => {
+  const hunt = (await as('authenticated',owner,"select public.create_hunt_draft('Refresh audit','Park',array[]::text[],$1::jsonb,60) id", [JSON.stringify([{title:'Find a tree'}])])).rows[0].id
+  const operationId = 'bd083b88-e9cf-4c47-b883-f15eb7f8885a'
+  const details = { client_report:true, operation_id:operationId, app:'participant_web' }
+  const record = (role, actor, outcome, event) => as(role, actor,
+    "select public.record_audit_event('client_operation',$1,$2,$3::jsonb) id",[hunt,outcome,JSON.stringify(event)])
+  const failure = { ...details, stage:'player_context_refresh_failed' }
+  const recovery = { ...details, stage:'player_context_refresh_recovered', recovery_ms:1321 }
+  const initial = (await record('authenticated',owner,'failure',failure)).rows[0].id
+  const recovered = (await record('authenticated',owner,'success',recovery)).rows[0].id
+  assert.ok(initial && recovered)
+  assert.notEqual(initial,recovered)
+  assert.equal((await record('authenticated',owner,'failure',failure)).rows[0].id,initial)
+  assert.equal((await record('authenticated',owner,'success',recovery)).rows[0].id,recovered)
+  const result = await as('authenticated',owner,'select public.list_hunt_audit_events($1) events',[hunt])
+  assert.deepEqual(result.rows[0].events.filter(e=>e.details.operation_id===operationId).map(e=>e.details), [recovery,failure])
+  for (const duration of [undefined,'1321',-1,1.25,86_400_001]) {
+    await assert.rejects(record('authenticated',owner,'success',{...recovery,recovery_ms:duration}),/Invalid refresh recovery duration/)
+  }
+  await assert.rejects(record('authenticated',owner,'failure', {...failure,recovery_ms:1}),/Invalid refresh failure report/)
+  await assert.rejects(record('authenticated',owner,'success', {...recovery,stage:'photo_accepted'}),/Unsupported client audit detail/)
+  await assert.rejects(record('authenticated',owner,'success', {...recovery,signed_url:'private'}),/Unsupported client audit detail/)
+  await assert.rejects(record('authenticated',other,'success',recovery),/Audit access denied/)
+  await assert.rejects(record('anon',null,'success',recovery),/permission denied/)
 })
 test('timing transitions create owner-scoped audit events with authoritative details',async()=>{
   const localTemplate=(await as('authenticated',owner,"select public.save_hunt_template('Timing source','Shop','',array[]::text[],$1::jsonb,60,'personal') id",[JSON.stringify([{title:'Timing item'}])])).rows[0].id
