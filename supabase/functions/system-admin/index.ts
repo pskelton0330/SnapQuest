@@ -49,20 +49,24 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "The administrative action could not be completed"
 }
 
-async function requireSystemAdmin(accessToken: string) {
+async function requirePermanentAccount(accessToken: string) {
   const { data: userData, error: userError } = await admin.auth.getUser(accessToken)
   if (userError || !userData.user || userData.user.is_anonymous) {
     throw Object.assign(new Error("Sign in with a permanent organizer account"), { status: 401 })
   }
+  return userData.user
+}
 
+async function requireSystemAdmin(accessToken: string) {
+  const user = await requirePermanentAccount(accessToken)
   const { data: membership, error: membershipError } = await admin
     .from("system_admins")
     .select("user_id")
-    .eq("user_id", userData.user.id)
+    .eq("user_id", user.id)
     .maybeSingle()
   if (membershipError) throw membershipError
   if (!membership) throw Object.assign(new Error("System administrator access required"), { status: 403 })
-  return userData.user
+  return user
 }
 
 async function listAllAuthUsers() {
@@ -310,14 +314,16 @@ async function startDeletion(actorId: string, kind: DeletionJob["kind"], subject
 
 async function advanceDeletion(job: DeletionJob, stage: DeletionJob["stage"]) {
   const { error } = await admin.from("system_admin_deletion_jobs")
-    .update({ stage, objects: [] }).eq("id", job.id).eq("stage", job.stage)
+    .update({ stage, objects: [], ...(stage === "complete" ? { hunt_title: null } : {}) })
+    .eq("id", job.id).eq("stage", job.stage)
   if (error) throw new Error("Could not save deletion progress")
   job.stage = stage
 }
 
-async function resumeDeletion(id: string) {
-  const { data, error } = await admin.from("system_admin_deletion_jobs")
-    .select("id,kind,subject_id,objects,stage").eq("id", id).maybeSingle()
+async function resumeDeletion(id: string, organizerId?: string) {
+  let request = admin.from("system_admin_deletion_jobs").select("id,kind,subject_id,objects,stage").eq("id", id)
+  if (organizerId) request = request.eq("kind", "game").eq("organizer_user_id", organizerId)
+  const { data, error } = await request.maybeSingle()
   if (error) throw new Error("Could not load deletion progress")
   if (!data) return respond({ error: "Deletion request not found" }, 404)
   const job = data as DeletionJob
@@ -334,8 +340,37 @@ async function resumeDeletion(id: string) {
     }
     return respond({ deleted: true, jobId: job.id })
   } catch {
+    if (organizerId) return respond({ deleted: false, pending: true, jobId: job.id })
     return respond({ error: "Deletion is still pending. Refresh the admin workspace and resume the deletion.", jobId: job.id }, 502)
   }
+}
+
+async function handleOrganizerDeletion(action: string, body: Record<string, unknown>, actorId: string) {
+  if (action === "list-my-hunt-deletions") {
+    const { data, error } = await admin.from("system_admin_deletion_jobs")
+      .select("id,subject_id,hunt_title").eq("kind", "game").eq("organizer_user_id", actorId)
+      .neq("stage", "complete").order("created_at").limit(100)
+    if (error) throw new Error("Could not load pending hunt deletions")
+    return respond({ jobs: data })
+  }
+  if (action === "resume-my-hunt-deletion") {
+    if (!isUuid(body.jobId)) return respond({ error: "Choose a pending hunt deletion" }, 400)
+    return await resumeDeletion(body.jobId, actorId)
+  }
+
+  if (!isUuid(body.huntId) || typeof body.confirmation !== "string") {
+    return respond({ error: "Choose a hunt and confirm deletion" }, 400)
+  }
+  const { data, error } = await admin.rpc("organizer_start_hunt_deletion", {
+    p_actor_user_id: actorId, p_hunt_id: body.huntId, p_confirmation: body.confirmation,
+  })
+  if (error) {
+    const statuses: Record<string, number> = { PT400: 400, PT403: 403, PT404: 404 }
+    const status = statuses[error.code]
+    if (status) return respond({ error: error.message }, status)
+    throw new Error("Could not prepare hunt deletion")
+  }
+  return await resumeDeletion(data as string, actorId)
 }
 
 Deno.serve(async request => {
@@ -347,9 +382,13 @@ Deno.serve(async request => {
   if (!tokenMatch) return respond({ error: "Sign in with a permanent organizer account" }, 401)
 
   try {
-    const actor = await requireSystemAdmin(tokenMatch[1])
     const body = await request.json().catch(() => ({})) as Record<string, unknown>
-    const action = body.action
+    const action = body?.action
+    if (action === "list-my-hunt-deletions" || action === "delete-my-hunt" || action === "resume-my-hunt-deletion") {
+      const organizer = await requirePermanentAccount(tokenMatch[1])
+      return await handleOrganizerDeletion(action, body, organizer.id)
+    }
+    const actor = await requireSystemAdmin(tokenMatch[1])
 
     if (action === "check") return respond({ isAdmin: true })
     if (action === "snapshot") return respond(await loadSnapshot())

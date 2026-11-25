@@ -1222,6 +1222,50 @@ try {
   assert.deepEqual(await matchingLibraryEntries(), [published])
   console.log('Two organizers verified completion publishing, independent copies and replay through Supabase HTTP.')
 
+  const deleteTitle = 'Organizer-owned deletion test'
+  const draftToDelete = await organizer.rpc('create_hunt_draft', {
+    p_title: deleteTitle, p_venue: 'Local CI', p_rules: [],
+    p_items: [{ title: 'Fixture', pointValue: 1 }], p_duration_minutes: 30,
+  })
+  assert.ifError(draftToDelete.error)
+  const mediaToDelete = [draftToDelete.data, randomUUID(), randomUUID(), randomUUID() + '.jpg'].join('/')
+  objectPaths.push(mediaToDelete)
+  assert.ifError((await admin.storage.from('hunt-photos').upload(mediaToDelete, jpeg, { contentType: 'image/jpeg' })).error)
+  const deleteRequest = { body: { action: 'delete-my-hunt', huntId: draftToDelete.data, confirmation: deleteTitle } }
+  const deniedDelete = await secondHost.functions.invoke('system-admin', deleteRequest)
+  assert.ok(deniedDelete.error)
+  assert.equal(deniedDelete.error.context.status, 404)
+  await assertObjectExists(mediaToDelete, 'An unrelated organizer must not remove the hunt media')
+  const wrongName = await organizer.functions.invoke('system-admin', { body: { ...deleteRequest.body, confirmation: 'Wrong name' } })
+  assert.ok(wrongName.error)
+  assert.equal(wrongName.error.context.status, 400)
+
+  // Simulate the page dropping out after the database step and before media cleanup.
+  const organizerUser = await organizer.auth.getUser()
+  assert.ifError(organizerUser.error)
+  const ownerJob = await admin.rpc('organizer_start_hunt_deletion', {
+    p_actor_user_id: organizerUser.data.user.id, p_hunt_id: draftToDelete.data, p_confirmation: deleteTitle,
+  })
+  assert.ifError(ownerJob.error)
+  const pendingRequest = { body: { action: 'list-my-hunt-deletions' } }
+  const ownerPending = await organizer.functions.invoke('system-admin', pendingRequest)
+  assert.ifError(ownerPending.error)
+  assert.deepEqual(ownerPending.data.jobs, [{ id: ownerJob.data, subject_id: draftToDelete.data, hunt_title: deleteTitle }])
+  const otherPending = await secondHost.functions.invoke('system-admin', pendingRequest)
+  assert.ifError(otherPending.error)
+  assert.deepEqual(otherPending.data.jobs, [])
+  const ownerResume = { body: { action: 'resume-my-hunt-deletion', jobId: ownerJob.data } }
+  assert.ok((await secondHost.functions.invoke('system-admin', ownerResume)).error)
+  const finishedDeletion = await organizer.functions.invoke('system-admin', ownerResume)
+  assert.ifError(finishedDeletion.error)
+  assert.equal(finishedDeletion.data.deleted, true)
+  await assertObjectMissing(mediaToDelete, 'The owning organizer can resume media cleanup')
+  assert.ifError((await organizer.functions.invoke('system-admin', ownerResume)).error)
+  const remainingJobs = await organizer.functions.invoke('system-admin', pendingRequest)
+  assert.ifError(remainingJobs.error)
+  assert.deepEqual(remainingJobs.data.jobs, [])
+  console.log('Organizer hunt deletion verifies ownership and confirmation and resumes through the Edge Function.')
+
   const administrator = await createIdentity('deletion-admin')
   const target = await createIdentity('deletion-target')
   const { data: administratorIdentity } = await administrator.auth.getUser()

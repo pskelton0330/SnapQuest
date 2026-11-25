@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { ArrowRight, Camera, Check, CircleHelp, Clock3, House, Library, LogOut, Plus, Search, ShieldCheck, Sparkles, Users, X, MapPin, ClipboardList, ArrowLeft, QrCode, CalendarDays, Settings2, UserRound, Play } from 'lucide-react'
+import { ArrowRight, Camera, Check, CircleHelp, Clock3, House, Library, LogOut, Plus, Search, ShieldCheck, Sparkles, Users, X, MapPin, ClipboardList, ArrowLeft, QrCode, CalendarDays, Settings2, UserRound, Play, Trash2 } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase'
 import { reportOperationFailure } from '../../lib/operationLog'
@@ -20,6 +20,8 @@ type LibraryItem = { id: string; title: string; description: string | null; cate
 type PublicHuntChallenge = { title: string; description: string | null; points: number; displayOrder: number }
 type PublicHunt = { kind?: 'starter'; id: string; title: string; description: string | null; defaultDuration: number; rules: string[]; createdAt: string; challenges: PublicHuntChallenge[] }
 type Hunt = { id: string; title: string; venue: string; status: string; created_at: string; start_at: string | null; duration_minutes: number; ended_at?: string | null; team_assignment_mode: 'organizer' | 'balanced'; voting_enabled: boolean; voting_bonus_points: number }
+type HuntDeletionJob = { id: string; subject_id: string; hunt_title: string | null }
+type HuntDeletionResult = { deleted: boolean; pending?: boolean; jobId: string }
 type DraftItem = { key: string; title: string; description: string; pointValue: number; libraryItemId?: string }
 type Team = { id: string; hunt_id: string; name: string; display_color: string; display_order: number; selfieUrl?: string; selfieSubmittedAt?: string; selfiePreviewUnavailable?: boolean }
 type Participant = { id: string; hunt_id: string; team_id: string; display_name: string; joined_at: string }
@@ -46,6 +48,18 @@ function clearSavedInvites(huntId: string) {
   try { window.localStorage.removeItem(inviteStorageKey(huntId)) } catch { /* The server is the invitation source of truth. */ }
 }
 
+async function invokeHuntDeletion<T>(body: Record<string, unknown>): Promise<T> {
+  if (!supabase) throw new Error('SnapQuest is not connected.')
+  const { data, error } = await supabase.functions.invoke<T>('system-admin', { body })
+  if (error) {
+    const response = (error as { context?: Response }).context
+    const payload = await response?.clone().json().catch(() => null) as { error?: string } | null | undefined
+    throw new Error(payload?.error ?? 'Could not confirm the deletion. Check My Hunts and try again.')
+  }
+  if (!data) throw new Error('Could not confirm the deletion. Check My Hunts and try again.')
+  return data
+}
+
 export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }: OrganizerWorkspaceProps) {
   const [page, setPageState] = useState<Page>('hunts')
   const [mobileLayout, setMobileLayout] = useState(() => window.matchMedia('(max-width: 600px)').matches)
@@ -60,6 +74,12 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   const [selectedPublicHunt, setSelectedPublicHunt] = useState<PublicHunt | null>(null)
   const [copyingPublicHuntId, setCopyingPublicHuntId] = useState('')
   const [huntRows, setHunts] = useState<Hunt[]>([])
+  const [huntToDelete, setHuntToDelete] = useState<Hunt | null>(null)
+  const [deletionJobs, setDeletionJobs] = useState<HuntDeletionJob[]>([])
+  const [deletingHuntId, setDeletingHuntId] = useState('')
+  const [deletionNotice, setDeletionNotice] = useState('')
+  const [deletionError, setDeletionError] = useState('')
+  const deletionListRequest = useRef(0)
   const [huntClockOffset, setHuntClockOffset] = useState<number | null>(null)
   const [huntClockTick, setHuntClockTick] = useState(() => performance.now())
   const hunts = useMemo(() => huntRows.map(hunt => {
@@ -157,6 +177,18 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
   }, [])
 
   const showingHunts = page === 'hunts' || page === 'overview'
+  const loadHuntDeletions = useCallback(async () => {
+    const request = ++deletionListRequest.current
+    try {
+      const result = await invokeHuntDeletion<{ jobs: HuntDeletionJob[] }>({ action: 'list-my-hunt-deletions' })
+      if (request === deletionListRequest.current && Array.isArray(result.jobs)) setDeletionJobs(result.jobs)
+    } catch { /* A failed background check leaves previously shown jobs available for retry. */ }
+  }, [])
+
+  useEffect(() => {
+    if (page !== 'hunts' || !organizer) return
+    void loadHuntDeletions()
+  }, [page, organizer, loadHuntDeletions])
   const hasTimedHunts = huntRows.some(hunt => hunt.status === 'active' || hunt.status === 'scheduled' && Boolean(hunt.start_at))
   useEffect(() => {
     if (!showingHunts || !organizer) return
@@ -817,6 +849,31 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
     setHuntMessage('')
   }
 
+  async function runHuntDeletion(huntId: string, title: string, request: Record<string, unknown>) {
+    if (deletingHuntId || !organizer) return
+    setDeletingHuntId(huntId)
+    setHuntToDelete(null)
+    setDeletionNotice('')
+    setDeletionError('')
+    try {
+      const result = await invokeHuntDeletion<HuntDeletionResult>(request)
+      if (!result.deleted && !result.pending) throw new Error('Could not confirm the deletion. Check My Hunts and try again.')
+      clearSavedInvites(huntId)
+      setHunts(current => current.filter(hunt => hunt.id !== huntId))
+      setPlayerGames(current => current.filter(game => game.hunt_id !== huntId))
+      setDeletionJobs(current => {
+        const otherJobs = current.filter(job => job.subject_id !== huntId)
+        return result.pending ? [...otherJobs, { id: result.jobId, subject_id: huntId, hunt_title: title }] : otherJobs
+      })
+      setDeletionNotice(result.pending ? 'The hunt is closed. Resume cleanup to finish removing its saved media.' : 'Hunt deleted.')
+    } catch (error) {
+      setDeletionError(error instanceof Error ? error.message : 'Could not confirm the deletion.')
+    } finally {
+      await Promise.allSettled([loadHuntList(organizer.id), loadHuntDeletions()])
+      setDeletingHuntId('')
+    }
+  }
+
   function renderHuntCard(hunt: Hunt) {
     return <article className="hunt-card" key={hunt.id}><span className="hunt-card-mark"><Camera size={21}/></span><div className="hunt-card-info"><div className="hunt-card-meta"><span className="draft-badge">{huntStatusLabel(hunt.status)}</span><span>{new Date(hunt.created_at).toLocaleDateString()}</span></div><h2>{hunt.title}</h2><p><MapPin size={14}/> {hunt.venue}</p></div>
       {hunt.status === 'draft' && <button className="outline-button" onClick={() => void editSavedDraft(hunt)}>Edit draft</button>}
@@ -824,6 +881,7 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       {hunt.status === 'active' && <button className="outline-button" onClick={() => void openManageHunt(hunt)}>Manage live hunt</button>}
       {['ended','review'].includes(hunt.status) && <button className="outline-button" onClick={() => { setManagedHunt(hunt); setResumeHuntId(hunt.id); setPage('review-hunt') }}>Review photos</button>}
       {hunt.status === 'completed' && <><button className="outline-button" onClick={() => { setManagedHunt(hunt); setResumeHuntId(hunt.id); setPage('review-hunt') }}>View results</button><button className="outline-button" disabled={Boolean(reusingHuntId)} onClick={() => void openFreshDraft('replay', hunt)}>{reusingHuntId === hunt.id ? 'Creating draft…' : 'Use again'}</button></>}
+      <button className="outline-button hunt-delete-button" disabled={Boolean(deletingHuntId)} onClick={() => setHuntToDelete(hunt)}><Trash2 size={15}/> {deletingHuntId === hunt.id ? 'Deleting…' : 'Delete hunt'}</button>
     </article>
   }
 
@@ -886,7 +944,18 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
         <div className="library-title-row"><div><div className="eyebrow"><ClipboardList size={14}/> ORGANIZER WORKSPACE</div><h1>My Hunts</h1><p>Your drafts, games in progress, completed games, and copies all stay together here.</p></div><div className="my-hunts-actions"><button className="primary-button library-add" onClick={beginBlankHunt}><Plus size={17}/> Create a Hunt</button><button className="outline-button" onClick={openHuntLibrary}><Library size={15}/> Browse Hunt Library</button></div></div>
         {loadError && <div className="inline-alert">{loadError}</div>}
         {huntMessage && <div className="inline-alert" role="alert">{huntMessage}</div>}
-        {hunts.length ? <div className="hunt-list">{[...unfinishedHunts, ...completedHunts].map(renderHuntCard)}</div> : <div className="empty-library"><span className="empty-icon"><MapPin size={24}/></span><b>No hunts yet</b><p>Create a blank hunt or start from a complete hunt in the library.</p></div>}
+        {deletionNotice && <div className="hunt-library-note" role="status">{deletionNotice}</div>}
+        {deletionError && <div className="inline-alert" role="alert">{deletionError}</div>}
+        {deletionJobs.length > 0 && <section className="hunt-list" aria-label="Pending hunt cleanup">
+          {deletionJobs.map(job => <article className="hunt-card" key={job.id}>
+            <span className="hunt-card-mark"><Trash2 size={19}/></span>
+            <div className="hunt-card-info"><h2>{job.hunt_title ?? 'Deleted hunt'}</h2><p>Media cleanup pending</p></div>
+            <button className="outline-button" disabled={Boolean(deletingHuntId)} onClick={() => void runHuntDeletion(
+              job.subject_id, job.hunt_title ?? 'Deleted hunt', { action: 'resume-my-hunt-deletion', jobId: job.id },
+            )}>{deletingHuntId === job.subject_id ? 'Cleaning up…' : 'Resume cleanup'}</button>
+          </article>)}
+        </section>}
+        {hunts.length ? <div className="hunt-list">{[...unfinishedHunts, ...completedHunts].map(renderHuntCard)}</div> : !deletionJobs.length && <div className="empty-library"><span className="empty-icon"><MapPin size={24}/></span><b>No hunts yet</b><p>Create a blank hunt or start from a complete hunt in the library.</p></div>}
       </section> : page === 'account' ? <section className="workspace-content account-settings-content">
         <button className="back-link" onClick={() => setPage('hunts')}><ArrowLeft size={15}/> Back to My hunts</button>
         <div className="new-hunt-heading"><div className="eyebrow"><Settings2 size={14}/> ACCOUNT</div><h1>Account settings</h1><p>Manage the name other players see and your private sign-in details.</p></div>
@@ -921,5 +990,16 @@ export default function OrganizerWorkspace({ session, onSignOut, initialHuntId }
       </section> : page === 'review-hunt' && managedHunt ? <HuntReview huntId={managedHunt.id} title={managedHunt.title} status={managedHunt.status} onBack={() => setPage('hunts')} onChanged={() => void loadWorkspace()} /> : null}
     </main>
     {pendingPage && <ConfirmDialog title="Discard this hunt draft?" message="Your unsaved venue, rules, and photo challenges will be cleared." cancelLabel="Keep editing" confirmLabel="Discard changes" destructive onCancel={() => setPendingPage(null)} onConfirm={discardDraftAndNavigate}/>}
+    {huntToDelete && <ConfirmDialog key={huntToDelete.id}
+      title={`Delete “${huntToDelete.title}”?`}
+      message={huntToDelete.status === 'draft'
+        ? 'This permanently deletes the draft and its challenge list.'
+        : 'This permanently deletes this game, its photos, chat, invitations, and results. Invitations stop working immediately. Any published Hunt Library entry stays available.'}
+      confirmLabel="Delete hunt" destructive
+      onCancel={() => setHuntToDelete(null)}
+      onConfirm={() => void runHuntDeletion(huntToDelete.id, huntToDelete.title, {
+        action: 'delete-my-hunt', huntId: huntToDelete.id, confirmation: huntToDelete.title,
+      })}
+    />}
   </div>
 }

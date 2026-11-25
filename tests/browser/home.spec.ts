@@ -1478,6 +1478,56 @@ test('My hunts keeps hunt creation easy to reach when no hunt is live', async ({
   await expect(page.getByRole('heading', { name: 'Create a venue hunt' })).toBeVisible()
 })
 
+test('My Hunts requires confirmation and can resume a hunt deletion after reload', async ({ page }) => {
+  await restoreOrganizerSession(page)
+  const hunt = { id: '33333333-3333-4333-8333-333333333333', title: 'Garden photo hunt', venue: 'Garden',
+    status: 'completed', start_at: null, created_at: new Date().toISOString(), duration_minutes: 60 }
+  const job = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', subject_id: hunt.id, hunt_title: hunt.title }
+  let stage: 'available' | 'pending' | 'complete' = 'available'
+  let requests = 0
+  await page.route('**/rest/v1/hunts?*', route => route.request().url().includes('organizer_id=')
+    ? route.fulfill({ json: stage === 'available' ? [hunt] : [] }) : route.fallback())
+  await page.route('**/functions/v1/system-admin', route => {
+    const action = route.request().postDataJSON()
+    if (action.action === 'list-my-hunt-deletions') return route.fulfill({ json: { jobs: stage === 'pending' ? [job] : [] } })
+    if (action.action === 'delete-my-hunt') {
+      requests++
+      expect(action).toMatchObject({ huntId: hunt.id, confirmation: hunt.title })
+      stage = 'pending'
+      return route.fulfill({ json: { deleted: false, pending: true, jobId: job.id } })
+    }
+    if (action.action === 'resume-my-hunt-deletion') {
+      expect(action.jobId).toBe(job.id)
+      stage = 'complete'
+      return route.fulfill({ json: { deleted: true, jobId: job.id } })
+    }
+    return route.fulfill({ json: { isAdmin: false } })
+  })
+  await page.goto('/#/')
+  const deleteHunt = page.getByRole('article').filter({ hasText: hunt.title }).getByRole('button', { name: 'Delete hunt' })
+  await deleteHunt.click()
+  const dialog = page.getByRole('dialog')
+  const confirm = dialog.getByRole('button', { name: 'Delete hunt' })
+  await expect(confirm).toBeEnabled()
+  await expect(dialog.getByRole('textbox')).toHaveCount(0)
+  await expect(dialog).toContainText(hunt.title)
+  await expect(dialog).toContainText('Any published Hunt Library entry stays available.')
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  expect(requests).toBe(0)
+
+  await deleteHunt.click()
+  await confirm.click()
+  await expect(page.getByRole('button', { name: 'View results' })).toHaveCount(0)
+  await expect(page.getByText('Media cleanup pending')).toBeVisible()
+  expect(requests).toBe(1)
+
+  await page.reload()
+  const cleanup = page.getByRole('region', { name: 'Pending hunt cleanup' })
+  await cleanup.getByRole('button', { name: 'Resume cleanup' }).click()
+  await expect(cleanup).toHaveCount(0)
+  await expect(page.getByText('Hunt deleted.')).toBeVisible()
+})
+
 test('Hunt Library previews a complete hunt and copies an editable draft at desktop and phone widths', async ({ page }) => {
   organizerHuntLibraryMode = true
   organizerReviewMode = true
