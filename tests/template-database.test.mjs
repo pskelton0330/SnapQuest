@@ -8,7 +8,7 @@ import { calculateTeamScores, normalizeFinalScores, winningTeams } from '../src/
 let db, legacyBefore, templateId
 const owner='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222', outsider='12345678-1234-4234-9234-123456789abc'
 const migrationUrl=new URL('../supabase/migrations/',import.meta.url)
-let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration, systemAdminMigration, organizerDurationMigration, systemAdminSafetyMigration, photoVisibilityMigration, adminDeletionJobsMigration, huntLibraryMigration, holidayLibraryMigration, refreshAuditMigration
+let migration, managementMigration, auditMigration, auditSafetyMigration, auditRetentionMigration, disableAuditRetentionMigration, rpcPrivilegeMigration, chatCursorMigration, timingAuditMigration, teamIdentityMigration, manualStartMigration, messageMigration, manualLobbySelfieMigration, reliabilityMigration, photoVersionMigration, inviteRecoveryMigration, inviteClosedMigration, chatRecoveryMigration, photoApprovalMigration, winnerCardsMigration, restorePhotoReviewMigration, selfServeOrganizerMigration, systemAdminMigration, organizerDurationMigration, systemAdminSafetyMigration, photoVisibilityMigration, adminDeletionJobsMigration, huntLibraryMigration, holidayLibraryMigration, refreshAuditMigration, organizerHuntDeletionMigration
 async function as(role, uid, sql, params=[]) {
   await db.exec(`set role ${role}`)
   try {
@@ -34,6 +34,7 @@ before(async () => {
     alter table storage.objects enable row level security;`)
   for(const file of (await readdir(migrationUrl)).filter(f=>f.endsWith('.sql')).sort()) {
     const sql=await readFile(new URL(file,migrationUrl),'utf8')
+    if(file.includes('organizer_hunt_deletion')) { organizerHuntDeletionMigration=sql; continue }
     if(file.includes('audit_refresh_recovery')) { refreshAuditMigration=sql; continue }
     if(file.includes('restore_photo_review')) { restorePhotoReviewMigration=sql; continue }
     if(file.includes('self_serve_organizer_accounts')) { selfServeOrganizerMigration=sql; continue }
@@ -107,6 +108,7 @@ before(async () => {
   await db.exec(photoVisibilityMigration)
   await db.exec(adminDeletionJobsMigration)
   await db.exec(refreshAuditMigration)
+  await db.exec(organizerHuntDeletionMigration)
 })
 after(async()=> { await db?.close() })
 test('anonymous role can execute only explicitly public security-definer RPCs', async () => {
@@ -976,4 +978,31 @@ test('publishes just the reviewed historical hunt and the labeled, copyable Chri
     assert.equal(count,entry.challenges.length)
   }
   assert.deepEqual((await db.query('select id,status,final_scores from public.hunts where id in ($1,$2) order by id',[hobbyId,untouchedId])).rows,priorHistory)
+})
+
+test('organizer deletion is owner-scoped, resumable and preserves published reusable content', async () => {
+  const hunt = (await as('authenticated',owner,"select public.create_hunt_draft('Leave no traces','Park',array[]::text[],$1::jsonb,60) id", [JSON.stringify([{title:'Find a pinecone'}])])).rows[0].id
+  await db.query("update public.hunts set status='review' where id=$1",[hunt])
+  await as('authenticated',owner,'select public.finalize_hunt($1)',[hunt])
+  const entries = 'select public.list_hunt_templates(false) data'
+  const publicBefore = (await as('anon',null,entries)).rows[0].data
+  assert.ok(publicBefore.some(entry=>entry.title==='Leave no traces'))
+  const mediaPath = hunt + '/test-photo.jpg'
+  await db.query("insert into storage.objects(bucket_id,name) values('hunt-photos',$1),('unrelated-bucket',$1)",[mediaPath])
+
+  const start = 'select public.organizer_start_hunt_deletion($1,$2,$3) id'
+  const params = [owner,hunt,'Leave no traces']
+  await assert.rejects(as('authenticated',owner,start,params),/permission denied/)
+  await assert.rejects(as('service_role',null,start,[other,hunt,'Leave no traces']),/Hunt not found/)
+  await assert.rejects(as('service_role',null,start,[owner,hunt,'Incorrect']),/Type the hunt name/)
+  const job = (await as('service_role',null,start,params)).rows[0].id
+  assert.ok(job)
+  assert.equal((await as('service_role',null,start,params)).rows[0].id,job)
+  await assert.rejects(as('service_role',null,start,[other,hunt,'Leave no traces']),/Hunt not found/)
+  const pending = (await db.query('select organizer_user_id,stage,objects from public.system_admin_deletion_jobs where id=$1',[job])).rows[0]
+  assert.deepEqual(pending,{organizer_user_id:owner,stage:'storage',objects:[{bucket_id:'hunt-photos',name:mediaPath}]})
+  assert.equal((await db.query('select id from public.hunts where id=$1',[hunt])).rows.length,0)
+  assert.equal((await db.query('select id from public.hunt_items where hunt_id=$1',[hunt])).rows.length,0)
+  assert.equal((await db.query("select id from public.audit_events where details->>'deletion_job_id'=$1",[job])).rows.length,1)
+  assert.deepEqual((await as('anon',null,entries)).rows[0].data,publicBefore)
 })

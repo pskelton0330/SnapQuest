@@ -1,36 +1,16 @@
-# Hunt deletion design (not implemented)
+# Organizer hunt deletion
 
-This design is for future owner review. It does not delete production data or establish a retention period. Audit events must be kept beyond 365 days; no maximum has been approved. See [privacy and lifecycle](PRIVACY_LIFECYCLE_POLICY.md) for the data inventory and unresolved policy questions.
+In **My Hunts**, the owner can delete a draft, a game in progress, or a completed game. The confirmation names the hunt and requires its exact title. Deleting a game removes its roster, photos, selfies, messages, invitations, and scores. An existing Hunt Library entry is a separate record of reusable content and stays available. Audit events follow the existing retention policy.
 
-## User experience
+## How deletion works
 
-An organizer opens hunt settings and selects Delete hunt. A confirmation describes the specific data and access that will be removed and warns that the operation is permanent. Show the hunt name and require deliberate confirmation. Show deletion as pending until all authorized cleanup has completed; a failure must offer a retry without suggesting that all data was removed. The exact effect on scores, history, shared participant data, and audit records requires owner policy decisions before activation.
+1. The Edge Function verifies the signed-in account. The database then checks ownership and the typed title. Guests, other organizers, and anonymous callers cannot start or resume the deletion.
+2. The database locks the hunt, records its private media inventory in a service-only job, and deletes the game and its dependent rows in the same transaction. The lock coordinates with new uploads and invitation redemption then stops working.
+3. The existing deletion worker processes the stored inventory. When it finishes, the job clears its stored paths and title. If cleanup stops midway, **My Hunts** shows **Resume cleanup** after the organizer reopens the page. The same job can be resumed by the owner or a system administrator.
+4. The organizer sees a completion message after the worker has removed the inventoried objects. This removes the game's application data. Provider backup retention is covered separately.
 
-## Proposed operation
+## Verification
 
-1. An authenticated permanent organizer requests deletion through a server-authorized operation. Verify ownership on every request. Store a durable deletion job keyed to the hunt and make retries idempotent.
-2. Once approved policy permits it, stop new invitations, uploads, and ordinary reads for the hunt. Snapshot the object identifiers to be removed in a protected job record before references are changed. Avoid exposing storage paths or invite secrets in user-facing output or diagnostic details.
-3. A trusted worker removes only objects belonging to that hunt after checking references and authorization. Record each object's progress durably; retry transient failures without deleting objects referenced by other records. Do not rely on a participant's browser remaining open.
-4. Delete or anonymize related database records in the order required by foreign keys and the approved policy. Keep the final-score snapshot or remove it only according to that policy. Protect diagnostic records for the owner-approved period.
-5. Mark completion only after the database and private Storage work are verified. If a step fails, retain enough protected state for safe retries and report a sanitized failure to the organizer.
+The isolated stack exercises the real Edge Function and private Storage with synthetic hunts. It checks ownership, typed confirmation, recovery after the database step, and retrying a completed job. Local database tests verify that an existing public hunt preview survives deletion of its source game. The browser test checks that canceling leaves the hunt in place and interrupted cleanup can resume after a reload.
 
-The worker's hosting, schedule, and cost must be chosen before implementation. During development use the existing ephemeral Supabase stack and synthetic objects; do not provision a paid service.
-
-## Acceptance requirements
-
-- Owner can request deletion only for their own hunt; participants and other organizers are denied.
-- A second request or retry cannot duplicate destructive work or remove unrelated objects.
-- Interrupted Storage deletion remains pending, can be retried, and never claims success early.
-- Concurrent uploads and reads are handled consistently after deletion begins.
-- Shared references and another hunt's objects remain intact.
-- Logs do not contain photo contents, signed URLs, object paths, or invitation tokens.
-- User-facing claims accurately distinguish application data from provider backups and logs.
-- Tests use synthetic users, hunts, and objects. No production deletion occurs as a test.
-
-## Decisions needed before activation
-
-- Whether results and history are removed or anonymized when the hunt is deleted.
-- Photo, selfie, chat, results, and invitation retention durations and starting events.
-- Participant controls over shared photos and team data.
-- Provider backup, restoration, and log retention behavior, verified against the selected service plan.
-- A durable worker design and its expected cost.
+Use the [privacy lifecycle](PRIVACY_LIFECYCLE_POLICY.md) for retention questions, including participant requests and scheduled deletion.
